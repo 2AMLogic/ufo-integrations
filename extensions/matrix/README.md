@@ -129,8 +129,16 @@ workspace's to know.
   the member `alice@example.com`, so the homeserver must hand out usernames only to the people who
   hold those mailboxes. Disable open registration on it, and keep its usernames equal to mail names —
   anyone who can register `@alice` before Alice does speaks as her.
-- **A room of more than 50 others is foreign.** Every joined user is resolved to a member before a
-  room reads internal memory, and past 50 the surface does not ask.
+- **A room of more than 50 others is foreign, and stays foreign.** Every joined user is resolved
+  to a member before a room reads internal memory, and past 50 the surface does not ask. A room's
+  audience only narrows: one that went foreign — past 50, or through a non-member who has since
+  left — never reads internal memory again, however small the room gets.
+- **Backfill can hear a room's pre-join past.** A room the bot joined inside a sync window can come
+  back `limited`; its history pages then reach back to the stored position, and with a `shared`
+  history visibility they hold messages sent before the join. A member's pre-join line that
+  mentions the bot, or any line in a direct room, can found a turn. The surface accepts this
+  deliberately: nothing before the stored position is ever read, and only a room joined within
+  the window exposes pre-join lines.
 - **A long gap is heard in part.** Past the 500 messages its history pages reach, a gap after a long
   outage is heard from its newest end; anything earlier founds nothing.
 
