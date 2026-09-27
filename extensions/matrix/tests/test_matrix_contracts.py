@@ -1,6 +1,7 @@
 """The rules the matrix surface holds without the runtime: what it may import, which events may
-found a turn, and the identifiers it derives. `events.py` imports neither `ufo` nor an HTTP client,
-so these run on a checkout with only `pytest` installed."""
+found a turn, the identifiers it derives, and the frontmatter contract its skill is loaded under.
+`events.py` imports neither `ufo` nor an HTTP client, and a skill is data on disk, so these run on a
+checkout with only `pytest` and `pyyaml` installed."""
 
 import ast
 import re
@@ -10,6 +11,7 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+import yaml
 
 from ufo_ext_matrix.events import (
     SURFACE,
@@ -29,6 +31,9 @@ from ufo_ext_matrix.events import (
 EXTENSION = Path(__file__).resolve().parents[1]
 PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
+SKILLS_ROOT = PACKAGE / "skills"
+SKILL_NAMES = ("matrix-setup",)
+DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
 
@@ -93,8 +98,53 @@ def test_no_transition_language(path: Path) -> None:
 
 def test_readme_matches_the_pack_shape() -> None:
     readme = (EXTENSION / "README.md").read_text()
-    for heading in ("## What it adds", "## Install", "## Tests", "## License", "## Traps"):
+    headings = ("## What it adds", "## Install", "## Connect", "## Tests", "## License", "## Traps")
+    for heading in headings:
         assert heading in readme
+
+
+def frontmatter(name: str) -> dict:
+    raw = (SKILLS_ROOT / name / "SKILL.md").read_text()
+    assert raw.startswith("---"), f"{name}: SKILL.md must open with ---"
+    _, meta, _ = raw.split("---", 2)
+    return yaml.safe_load(meta)
+
+
+@pytest.mark.parametrize("name", SKILL_NAMES)
+def test_a_skill_name_matches_its_directory(name: str) -> None:
+    assert frontmatter(name)["name"] == name
+
+
+@pytest.mark.parametrize("name", SKILL_NAMES)
+def test_a_skill_description_routes(name: str) -> None:
+    """The description is a routing budget: an over-long one loads the skill on the wrong turn, and
+    one that does not say what the skill is not for loads it on a neighbouring ask."""
+    description = frontmatter(name)["description"]
+    assert description.startswith("Load when")
+    assert len(description.split()) <= DESCRIPTION_WORD_BUDGET
+    assert "Not for" in description
+
+
+@pytest.mark.parametrize("name", SKILL_NAMES)
+def test_a_skill_wires_its_dependencies_rather_than_asking(name: str) -> None:
+    """`metadata.depends` is the only mechanism that pulls another skill in, so it is declared even
+    where this skill stands alone."""
+    assert isinstance(frontmatter(name)["metadata"]["depends"], list)
+
+
+@pytest.mark.parametrize("name", SKILL_NAMES)
+def test_a_skill_closes_with_traps(name: str) -> None:
+    _, _, body = (SKILLS_ROOT / name / "SKILL.md").read_text().split("---", 2)
+    assert body.strip()
+    assert "## Traps" in body
+
+
+def test_setup_names_every_silence_a_misconfigured_bot_answers_with() -> None:
+    """Each of the four presents only as the agent not answering, so a reader who has one of them and
+    not this list has nothing to go on."""
+    traps = (SKILLS_ROOT / "matrix-setup" / "SKILL.md").read_text().split("## Traps", 1)[1]
+    for tell in ('[pack] name = "assistant"', "m.room.encrypted", "same user", "never invited"):
+        assert tell in traps
 
 
 def test_a_plain_text_message_is_a_member_message() -> None:

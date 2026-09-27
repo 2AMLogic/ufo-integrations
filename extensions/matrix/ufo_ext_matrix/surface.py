@@ -21,7 +21,7 @@ from uuid import UUID
 
 import httpx
 import sqlalchemy as sa
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ufo.sdk.audience import (
     Audience,
@@ -84,7 +84,10 @@ FILES_LINE = "This turn shared files, which are in the workspace"
 
 
 class ConnectInput(BaseModel):
-    """Nothing: the bot is whoever the workspace's access token belongs to."""
+    """Nothing: the bot is whoever the workspace's access token belongs to. An action bound to an
+    object takes exactly the fields it declares, so a call naming a bot of its own is refused."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def installations(configured: str) -> tuple[str, ...]:

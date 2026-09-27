@@ -63,9 +63,23 @@ ufoctl ext install matrix
 | `matrix_homeserver` | Workspace credential slot | The homeserver's base URL, e.g. `https://matrix.example.org` |
 | `matrix_access_token` | Workspace credential slot | The bot user's access token |
 
-With both slots filled, a member asks in chat to connect Matrix; `matrix_connect` asks the homeserver
-whose token it holds and binds that MXID to the workspace. A member who invites the bot to a room is
-joined; an invitation from anyone else is left standing.
+## Connect
+
+Setup happens in chat. `matrix_connect` is an instance action bound to the `matrix` surface, offered
+on that one surface row as `action:surface:matrix_connect`, and the `matrix-setup` skill carries the
+order of the steps.
+
+| Step | In chat |
+| --- | --- |
+| The two slots | The agent calls core's `request_credentials` for `matrix_homeserver` and `matrix_access_token`, so the token is filled where the transcript cannot see it |
+| Connect | `GET /_matrix/client/v3/account/whoami` names the bot the token belongs to, and that MXID is bound as the workspace's installation |
+| Invite | A workspace member invites the bot to a room and it joins itself; an invitation from anyone else is left standing |
+
+The bot the token belongs to is the bot that gets bound, so a wrong token is a refusal and never a
+wrong binding. A second token for the same bot replaces the binding, and the listener reads the
+binding each sync round, so a connect takes effect without a restart. A bot another workspace already
+holds is refused by name — that MXID belongs elsewhere, and which workspace holds it is not this
+workspace's to know.
 
 ## Traps
 
