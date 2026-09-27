@@ -268,6 +268,21 @@ async def test_an_invite_from_the_home_server_is_joined(workspace: Workspace) ->
 
 
 @on_loop
+async def test_a_room_the_bot_was_removed_from_does_not_stall_the_stream(
+    workspace: Workspace,
+) -> None:
+    server = Homeserver()
+    server.syncs["s1"] = batch(
+        "s2", {ROOM: [mention("$gone", ALICE, "hi")], DIRECT: [text("$d1", ALICE, "still here")]}
+    )
+    installation = await primed(server, workspace)
+    server.forbidden = {ROOM, "!mine:example.org"}
+    await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$d1"]
+    assert await read_since(workspace, BOT) == "s2"
+
+
+@on_loop
 async def test_an_unbound_bot_waits_without_calling_out(workspace: Workspace) -> None:
     server = Homeserver()
     installation = Installation(

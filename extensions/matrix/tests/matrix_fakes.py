@@ -64,6 +64,7 @@ class Homeserver:
     sent: dict[str, dict[str, Any]] = field(default_factory=dict)
     joined: list[str] = field(default_factory=list)
     failure: httpx.Response | None = None
+    forbidden: set[str] = field(default_factory=set)
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -82,6 +83,10 @@ class Homeserver:
                 return httpx.Response(200, json=self.syncs.get(since, batch(since or "s0")))
             case "GET", ["account", "whoami"]:
                 return httpx.Response(200, json={"user_id": BOT})
+            case ("GET", ["rooms", room, "joined_members"]) | ("POST", ["join", room]) if (
+                room in self.forbidden
+            ):
+                return httpx.Response(403, json={"errcode": "M_FORBIDDEN"})
             case "GET", ["rooms", room, "joined_members"]:
                 return httpx.Response(
                     200, json={"joined": {m: {} for m in self.members.get(room, [])}}

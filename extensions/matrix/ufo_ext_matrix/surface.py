@@ -151,6 +151,13 @@ def audience_for(
     return room_audience(SURFACE, key)
 
 
+def _refused(error: MatrixError) -> bool:
+    """A refusal no retry changes — the bot was removed from the room, the invite was withdrawn.
+    The batch goes on without that room rather than stalling the stream behind it; a rate limit or
+    a server error raises, and the batch is read again."""
+    return 400 <= error.status < 500 and error.status != 429 and not error.unauthorized
+
+
 def _server(mxid: str) -> str | None:
     try:
         return server_name(mxid)
@@ -321,8 +328,15 @@ class Installation:
             if own or not admitting:
                 continue
             if room_id not in joined:
-                joined[room_id] = await client.joined_members(room_id)
-            entry.admitted = await self.consider(ctx, message, prior, joined[room_id])
+                try:
+                    joined[room_id] = await client.joined_members(room_id)
+                except MatrixError as error:
+                    if not _refused(error):
+                        raise
+                    log("matrix.room_unreadable", installation=self.bot, status=error.status)
+                    joined[room_id] = frozenset()
+            if joined[room_id]:
+                entry.admitted = await self.consider(ctx, message, prior, joined[room_id])
 
     async def _invited(self, client: MatrixClient, room_id: str, inviter: str) -> None:
         """Join a room a user of the bot's own homeserver invited it to; an invitation from any
@@ -330,7 +344,12 @@ class Installation:
         if _server(inviter) != server_name(self.bot):
             log("matrix.invite_left", installation=self.bot, inviter_server=_server(inviter))
             return
-        await client.join(room_id)
+        try:
+            await client.join(room_id)
+        except MatrixError as error:
+            if not _refused(error):
+                raise
+            log("matrix.join_refused", installation=self.bot, status=error.status)
 
     async def consider(
         self,
