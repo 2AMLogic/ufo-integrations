@@ -8,7 +8,8 @@ Most lines in a room are not addressed to the agent. A message from a member fou
 mentions the bot, when it is sent in a direct room (the bot and one other), or when the room already
 holds a conversation and `ambient_reply_wanted` says the agent is wanted; anything else is heard,
 kept as evidence for the next decision, and admits nothing. A sender who resolves to no member
-founds nothing, however it addresses the bot."""
+founds nothing, however it addresses the bot; the one thing the bot reads from it is a code proving
+its MXID for a member who claimed it (`linking.py`)."""
 
 import asyncio
 import math
@@ -66,6 +67,7 @@ from ufo_ext_matrix.events import (
     timeline,
     txn_id,
 )
+from ufo_ext_matrix.linking import Linking, code_in, proof_txn, unlinked
 from ufo_ext_matrix.since import read_since, write_since
 
 BOTS_ENV = "UFO_MATRIX_BOTS"
@@ -173,7 +175,7 @@ class Roster:
     """Who in one batch resolves to a member, each MXID asked once. A linked MXID is its member; on
     first contact an MXID on the workspace's own domain links to the member whose email is
     `localpart@domain` — the homeserver serving that domain vouches for its users as the mail
-    server does for addresses. Any other MXID is nobody."""
+    server does for addresses. An MXID an admin unlinked, and any other, is nobody."""
 
     ctx: SurfaceContext
     known: dict[str, UUID | None] = field(default_factory=dict)
@@ -201,6 +203,8 @@ class Roster:
         return True
 
     async def _resolve(self, mxid: str) -> UUID | None:
+        if await unlinked(self.ctx, mxid):
+            return None
         linked = await self.ctx.linked_member(mxid)
         if linked is not None:
             return linked
@@ -223,6 +227,7 @@ class MatrixSurface:
     transport: httpx.AsyncBaseTransport | None = None
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    linking: Linking = field(default_factory=Linking)
 
     def client(self, homeserver: str, access_token: str) -> MatrixClient:
         return MatrixClient(homeserver, access_token, transport=self.transport)
@@ -395,6 +400,9 @@ class Installation:
             if not joined[room_id]:
                 continue
             try:
+                if await self._proved(ctx, client, roster, message, joined[room_id]):
+                    heard.pop()
+                    continue
                 entry.admitted = await self.consider(ctx, roster, message, prior, joined[room_id])
             except sa.exc.OperationalError:
                 raise
@@ -434,9 +442,10 @@ class Installation:
     async def _invited(
         self, roster: Roster, client: MatrixClient, room_id: str, inviter: str
     ) -> None:
-        """Join a room a workspace member invited the bot to; an invitation from anyone else is
-        left standing."""
-        if await roster.member(inviter) is None:
+        """Join a room a workspace member invited the bot to, or one an MXID a member is proving
+        invited it to; an invitation from anyone else is left standing."""
+        claimed = self.surface.linking.live_claim
+        if await roster.member(inviter) is None and not await claimed(roster.ctx, inviter):
             log("matrix.invite_left", installation=self.bot, inviter_server=_server(inviter))
             return
         try:
@@ -445,6 +454,27 @@ class Installation:
             if not _refused(error):
                 raise
             log("matrix.join_refused", installation=self.bot, status=error.status)
+
+    async def _proved(
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        roster: Roster,
+        message: RoomMessage,
+        joined: frozenset[str],
+    ) -> bool:
+        """Whether a direct message was a code proving its sender's MXID. It is answered in the
+        room and founds no turn."""
+        if joined != {self.bot, message.sender} or code_in(message.body) is None:
+            return False
+        proof = await self.surface.linking.prove(ctx, message, roster.member)
+        if proof is None:
+            return False
+        if proof.member_id is not None:
+            roster.known[message.sender] = proof.member_id
+        log("matrix.proof_read", installation=self.bot, linked=proof.member_id is not None)
+        await client.send_text(message.room_id, proof_txn(message.event_id), proof.reply)
+        return True
 
     async def consider(
         self,
