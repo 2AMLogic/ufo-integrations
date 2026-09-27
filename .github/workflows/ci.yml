@@ -23,6 +23,6 @@ jobs:
       - name: Install ufo and run every test
         run: |
           uv run --python 3.12 \
-            --with pytest --with pyyaml \
+            --with pytest --with pyyaml --with pytest-xdist \
             --with "ufo @ git+https://github.com/ufo-ai/ufo-core" \
             pytest extensions -v
