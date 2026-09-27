@@ -577,13 +577,18 @@ class Credentials:
 
 @dataclass
 class Installations:
+    """Core's writer as a tool reaches it: a bind lands unless another workspace holds that
+    installation, and binding a bot this workspace already holds replaces what it held."""
+
     bound: list[tuple[str, str]] = field(default_factory=list)
     taken: bool = False
 
     async def bind(self, surface: str, installation_id: str) -> None:
         if self.taken:
             raise SurfaceInstallationConflict(surface)
-        self.bound.append((surface, installation_id))
+        pair = (surface, installation_id)
+        if pair not in self.bound:
+            self.bound.append(pair)
 
 
 @dataclass
@@ -637,6 +642,8 @@ def test_connect_refuses_a_bad_token_without_repeating_it() -> None:
 
 
 def test_connect_refuses_a_bot_another_workspace_holds() -> None:
+    """One sentence, naming the bot and saying where it does not belong. Which workspace holds it is
+    not this workspace's to know, so the refusal says nothing that would identify one."""
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
     tool = connecting(
@@ -644,4 +651,40 @@ def test_connect_refuses_a_bot_another_workspace_holds() -> None:
     )
     result = asyncio.run(surface.connect(tool, ConnectInput()))  # type: ignore[arg-type]
     assert result.is_error
-    assert "another workspace" in said(result)
+    answer = said(result)
+    assert answer == f"{BOT} is already connected to another workspace."
+    assert tool.ext.installations.bound == []
+
+
+def test_connect_again_in_the_same_workspace_replaces_the_binding() -> None:
+    """A rotated token for the same bot is the same installation, so a second connect lands rather
+    than conflicting with what this workspace already holds."""
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={"UFO_MATRIX_BOTS": BOT})
+    tool = connecting({HOMESERVER_SLOT: "https://matrix.example.org", TOKEN_SLOT: TOKEN})
+    first = asyncio.run(surface.connect(tool, ConnectInput()))  # type: ignore[arg-type]
+    second = asyncio.run(surface.connect(tool, ConnectInput()))  # type: ignore[arg-type]
+    assert not first.is_error and not second.is_error
+    assert tool.ext.installations.bound == [("matrix", BOT)]
+
+
+def test_no_connect_answer_carries_the_token(caplog: pytest.LogCaptureFixture) -> None:
+    """The admin fills the token through `request_credentials`, so no answer may put it back into the
+    transcript — not the one that binds, and none of the ones that refuse."""
+    slots = {HOMESERVER_SLOT: "https://matrix.example.org", TOKEN_SLOT: TOKEN}
+    server = Homeserver()
+    refusing = Homeserver(failure=httpx.Response(500, json={"errcode": "M_UNKNOWN"}))
+    answers = []
+    with caplog.at_level(logging.DEBUG):
+        for homeserver, tool in (
+            (server, connecting(slots)),
+            (server, connecting(slots, taken=True)),
+            (refusing, connecting(slots)),
+            (server, connecting({HOMESERVER_SLOT: "https://matrix.example.org"})),
+        ):
+            surface = MatrixSurface(transport=homeserver.transport, environ={})
+            answers.append(asyncio.run(surface.connect(tool, ConnectInput())))  # type: ignore[arg-type]
+    assert [answer.is_error for answer in answers] == [False, True, True, False]
+    for answer in answers:
+        assert TOKEN not in said(answer)
+    assert TOKEN not in caplog.text
