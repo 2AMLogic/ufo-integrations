@@ -177,6 +177,18 @@ and the three delivery handlers against a fake homeserver, `test_matrix_linking.
 through its proof the same way, and `test_matrix_registry.py` loads the installed entry point
 through ufo's loader and applies the migrations; all three skip where `ufo` is absent.
 
+`test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
+collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite
+there is unchanged and the registry job's no-skip rule holds. It registers its own throwaway users,
+so the named homeserver must allow registration; a private Synapse container does. It needs `ufo`
+installed, and runs for example as:
+
+```bash
+MATRIX_INTEGRATION_HOMESERVER=http://localhost:8017 \
+  uv run --python 3.12 --with pytest --with "ufo @ file:///home/ubuntu/ufo-core" \
+  pytest extensions/matrix/tests/test_matrix_integration.py -v
+```
+
 ## License
 
 Apache-2.0.
