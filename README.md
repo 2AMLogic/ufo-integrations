@@ -33,7 +33,9 @@ pytest extensions
 The skill and ledger contracts need only `pytest` and `pyyaml` — they read the skills as the data on
 disk that they are. `extensions/pulse/tests/test_registry.py` parses them through the real
 `SkillRegistry` and skips where `ufo` is absent, so a fresh checkout still runs everything else. CI
-runs both, the second against `ufo` at `main`, which is what catches an SDK change upstream.
+runs both, the second against `ufo` at `main` on every change and nightly, which is what catches an
+SDK change upstream. That job installs `pytest-xdist` beside `ufo`, whose test plugin requires it, and
+fails if any test skips rather than runs.
 
 ## License
 
