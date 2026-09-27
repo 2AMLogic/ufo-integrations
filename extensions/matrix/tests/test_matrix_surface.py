@@ -10,9 +10,10 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-import sqlalchemy as sa
 
 pytest.importorskip("ufo", reason="install ufo from git to run the surface tests")
+
+import sqlalchemy as sa  # noqa: E402
 
 from matrix_fakes import (  # noqa: E402
     ALICE,
@@ -346,12 +347,9 @@ async def test_a_failing_event_is_skipped_and_the_stream_moves_on(
     assert "boom" not in caplog.text
 
 
-@on_loop
-async def test_a_lost_database_is_read_again_rather_than_skipped(workspace: Workspace) -> None:
-    """A dropped connection and an exhausted pool reach `admit` as `InterfaceError` and
-    `TimeoutError`, neither of them an `OperationalError`. They are not bad events: the message is
-    not skipped, the position stays where it was, and the next sync reads the batch again."""
-    workspace.lost = {"$gone"}
+async def _read_again_rather_than_skipped(workspace: Workspace, error: BaseException) -> None:
+    """One database failure during admission: nothing admitted, and the position where it was."""
+    workspace.lost = {"$gone": error}
     server = Homeserver()
     server.syncs["s1"] = batch("s2", {ROOM: [mention("$gone", ALICE, "hi")]})
     installation = await primed(server, workspace)
@@ -360,6 +358,24 @@ async def test_a_lost_database_is_read_again_rather_than_skipped(workspace: Work
         await installation.step()
     assert workspace.admitted == []
     assert await read_since(workspace, BOT) == before
+
+
+@on_loop
+async def test_a_dropped_connection_is_read_again_rather_than_skipped(
+    workspace: Workspace,
+) -> None:
+    """A dropped connection reaches `admit` as `InterfaceError`, which is a sibling of
+    `DatabaseError` and so never an `OperationalError`."""
+    await _read_again_rather_than_skipped(
+        workspace, sa.exc.InterfaceError("admit", None, OSError("connection lost"))
+    )
+
+
+@on_loop
+async def test_an_exhausted_pool_is_read_again_rather_than_skipped(workspace: Workspace) -> None:
+    """An exhausted pool reaches `admit` as `TimeoutError`, which reaches `SQLAlchemyError` without
+    passing through `DBAPIError` at all. A guard narrowed to connection shapes drops it."""
+    await _read_again_rather_than_skipped(workspace, sa.exc.TimeoutError("pool exhausted"))
 
 
 @on_loop
