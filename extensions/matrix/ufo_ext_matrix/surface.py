@@ -393,7 +393,7 @@ class Installation:
                 continue
             try:
                 entry.admitted = await self.consider(ctx, roster, message, prior, joined[room_id])
-            except sa.exc.OperationalError:
+            except sa.exc.SQLAlchemyError:
                 raise
             except Exception as error:
                 warn(

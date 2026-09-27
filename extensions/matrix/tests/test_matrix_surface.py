@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 pytest.importorskip("ufo", reason="install ufo from git to run the surface tests")
 
@@ -343,6 +344,22 @@ async def test_a_failing_event_is_skipped_and_the_stream_moves_on(
     assert await read_since(workspace, BOT) == "s2"
     assert "matrix.message_skipped" in caplog.text
     assert "boom" not in caplog.text
+
+
+@on_loop
+async def test_a_lost_database_is_read_again_rather_than_skipped(workspace: Workspace) -> None:
+    """A dropped connection and an exhausted pool reach `admit` as `InterfaceError` and
+    `TimeoutError`, neither of them an `OperationalError`. They are not bad events: the message is
+    not skipped, the position stays where it was, and the next sync reads the batch again."""
+    workspace.lost = {"$gone"}
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$gone", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    before = await read_since(workspace, BOT)
+    with pytest.raises(sa.exc.SQLAlchemyError):
+        await installation.step()
+    assert workspace.admitted == []
+    assert await read_since(workspace, BOT) == before
 
 
 @on_loop
