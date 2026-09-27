@@ -50,7 +50,8 @@ def test_the_entry_point_declares_one_durable_listening_surface(manifest) -> Non
 def test_the_credentials_and_the_deploy_key(manifest) -> None:
     assert {slot.name for slot in manifest.credentials} == {HOMESERVER_SLOT, TOKEN_SLOT}
     assert all(slot.injection is None for slot in manifest.credentials)
-    assert manifest.deploy_keys == (BOTS_ENV,)
+    assert manifest.deploy_keys == ("MATRIX_BOTS",)
+    assert manifest.deploy_keys == (BOTS_ENV.removeprefix("UFO_"),)
 
 
 def test_the_connect_tool_validates_beside_the_builtins(manifest) -> None:
