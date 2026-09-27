@@ -6,7 +6,7 @@ operating system.
 | Extension | What it adds |
 | --- | --- |
 | [`pulse`](extensions/pulse) | A recurring field brief that does not repeat itself and does not report silence it never observed |
-| `matrix` | A Matrix chat surface: rooms as conversations, room members as members |
+| [`matrix`](extensions/matrix) | A Matrix chat surface: rooms as conversations, room members as members |
 
 Each directory is one extension in ufo's sense — a Python package importing only `ufo.sdk`, declaring
 one `ufo.extension` entry point. The repo ships them as a single distribution, the way ufo-core ships

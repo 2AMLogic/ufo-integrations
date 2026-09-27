@@ -70,3 +70,8 @@ dist/
 
 # Repo Skills machine-local install metadata (absolute source path + timestamp)
 .claude/skills/repo/.install-local.json
+
+# Local deploy configuration
+.env
+# Per-run timings ufo's pytest plugin writes
+.pytest-timings/
