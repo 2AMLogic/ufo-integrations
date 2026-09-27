@@ -85,6 +85,31 @@ def test_the_package_declares_its_entry_point_and_client() -> None:
     assert any(dep.startswith("httpx") for dep in project["dependencies"])
 
 
+def test_deploy_keys_are_bare_names_core_prefixes() -> None:
+    """Core prefixes `UFO_` onto each deploy key itself (`ufo/cli.py` `_missing_deploy_keys`), so a
+    key already carrying the prefix doubles — `ufoctl init` would name a `UFO_UFO_...` nobody
+    should set. This suite installs no `ufo`, so it reads the manifest's source rather than the
+    installed manifest."""
+    tree = ast.parse((PACKAGE / "manifest.py").read_text())
+    keys: list[str] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id != "Manifest":
+            continue
+        for keyword in node.keywords:
+            if keyword.arg != "deploy_keys":
+                continue
+            assert isinstance(keyword.value, ast.Tuple), "the contract expects a literal tuple"
+            for element in keyword.value.elts:
+                assert isinstance(element, ast.Constant) and isinstance(element.value, str), (
+                    "the contract expects literal deploy keys"
+                )
+                keys.append(element.value)
+    assert keys, "the manifest declares no deploy_keys"
+    assert all(not key.startswith("UFO_") for key in keys)
+
+
 @pytest.mark.parametrize(
     "path",
     sorted(p for p in EXTENSION.rglob("*") if p.suffix in {".py", ".md"}),

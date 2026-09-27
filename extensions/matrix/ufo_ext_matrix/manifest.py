@@ -22,7 +22,6 @@ from ufo.sdk.surfaces import SurfaceSpec
 from ufo.sdk.tools import ObjectBinding, ToolDef
 from ufo_ext_matrix.events import SURFACE
 from ufo_ext_matrix.surface import (
-    BOTS_ENV,
     HOMESERVER_SLOT,
     TOKEN_SLOT,
     ConnectInput,
@@ -75,5 +74,5 @@ def manifest(surface: MatrixSurface | None = None) -> Manifest:
             ),
         ),
         skills=tuple(SkillSpec(path=SKILLS_ROOT / name) for name in SKILL_NAMES),
-        deploy_keys=(BOTS_ENV,),
+        deploy_keys=("MATRIX_BOTS",),
     )
