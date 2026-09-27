@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ufo_ext_matrix.events import BACKFILL_FILTER, SYNC_FILTER
+from ufo_ext_matrix.events import BACKFILL_FILTER, MESSAGE_TYPE, SYNC_FILTER
 
 CLIENT_PATH = "/_matrix/client/v3"
 MEDIA_PATH = "/_matrix/media/v3"
@@ -93,12 +93,43 @@ class MatrixClient:
     async def send_message(self, room_id: str, txn_id: str, content: Mapping[str, Any]) -> str:
         """Send one `m.room.message` under a caller-chosen transaction id and return its event id.
         The homeserver answers a repeated transaction id with the event it already created."""
-        path = f"/rooms/{quote(room_id, safe='')}/send/m.room.message/{quote(txn_id, safe='')}"
+        return await self.send_event(room_id, MESSAGE_TYPE, txn_id, content)
+
+    async def send_event(
+        self, room_id: str, event_type: str, txn_id: str, content: Mapping[str, Any]
+    ) -> str:
+        """Send one room event of any type under a caller-chosen transaction id and return its event
+        id — a message, the edit that rewrites one, or the poll a question is tapped through."""
+        room = quote(room_id, safe="")
+        path = f"/rooms/{room}/send/{quote(event_type, safe='')}/{quote(txn_id, safe='')}"
         answer = await self._call("PUT", path, "send", json=content)
         event_id = answer.get("event_id")
         if not isinstance(event_id, str):
             raise MatrixError("send", 200, "M_BAD_JSON", None)
         return event_id
+
+    async def typing(self, room_id: str, user_id: str, active: bool, timeout_ms: int) -> None:
+        """Say the bot is typing, or has stopped. The homeserver ends an indicator of its own accord
+        once `timeout_ms` passes, so a stream that drops stops the room typing without being told."""
+        path = f"/rooms/{quote(room_id, safe='')}/typing/{quote(user_id, safe='')}"
+        body: dict[str, Any] = {"typing": active}
+        if active:
+            body["timeout"] = timeout_ms
+        await self._call("PUT", path, "typing", json=body)
+
+    async def read_receipt(self, room_id: str, event_id: str) -> None:
+        """Mark one event read, which is what a room shows for a message the bot has taken up."""
+        room = quote(room_id, safe="")
+        path = f"/rooms/{room}/receipt/m.read/{quote(event_id, safe='')}"
+        await self._call("POST", path, "receipt", json={})
+
+    async def display_name(self, user_id: str) -> str:
+        """The name a room shows for a user, which is what a member types instead of an MXID. A
+        profile that names none is the empty string."""
+        path = f"/profile/{quote(user_id, safe='')}/displayname"
+        answer = await self._call("GET", path, "displayname")
+        name = answer.get("displayname")
+        return name if isinstance(name, str) else ""
 
     async def upload(self, filename: str, media_type: str, data: bytes) -> str:
         """Put one file in the media repository and return the `mxc://` URI a message carries it

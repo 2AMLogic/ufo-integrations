@@ -15,9 +15,12 @@ from uuid import UUID
 
 SURFACE = "matrix"
 MESSAGE_TYPE = "m.room.message"
+POLL_START_TYPE = "m.poll.start"
+POLL_RESPONSE_TYPE = "m.poll.response"
 TEXT_MSGTYPE = "m.text"
 NOTICE_MSGTYPE = "m.notice"
 REPLACE_RELATION = "m.replace"
+REFERENCE_RELATION = "m.reference"
 THREAD_RELATION = "m.thread"
 ROOM_KEY_CHARS = 32
 SYNC_TIMELINE_LIMIT = 50
@@ -40,8 +43,9 @@ BACKFILL_FILTER = json.dumps({"types": [MESSAGE_TYPE]}, separators=(",", ":"))
 @dataclass(frozen=True)
 class RoomMessage:
     """One plain-text message a member sent into a room: the only event shape that may found a
-    turn. `mentions` is the MXIDs the sender's client says it addressed, and `thread_root` the
-    thread the message belongs to, None for a message sent to the room itself."""
+    turn. `mentions` is the MXIDs the sender's client says it addressed, `thread_root` the thread
+    the message belongs to — None for a message sent to the room itself — and `replying_to` the
+    message it answers, which is how a member points at the question they mean."""
 
     room_id: str
     event_id: str
@@ -50,11 +54,19 @@ class RoomMessage:
     formatted_body: str
     mentions: frozenset[str]
     thread_root: str | None = None
+    replying_to: str | None = None
 
-    def addresses(self, bot: str) -> bool:
-        """Whether the sender named the bot: an intentional mention, or a pill a client without
-        intentional mentions rendered into the message."""
-        return bot in self.mentions or bot in self.body or bot in self.formatted_body
+
+@dataclass(frozen=True)
+class PollAnswer:
+    """One member's tap on a poll: the poll it answers and the answer ids their client chose. A
+    poll answers a question the bot asked, so the ids are that question's own labels."""
+
+    room_id: str
+    event_id: str
+    sender: str
+    poll_id: str
+    answers: tuple[str, ...]
 
 
 def server_name(mxid: str) -> str:
@@ -100,6 +112,18 @@ def say_txn_id(reply_id: UUID) -> str:
     return f"ufo-say-{reply_id}"
 
 
+def answer_txn_id(event_id: str) -> str:
+    """The transaction id the rewritten question is sent under, named by the answering event, so a
+    redelivered answer rewrites the message it already rewrote."""
+    return f"ufo-answered-{event_id}"
+
+
+def poll_txn_id(turn_id: UUID) -> str:
+    """The transaction id one turn's poll is sent under. A turn asks once, so a repeated delivery
+    reaches the homeserver as the transaction it already answered."""
+    return f"ufo-poll-{turn_id}"
+
+
 def permalink(room_id: str, event_id: str) -> str:
     return f"https://matrix.to/#/{quote(room_id, safe='!:')}/{quote(event_id, safe='$:')}"
 
@@ -138,6 +162,35 @@ def room_message(room_id: str, event: Mapping[str, Any]) -> RoomMessage | None:
         formatted_body=formatted if isinstance(formatted, str) else "",
         mentions=_mentions(content),
         thread_root=_thread_root(content),
+        replying_to=_replying_to(content),
+    )
+
+
+def poll_answer(room_id: str, event: Mapping[str, Any]) -> PollAnswer | None:
+    """The event as a member's tap on a poll, or None when it is not one: any type but
+    `m.poll.response`, a response relating to nothing, and one naming no answer."""
+    if event.get("type") != POLL_RESPONSE_TYPE or event.get("state_key") is not None:
+        return None
+    content = event.get("content")
+    event_id = event.get("event_id")
+    sender = event.get("sender")
+    if not isinstance(content, Mapping) or not isinstance(event_id, str):
+        return None
+    if not isinstance(sender, str):
+        return None
+    relates = content.get("m.relates_to")
+    response = content.get(POLL_RESPONSE_TYPE)
+    if not isinstance(relates, Mapping) or relates.get("rel_type") != REFERENCE_RELATION:
+        return None
+    poll_id = relates.get("event_id")
+    if not isinstance(poll_id, str) or not isinstance(response, Mapping):
+        return None
+    chosen = response.get("answers")
+    answers = tuple(a for a in chosen if isinstance(a, str)) if isinstance(chosen, list) else ()
+    if not answers:
+        return None
+    return PollAnswer(
+        room_id=room_id, event_id=event_id, sender=sender, poll_id=poll_id, answers=answers
     )
 
 
@@ -150,6 +203,19 @@ def _thread_root(content: Mapping[str, Any]) -> str | None:
         return None
     root = relates.get("event_id")
     return root if isinstance(root, str) and root else None
+
+
+def _replying_to(content: Mapping[str, Any]) -> str | None:
+    """The message this one answers, from its own relation: a rich reply names it directly, and a
+    threaded message names it beside the thread it falls back from."""
+    relates = content.get("m.relates_to")
+    if not isinstance(relates, Mapping):
+        return None
+    replied = relates.get("m.in_reply_to")
+    if not isinstance(replied, Mapping):
+        return None
+    event_id = replied.get("event_id")
+    return event_id if isinstance(event_id, str) and event_id else None
 
 
 def _mentions(content: Mapping[str, Any]) -> frozenset[str]:

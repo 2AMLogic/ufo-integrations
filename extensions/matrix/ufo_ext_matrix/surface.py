@@ -41,7 +41,9 @@ from ufo.sdk.surfaces import (
     AMBIENT_CONTEXT_ELEMENT,
     AMBIENT_HISTORY_MESSAGES,
     NOTHING_DELIVERED,
+    Admitted,
     AmbientMessage,
+    AskUserInput,
     CredentialSlotUnset,
     MidTurnReply,
     NothingDelivered,
@@ -59,13 +61,18 @@ from ufo.sdk.surfaces import (
     writeback_says_nothing,
 )
 from ufo.sdk.tools import TextContent, ToolContext, ToolResult
+from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.answering import Answering, read_answering, write_answering
 from ufo_ext_matrix.client import MatrixClient, MatrixError
 from ufo_ext_matrix.events import (
+    MESSAGE_TYPE,
     NOTICE_MSGTYPE,
+    POLL_START_TYPE,
     SURFACE,
     TEXT_MSGTYPE,
+    PollAnswer,
     RoomMessage,
+    answer_txn_id,
     file_txn_id,
     gaps,
     invites,
@@ -73,6 +80,8 @@ from ufo_ext_matrix.events import (
     next_batch,
     part_txn_id,
     permalink,
+    poll_answer,
+    poll_txn_id,
     room_key,
     room_message,
     room_names,
@@ -81,13 +90,25 @@ from ufo_ext_matrix.events import (
     timeline,
     txn_id,
 )
+from ufo_ext_matrix.feedback import attend
 from ufo_ext_matrix.linking import Linking, code_in, proof_txn, unlinked
 from ufo_ext_matrix.messages import (
+    edit_content,
     file_content,
     message_content,
     msgtype_for,
     parts,
     reply_relation,
+)
+from ufo_ext_matrix.questions import (
+    Asked,
+    Choice,
+    answer_words,
+    choices,
+    poll_choices,
+    poll_content,
+    question_block,
+    settled_block,
 )
 from ufo_ext_matrix.since import read_since, write_since
 
@@ -99,6 +120,7 @@ BACKOFF_SECONDS = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 AMBIENT_CONTEXT_LINES = 10
 ROSTER_LIMIT = 50
 BACKFILL_PAGES = 5
+SPOKEN_MESSAGES = 50
 
 FAILED_LINE = "This turn failed before it could answer."
 CANCELLED_LINE = "This turn was stopped."
@@ -150,16 +172,27 @@ def reply_text(
         said.append(text)
     said.extend(reports)
     if terminal.question is not None:
-        for asked in terminal.question.questions:
-            options = asked.options or ()
-            lines = [asked.question, *(f"{n}. {o.label}" for n, o in enumerate(options, 1))]
-            said.append("\n".join(lines))
+        said.append(question_block(terminal.question.title, asked_questions(terminal.question)))
     where = f": {workspace_url}" if workspace_url else "."
     if terminal.connect_request is not None or terminal.credential_request is not None:
         said.append(ELSEWHERE_LINE + where)
     if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts) or unlinked:
         said.append(FILES_LINE + where)
     return "\n\n".join(said)
+
+
+def asked_questions(question: AskUserInput) -> tuple[Asked, ...]:
+    """The ask as a room renders it: each question's words, the options it offers under the labels
+    the room answers by, and whether it takes more than one of them. A question core marked for words
+    offers none of its options, since the member answers it by writing."""
+    return tuple(
+        Asked(
+            question=asked.question,
+            options=() if asked.free_text_only else tuple(o.label for o in asked.options or ()),
+            multi_select=bool(asked.multi_select),
+        )
+        for asked in question.questions
+    )
 
 
 def shared_files(writeback: Writeback) -> tuple[SharedArtifact, ...]:
@@ -334,9 +367,34 @@ class MatrixSurface:
         answering = await read_answering(ctx, writeback.turn_id)
         async with delivering():
             async with self.client(homeserver, token) as client:
-                return await self.say(
+                reference = await self.say(
                     client, writeback.queue_key, txn_id(writeback.turn_id), body, answering
                 )
+                await self.poll(client, writeback, answering)
+                return reference
+
+    async def poll(
+        self, client: MatrixClient, writeback: Writeback, answering: Answering | None
+    ) -> None:
+        """A tappable form of the question the reply wrote out, beside those words rather than
+        instead of them: a client that draws no poll reads the numbered list, and a tap and a typed
+        number arrive as the one choice. One poll carries one single-select question, so an ask of
+        several, or one that takes several answers, is the numbered list alone."""
+        question = writeback.terminal.question
+        if question is None:
+            return
+        asked = asked_questions(question)
+        if len(asked) != 1 or not asked[0].options or asked[0].multi_select:
+            return
+        relation = (
+            None if answering is None else reply_relation(answering.event_id, answering.thread_root)
+        )
+        await client.send_event(
+            writeback.queue_key,
+            POLL_START_TYPE,
+            poll_txn_id(writeback.turn_id),
+            poll_content(question.title, asked[0], relation),
+        )
 
     async def attach(self, ctx: SurfaceContext, writeback: Writeback, reply_ref: str) -> None:
         """The turn's shared files, each its own message under the reply core recorded. Every file
@@ -495,29 +553,93 @@ class Installation:
     bot: str
     heard: dict[str, deque[Heard]] = field(default_factory=dict)
     names: dict[str, str] = field(default_factory=dict)
+    spoken: dict[str, deque[str]] = field(default_factory=dict)
+    attending: set[asyncio.Task[None]] = field(default_factory=set)
+    display_name: str | None = None
 
     async def run(self) -> None:
         """Sync until cancelled. A failure backs this bot off and leaves every other bot running;
-        only `FleetOwnershipLost` ends the stream, since that is the runner's to act on."""
+        only `FleetOwnershipLost` ends the stream, since that is the runner's to act on. A stream
+        that ends stops reporting the turns it opened, so no room is left typing for a bot that is
+        no longer listening."""
         failures = 0
-        while True:
-            try:
-                wait = await self.step()
-                failures = 0
-            except FleetOwnershipLost:
-                raise
-            except Exception as error:
-                wait = self._backoff(error, failures)
-                failures += 1
-                warn(
-                    "matrix.sync_failed",
-                    installation=self.bot,
-                    error_class=type(error).__name__,
-                    status=getattr(error, "status", None),
-                    errcode=getattr(error, "errcode", None),
-                )
-            if wait:
-                await self.surface.sleep(wait)
+        try:
+            while True:
+                try:
+                    wait = await self.step()
+                    failures = 0
+                except FleetOwnershipLost:
+                    raise
+                except Exception as error:
+                    wait = self._backoff(error, failures)
+                    failures += 1
+                    warn(
+                        "matrix.sync_failed",
+                        installation=self.bot,
+                        error_class=type(error).__name__,
+                        status=getattr(error, "status", None),
+                        errcode=getattr(error, "errcode", None),
+                    )
+                if wait:
+                    await self.surface.sleep(wait)
+        finally:
+            await self.stop_attending()
+
+    async def stop_attending(self) -> None:
+        """End every reporter this stream started."""
+        reporters = tuple(self.attending)
+        for task in reporters:
+            task.cancel()
+        await asyncio.gather(*reporters, return_exceptions=True)
+
+    def report(self, admitted: Admitted, room_id: str, event_id: str) -> None:
+        """Report one turn's progress to its room, where this admission is the one that opened the
+        turn's run. One reporter per run, so a redelivery that joins a run doubles no indicator."""
+        if not admitted.opened_run:
+            return
+        task = asyncio.ensure_future(self.reporter(admitted.turn_id, room_id, event_id))
+        self.attending.add(task)
+        task.add_done_callback(self.attending.discard)
+
+    async def reporter(self, turn_id: UUID, room_id: str, event_id: str) -> None:
+        """One turn's progress in its room for as long as the turn runs. The reporter holds a
+        workspace scope of its own, since it outlives the batch that started it, and it answers for
+        nothing: every failure here costs the room an indicator and the turn nothing."""
+        try:
+            async with self.listener.workspace(self.bot) as ctx:
+                if ctx is None:
+                    return
+                homeserver = await ctx.credential(HOMESERVER_SLOT)
+                token = await ctx.credential(TOKEN_SLOT)
+                async with self.surface.client(homeserver, token) as client:
+                    async with ctx.tail(turn_id) as frames:
+                        await attend(client, room_id, self.bot, event_id, frames)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            warn("matrix.feedback_ended", installation=self.bot, error_class=type(error).__name__)
+
+    def named(self, room_id: str) -> Bot:
+        """Who the bot is in one room, as the addressed decision reads it."""
+        return Bot(
+            mxid=self.bot,
+            display_name=self.display_name or "",
+            said=frozenset(self.spoken.get(room_id, ())),
+        )
+
+    async def _display_name(self, client: MatrixClient) -> str:
+        """The name the bot goes by, asked once a stream: a member who types it addresses the bot as
+        surely as one who mentions it. A profile the homeserver will not answer for names nothing,
+        and a mention, a pill, and the MXID still address the bot."""
+        try:
+            return await client.display_name(self.bot)
+        except (MatrixError, httpx.HTTPError) as error:
+            log(
+                "matrix.display_name_unknown",
+                installation=self.bot,
+                error_class=type(error).__name__,
+            )
+            return ""
 
     def _backoff(self, error: Exception, failures: int) -> float:
         if isinstance(error, MatrixError):
@@ -583,12 +705,21 @@ class Installation:
         for room_id, inviter in invites(batch, self.bot):
             await self._invited(roster, client, room_id, inviter)
         earlier = await self._backfill(client, batch, since) if since is not None else {}
+        if admitting and self.display_name is None:
+            self.display_name = await self._display_name(client)
         joined: dict[str, frozenset[str]] = {}
         for room_id, event in timeline(batch, earlier):
             message = room_message(room_id, event)
             if message is None:
+                answer = poll_answer(room_id, event)
+                if admitting and answer is not None and answer.sender != self.bot:
+                    await self._guarded(self.tapped(ctx, roster, answer))
                 continue
             own = message.sender == self.bot
+            if own:
+                self.spoken.setdefault(room_id, deque(maxlen=SPOKEN_MESSAGES)).append(
+                    message.event_id
+                )
             heard = self.heard.setdefault(room_id, deque(maxlen=AMBIENT_HISTORY_MESSAGES))
             prior = tuple(heard)
             entry = Heard(AmbientMessage(speaker=message.sender, text=message.body, own=own))
@@ -606,18 +737,56 @@ class Installation:
             if not joined[room_id]:
                 continue
             try:
-                if await self._proved(ctx, client, roster, message, joined[room_id]):
-                    heard.pop()
-                    continue
-                entry.admitted = await self.consider(ctx, roster, message, prior, joined[room_id])
+                proved = await self._proved(ctx, client, roster, message, joined[room_id])
             except sa.exc.SQLAlchemyError:
                 raise
             except Exception as error:
+                # A code whose proof failed is skipped, never admitted as the words it is.
                 warn(
                     "matrix.message_skipped",
                     installation=self.bot,
                     error_class=type(error).__name__,
                 )
+                continue
+            if proved:
+                heard.pop()
+                continue
+            entry.admitted = await self._guarded(
+                self.heed(ctx, roster, client, message, prior, joined[room_id])
+            )
+
+    async def _guarded(
+        self, admission: Awaitable[bool], event: str = "matrix.message_skipped"
+    ) -> bool:
+        """One event's admission, where a failure costs that event alone: it is logged by error class
+        and the stream moves on. A database failure is not one — the batch is read again instead."""
+        try:
+            return await admission
+        except sa.exc.SQLAlchemyError:
+            raise
+        except Exception as error:
+            warn(event, installation=self.bot, error_class=type(error).__name__)
+            return False
+
+    async def heed(
+        self,
+        ctx: SurfaceContext,
+        roster: Roster,
+        client: MatrixClient,
+        message: RoomMessage,
+        prior: Sequence[Heard],
+        joined: frozenset[str],
+    ) -> bool:
+        """One member message, as the answer it names to a question the room still holds or as the
+        message it is. A reply of labels answers; a reply of words is words, which is how a member
+        answers a question that asked for words and how they say anything else.
+
+        An answer that fails leaves the message to be admitted as the words it is, under the same
+        key: a member whose choice the surface could not settle is still heard."""
+        answered = self._guarded(
+            self.answered(ctx, roster, client, message), "matrix.answer_skipped"
+        )
+        return await answered or await self.consider(ctx, roster, message, prior, joined)
 
     async def _backfill(
         self, client: MatrixClient, batch: Mapping[str, Any], since: str
@@ -696,7 +865,9 @@ class Installation:
         who is no member is declined before anything is spent on the line. An admitted message is
         recorded as the one its turn answers, since the writeback that answers it names the turn and
         the room but not the event, and every message the turn sends back relates to this one."""
-        addressed = (len(joined) == 2 and self.bot in joined) or message.addresses(self.bot)
+        addressed = (len(joined) == 2 and self.bot in joined) or addresses(
+            message, self.named(message.room_id)
+        )
         if not addressed and await ctx.find_conversation(message.room_id) is None:
             return False
         member_id = await roster.member(message.sender)
@@ -738,4 +909,148 @@ class Installation:
             # The turn stands without the record: the reply then relates to nothing, and the line
             # is not fed back as room context for a turn it founded.
             warn("matrix.answering_unrecorded", error_class=type(error).__name__)
+        self.report(admitted, message.room_id, message.event_id)
         return True
+
+    async def answered(
+        self, ctx: SurfaceContext, roster: Roster, client: MatrixClient, message: RoomMessage
+    ) -> bool:
+        """Admit one reply as the answer it names, returning whether it answered anything. A reply
+        naming no label of an open question answers nothing, and the message is admitted as the words
+        it is."""
+        opened = await self.open_question(ctx, roster, message.room_id, message.sender)
+        if opened is None:
+            return False
+        chosen = await self.gated(ctx, opened, choices(message.body, opened.asked))
+        if not chosen:
+            return False
+        answering = Answering(
+            room_id=message.room_id, event_id=message.event_id, thread_root=message.thread_root
+        )
+        body = await self.answer(ctx, opened, answering, message.sender, chosen)
+        await self.settled(ctx, client, opened, message, body, chosen)
+        return True
+
+    async def tapped(self, ctx: SurfaceContext, roster: Roster, answer: PollAnswer) -> bool:
+        """Admit one tap on a poll as the option it chose. The poll's answer ids are the question's
+        own labels, so a response to somebody else's poll names none of them and chooses nothing."""
+        opened = await self.open_question(ctx, roster, answer.room_id, answer.sender)
+        if opened is None:
+            return False
+        chosen = await self.gated(ctx, opened, poll_choices(answer.answers, opened.asked))
+        if not chosen:
+            return False
+        answering = Answering(room_id=answer.room_id, event_id=answer.event_id)
+        await self.answer(ctx, opened, answering, answer.sender, chosen)
+        return True
+
+    async def open_question(
+        self, ctx: SurfaceContext, roster: Roster, room_id: str, sender: str
+    ) -> "Open | None":
+        """The question a room's last turn left open to one sender, or None where it left none.
+        `answerable_question` is the whole gate: a turn that asked nothing, a question already
+        answered, and one naming another member each answer None, and the surface asks it again for
+        every question index a reply names."""
+        conversation_id = await ctx.find_conversation(room_id)
+        if conversation_id is None:
+            return None
+        turn_id = await ctx.latest_turn(conversation_id)
+        if turn_id is None:
+            return None
+        member_id = await roster.member(sender)
+        if member_id is None:
+            return None
+        question = await ctx.answerable_question(conversation_id, turn_id, 0, member_id)
+        if question is None:
+            return None
+        return Open(
+            conversation_id=conversation_id,
+            turn_id=turn_id,
+            member_id=member_id,
+            question=question,
+            asked=asked_questions(question),
+        )
+
+    async def gated(
+        self, ctx: SurfaceContext, opened: "Open", named: Sequence[Choice]
+    ) -> tuple[Choice, ...]:
+        """The choices this member may still make, each asked of `answerable_question` under its own
+        question index. A question past the ask's own range, one already answered, and one another
+        member was asked are refused there and nowhere here."""
+        kept: list[Choice] = []
+        for choice in named:
+            question = await ctx.answerable_question(
+                opened.conversation_id, opened.turn_id, choice.question, opened.member_id
+            )
+            if question is None:
+                log("matrix.answer_refused", installation=self.bot)
+                continue
+            kept.append(choice)
+        return tuple(kept)
+
+    async def answer(
+        self,
+        ctx: SurfaceContext,
+        opened: "Open",
+        answering: Answering,
+        sender: str,
+        chosen: Sequence[Choice],
+    ) -> str:
+        """Admit the options one member chose as the words they said, keyed by the event that carried
+        them, and return those words. The answer founds its own turn, whose reply belongs under the
+        answer rather than under the question, so the message that turn answers is this event."""
+        marker = mint_marker()
+        body = fence_member_message(marker, "", answer_words(opened.asked, chosen), "")
+        admitted = await ctx.admit(
+            opened.conversation_id,
+            body,
+            idempotency_key=answering.event_id,
+            context=TurnContext(
+                sender=sender, source=permalink(answering.room_id, answering.event_id)
+            ),
+            speaker_member_id=opened.member_id,
+        )
+        await write_answering(ctx, admitted.turn_id, answering)
+        self.report(admitted, answering.room_id, answering.event_id)
+        return body
+
+    async def settled(
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        opened: "Open",
+        message: RoomMessage,
+        body: str,
+        chosen: Sequence[Choice],
+    ) -> None:
+        """Rewrite the question the member answered, so the room shows which answer landed. Only a
+        reply to something the bot said rewrites anything, and only the words this event actually
+        admitted: `admitted_body` answers what the key admitted, and a key holding other words
+        belongs to a delivery that got there first. The rewrite is sent under a transaction id of the
+        answering event, so a redelivered answer rewrites the message it already rewrote, and a
+        homeserver that refuses it costs the room a mark and the turn nothing."""
+        asked_in = message.replying_to
+        if asked_in is None or asked_in not in self.spoken.get(message.room_id, ()):
+            return
+        if await ctx.admitted_body(message.event_id) != body:
+            log("matrix.answer_raced", installation=self.bot)
+            return
+        content = edit_content(settled_block(opened.question.title, opened.asked, chosen), asked_in)
+        try:
+            await client.send_event(
+                message.room_id, MESSAGE_TYPE, answer_txn_id(message.event_id), content
+            )
+        except (MatrixError, httpx.HTTPError) as error:
+            warn("matrix.answer_unmarked", installation=self.bot, error_class=type(error).__name__)
+
+
+@dataclass(frozen=True)
+class Open:
+    """The question a room still holds, as the member who may answer it meets it: the conversation
+    and turn that carry it, the member `answerable_question` opened it to, and the ask itself."""
+
+    conversation_id: UUID
+    turn_id: UUID
+    member_id: UUID
+    question: AskUserInput
+    asked: tuple[Asked, ...]

@@ -1,7 +1,8 @@
 """The rules the matrix surface holds without the runtime: what it may import, which events may
-found a turn, the identifiers it derives, the messages it writes, and the frontmatter contract its
-skill is loaded under. `events.py` and `messages.py` import neither `ufo` nor an HTTP client, and a
-skill is data on disk, so these run on a checkout with only `pytest` and `pyyaml` installed."""
+found a turn, the identifiers it derives, the messages it writes, who a line addresses, the labels
+a question is answered by, and the frontmatter contract its skill is loaded under. The contract
+modules import neither `ufo` nor an HTTP client, and a skill is data on disk, so these run on a
+checkout with only `pytest` and `pyyaml` installed."""
 
 import ast
 import json
@@ -14,9 +15,11 @@ from uuid import UUID
 import pytest
 import yaml
 
+from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
+    answer_txn_id,
     file_txn_id,
     gaps,
     invites,
@@ -24,6 +27,8 @@ from ufo_ext_matrix.events import (
     next_batch,
     part_txn_id,
     permalink,
+    poll_answer,
+    poll_txn_id,
     room_key,
     room_message,
     room_names,
@@ -37,12 +42,29 @@ from ufo_ext_matrix.messages import (
     FENCE,
     PART_BUDGET_BYTES,
     _cut,
+    edit_content,
     file_content,
     html_body,
     message_content,
     msgtype_for,
     parts,
     reply_relation,
+)
+from ufo_ext_matrix.questions import (
+    LABELLED_HINT,
+    ONE_HINT,
+    SEVERAL_HINT,
+    Asked,
+    Choice,
+    answer_words,
+    choices,
+    label,
+    letters,
+    option_of,
+    poll_choices,
+    poll_content,
+    question_block,
+    settled_block,
 )
 
 EXTENSION = Path(__file__).resolve().parents[1]
@@ -56,7 +78,10 @@ TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
-PURE = ("events.py", "messages.py")
+PURE = ("events.py", "messages.py", "addressed.py", "questions.py")
+ROLLOUT = Asked("Ship it?", ("Ship it", "Hold"))
+TIMING = Asked("When?", ("Today", "Tomorrow"))
+FLAVOURS = Asked("Which ones?", ("Apples", "Pears", "Plums"), multi_select=True)
 ENVELOPE_BYTES = 2048
 
 
@@ -236,16 +261,215 @@ def test_what_founds_no_turn(event: dict) -> None:
     assert room_message(ROOM, event) is None
 
 
-def test_a_mention_addresses_the_bot() -> None:
-    intentional = room_message(ROOM, text_event("hey", **{"m.mentions": {"user_ids": [BOT]}}))
-    pill = room_message(
-        ROOM,
-        text_event("ufo: hey", formatted_body=f'<a href="https://matrix.to/#/{BOT}">ufo</a>: hey'),
+UFO = Bot(mxid=BOT, display_name="ufo", said=frozenset({"$asked"}))
+
+
+def addressed(**content: object) -> bool:
+    message = room_message(ROOM, text_event(str(content.pop("body", "hey")), **content))
+    assert message is not None
+    return addresses(message, UFO)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"m.mentions": {"user_ids": [BOT]}},
+        {"formatted_body": f'<a href="https://matrix.to/#/{BOT}">ufo</a>: hey'},
+        {"body": f"{BOT} summarize the week"},
+        {"body": "ufo: summarize the week"},
+        {"body": "hey UFO, summarize the week"},
+        {"m.relates_to": {"m.in_reply_to": {"event_id": "$asked"}}},
+    ],
+    ids=["mention", "pill", "mxid", "name", "any-case", "reply"],
+)
+def test_what_addresses_the_bot(content: dict) -> None:
+    assert addressed(**content)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"body": "lunch?"},
+        {"m.mentions": {"user_ids": ["@alice:example.org"]}},
+        {"formatted_body": '<a href="https://matrix.to/#/@alice:example.org">alice</a>: hey'},
+        {"body": "@ufobot:example.org summarize the week"},
+        {"body": "ufology is a field"},
+        {"m.relates_to": {"m.in_reply_to": {"event_id": "$alice"}}},
+    ],
+    ids=["nobody", "someone-else", "their-pill", "a-longer-mxid", "a-longer-word", "their-message"],
+)
+def test_what_addresses_somebody_else(content: dict) -> None:
+    assert not addressed(**content)
+
+
+def test_a_bot_with_no_display_name_is_still_addressed_by_its_mxid() -> None:
+    message = room_message(ROOM, text_event(f"{BOT} hello"))
+    assert message is not None
+    assert addresses(message, Bot(mxid=BOT))
+    assert not addresses(room_message(ROOM, text_event("hello")), Bot(mxid=BOT))  # type: ignore[arg-type]
+
+
+def test_a_rich_reply_names_the_message_it_answers() -> None:
+    message = room_message(
+        ROOM, text_event("1", **{"m.relates_to": {"m.in_reply_to": {"event_id": "$asked"}}})
     )
-    unaddressed = room_message(ROOM, text_event("lunch?"))
-    assert intentional is not None and intentional.addresses(BOT)
-    assert pill is not None and pill.addresses(BOT)
-    assert unaddressed is not None and not unaddressed.addresses(BOT)
+    assert message is not None and message.replying_to == "$asked"
+    assert room_message(ROOM, text_event("hi")).replying_to is None  # type: ignore[union-attr]
+
+
+def test_one_question_is_answered_by_a_number() -> None:
+    assert question_block("Rollout", (ROLLOUT,)) == (
+        "Rollout\n\nShip it?\n1. Ship it\n2. Hold\n\n" + ONE_HINT
+    )
+    assert choices("2", (ROLLOUT,)) == (Choice(question=0, option=1),)
+
+
+def test_several_questions_are_answered_by_label() -> None:
+    asked = (ROLLOUT, TIMING)
+    written = question_block("Rollout", asked)
+    assert "1a. Ship it" in written and "2b. Tomorrow" in written
+    assert written.endswith(LABELLED_HINT)
+    assert choices("1a 2b", asked) == (Choice(0, 0), Choice(1, 1))
+
+
+def test_a_bare_number_answers_nothing_where_several_questions_are_asked() -> None:
+    assert choices("1", (ROLLOUT, TIMING)) == ()
+
+
+def test_several_choices_answer_one_question_that_takes_them() -> None:
+    assert question_block("Fruit", (FLAVOURS,)).endswith(SEVERAL_HINT)
+    assert choices("1, 3", (FLAVOURS,)) == (Choice(0, 0), Choice(0, 2))
+    assert choices("1 and 2", (FLAVOURS,)) == (Choice(0, 0), Choice(0, 1))
+    assert choices("2 2", (FLAVOURS,)) == (Choice(0, 1),)
+
+
+def test_a_question_that_takes_one_choice_keeps_the_first_named() -> None:
+    assert choices("2 1", (ROLLOUT,)) == (Choice(0, 1),)
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["ship it", "1 more thing", "hold, please", "", "9", "1c", "3a", ":-)"],
+    ids=[
+        "words",
+        "a-number-and-words",
+        "a-label-and-words",
+        "nothing",
+        "past-the-options",
+        "past-the-letters",
+        "past-the-questions",
+        "punctuation",
+    ],
+)
+def test_what_answers_no_question(body: str) -> None:
+    assert choices(body, (ROLLOUT,)) == ()
+
+
+def test_a_question_that_asks_for_words_is_answered_by_words() -> None:
+    written = Asked("What should it say?")
+    assert question_block("Copy", (written,)) == "Copy\n\nWhat should it say?"
+    assert choices("something short", (written,)) == ()
+    assert choices("1", (written,)) == ()
+
+
+def test_the_options_chosen_are_the_words_the_answer_admits() -> None:
+    assert answer_words((ROLLOUT,), (Choice(0, 0),)) == "Ship it"
+    assert answer_words((FLAVOURS,), (Choice(0, 0), Choice(0, 2))) == "Apples, Plums"
+    assert answer_words((ROLLOUT, TIMING), (Choice(0, 1), Choice(1, 0))) == (
+        "Ship it?: Hold\nWhen?: Today"
+    )
+
+
+def test_the_answer_that_landed_is_marked_in_the_question_it_answered() -> None:
+    written = settled_block("Rollout", (ROLLOUT,), (Choice(0, 1),))
+    assert written == "Rollout\n\nShip it?\n1. Ship it\n2. Hold ✓"
+    assert ONE_HINT not in written
+
+
+def test_an_option_is_labelled_past_the_alphabet() -> None:
+    assert [letters(index) for index in (0, 25, 26, 27)] == ["a", "z", "aa", "ab"]
+    assert [option_of(letters(index)) for index in range(60)] == list(range(60))
+    assert label(0, 0, 1) == "1" and label(1, 26, 2) == "2aa"
+
+
+def test_a_poll_carries_the_same_labels_the_message_wrote() -> None:
+    content = poll_content("Rollout", ROLLOUT, reply_relation("$asked", None))
+    assert [answer["m.id"] for answer in content["m.poll"]["answers"]] == ["1", "2"]
+    assert content["m.poll"]["max_selections"] == 1
+    assert content["m.text"][0]["body"].startswith("Rollout")
+    assert content["m.relates_to"] == {"m.in_reply_to": {"event_id": "$asked"}}
+    assert poll_choices(["2"], (ROLLOUT,)) == (Choice(0, 1),)
+
+
+def test_a_response_to_somebody_elses_poll_chooses_nothing() -> None:
+    assert poll_choices(["a1b2c3"], (ROLLOUT,)) == ()
+
+
+def test_a_tap_names_the_poll_it_answers() -> None:
+    answer = poll_answer(
+        ROOM,
+        {
+            "type": "m.poll.response",
+            "event_id": "$tap",
+            "sender": "@alice:example.org",
+            "content": {
+                "m.relates_to": {"rel_type": "m.reference", "event_id": "$poll"},
+                "m.poll.response": {"answers": ["2"]},
+            },
+        },
+    )
+    assert answer is not None
+    assert (answer.poll_id, answer.answers, answer.event_id) == ("$poll", ("2",), "$tap")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"m.poll.response": {"answers": ["1"]}},
+        {
+            "m.relates_to": {"rel_type": "m.thread", "event_id": "$poll"},
+            "m.poll.response": {"answers": ["1"]},
+        },
+        {
+            "m.relates_to": {"rel_type": "m.reference", "event_id": "$poll"},
+            "m.poll.response": {"answers": []},
+        },
+        {"m.relates_to": {"rel_type": "m.reference", "event_id": "$poll"}},
+    ],
+    ids=["no-relation", "another-relation", "no-answer", "no-response"],
+)
+def test_what_is_no_tap(content: dict) -> None:
+    event = {
+        "type": "m.poll.response",
+        "event_id": "$tap",
+        "sender": "@alice:example.org",
+        "content": content,
+    }
+    assert poll_answer(ROOM, event) is None
+
+
+def test_a_poll_response_is_not_a_member_message() -> None:
+    event = {
+        "type": "m.poll.response",
+        "event_id": "$tap",
+        "sender": "@alice:example.org",
+        "content": {"m.poll.response": {"answers": ["1"]}},
+    }
+    assert room_message(ROOM, event) is None
+
+
+def test_an_edit_rewrites_one_message_and_says_so_to_a_client_that_shows_none() -> None:
+    content = edit_content("Rollout\n1. Ship it ✓", "$asked")
+    assert content["m.relates_to"] == {"rel_type": "m.replace", "event_id": "$asked"}
+    assert content["m.new_content"]["body"] == "Rollout\n1. Ship it ✓"
+    assert content["body"] == "* Rollout\n1. Ship it ✓"
+    assert content["m.new_content"]["formatted_body"] == content["formatted_body"]
+
+
+def test_an_answer_and_a_poll_are_sent_under_one_transaction_each() -> None:
+    turn = UUID("11111111-1111-1111-1111-111111111111")
+    assert answer_txn_id("$one") == answer_txn_id("$one") != answer_txn_id("$two")
+    assert poll_txn_id(turn) == f"ufo-poll-{turn}"
 
 
 def test_a_room_key_is_stable_and_colon_free() -> None:
