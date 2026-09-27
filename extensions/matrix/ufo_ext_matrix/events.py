@@ -7,7 +7,7 @@ surface does with it after that is `surface.py`'s."""
 
 import hashlib
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
@@ -32,6 +32,7 @@ SYNC_FILTER = json.dumps(
     },
     separators=(",", ":"),
 )
+BACKFILL_FILTER = json.dumps({"types": [MESSAGE_TYPE]}, separators=(",", ":"))
 
 
 @dataclass(frozen=True)
@@ -126,13 +127,30 @@ def _mentions(content: Mapping[str, Any]) -> frozenset[str]:
     return frozenset(user for user in users if isinstance(user, str))
 
 
-def timeline(batch: Mapping[str, Any]) -> Iterator[tuple[str, Mapping[str, Any]]]:
-    """Every timeline event of every joined room, in the order the homeserver sent them."""
+def timeline(
+    batch: Mapping[str, Any], earlier: Mapping[str, Sequence[Mapping[str, Any]]] | None = None
+) -> Iterator[tuple[str, Mapping[str, Any]]]:
+    """Every timeline event of every joined room, in the order the homeserver sent them. `earlier`
+    is what a room's gap was filled with, oldest first; it reads ahead of the room's timeline, and
+    an event the timeline also carries reads once."""
     for room_id, room in _joined(batch).items():
-        events = room.get("timeline", {}).get("events", [])
-        for event in events:
-            if isinstance(event, Mapping):
-                yield room_id, event
+        events = [e for e in room.get("timeline", {}).get("events", []) if isinstance(e, Mapping)]
+        seen = {e.get("event_id") for e in events}
+        filled = [e for e in (earlier or {}).get(room_id, ()) if e.get("event_id") not in seen]
+        for event in (*filled, *events):
+            yield room_id, event
+
+
+def gaps(batch: Mapping[str, Any]) -> dict[str, str]:
+    """Each room whose timeline the homeserver cut short (`limited`), with the `prev_batch` token
+    its missing events end at."""
+    cut: dict[str, str] = {}
+    for room_id, room in _joined(batch).items():
+        section = room.get("timeline", {})
+        prev = section.get("prev_batch")
+        if section.get("limited") is True and isinstance(prev, str) and prev:
+            cut[room_id] = prev
+    return cut
 
 
 def room_names(batch: Mapping[str, Any]) -> dict[str, str]:

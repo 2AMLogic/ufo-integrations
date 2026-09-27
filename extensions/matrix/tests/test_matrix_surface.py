@@ -1,6 +1,7 @@
 """The listener and the post against a fake homeserver: a stream resumes where it stood, the bot's
-own echo and every non-message event found nothing, a declined ambient line founds nothing, and a
-reply lands once however often it is posted."""
+own echo and every non-message event found nothing, a declined ambient line and a non-member's line
+found nothing, a room's audience only narrows, one bad event or one broken bot holds nothing else,
+and a reply lands once however often it is posted."""
 
 import asyncio
 import logging
@@ -19,6 +20,7 @@ from matrix_fakes import (  # noqa: E402
     DIRECT,
     OUTSIDER,
     ROOM,
+    STRANGER,
     TOKEN,
     Homeserver,
     Listener,
@@ -28,11 +30,7 @@ from matrix_fakes import (  # noqa: E402
     on_loop,
     text,
 )
-from ufo.sdk.audience import (  # noqa: E402
-    conversation_audience,
-    foreign_room_audience,
-    room_audience,
-)
+from ufo.sdk.audience import foreign_room_audience, room_audience  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
     NOTHING_DELIVERED,
     SILENCE_SENTINEL,
@@ -45,6 +43,7 @@ from ufo.sdk.surfaces import (  # noqa: E402
 from ufo_ext_matrix.events import room_key, txn_id  # noqa: E402
 from ufo_ext_matrix.since import read_since, write_since  # noqa: E402
 from ufo_ext_matrix.surface import (  # noqa: E402
+    CANCELLED_LINE,
     FAILED_LINE,
     HOMESERVER_SLOT,
     IDLE_SECONDS,
@@ -52,10 +51,13 @@ from ufo_ext_matrix.surface import (  # noqa: E402
     ConnectInput,
     Installation,
     MatrixSurface,
+    ROSTER_LIMIT,
     installations,
 )
 
 ROOM_MEMBERS = [BOT, ALICE, BOB]
+INTERNAL = room_audience("matrix", room_key(ROOM))
+FOREIGN = foreign_room_audience("matrix", room_key(ROOM))
 
 
 def rig(server: Homeserver, workspace: Workspace) -> Installation:
@@ -209,40 +211,158 @@ async def test_a_wanted_ambient_line_founds_a_turn_with_its_room_context(
 
 
 @on_loop
-async def test_a_direct_room_is_addressed_and_private_to_its_member(workspace: Workspace) -> None:
-    alice = uuid4()
-    workspace.members["alice@example.org"] = alice
+async def test_a_direct_room_is_addressed_and_links_its_member(workspace: Workspace) -> None:
+    alice = workspace.members["alice@example.org"]
     server = Homeserver()
     server.syncs["s1"] = batch("s2", {DIRECT: [text("$d1", ALICE, "what's on today")]})
     installation = await primed(server, workspace)
     await installation.step()
     [admitted] = workspace.admitted
     assert admitted["speaker"] == alice
-    assert workspace.linked == {ALICE: alice}
-    assert workspace.conversations[DIRECT][1] == conversation_audience(alice)
+    assert workspace.linked[ALICE] == alice
+    assert workspace.conversations[DIRECT][1] == room_audience("matrix", room_key(DIRECT))
     assert workspace.asked == []
 
 
 @on_loop
-async def test_a_room_with_another_homeserver_in_it_is_foreign(workspace: Workspace) -> None:
+async def test_a_room_with_a_non_member_in_it_is_foreign(workspace: Workspace) -> None:
     server = Homeserver()
     server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    server.syncs["s2"] = batch("s3", {ROOM: [mention("$m2", ALICE, "and again")]})
     installation = await primed(server, workspace)
     server.members[ROOM] = [*ROOM_MEMBERS, OUTSIDER]
     await installation.step()
-    assert workspace.conversations[ROOM][1] == foreign_room_audience("matrix", room_key(ROOM))
+    assert workspace.conversations[ROOM][1] == FOREIGN
+    server.members[ROOM] = [*ROOM_MEMBERS, STRANGER]
+    await installation.step()
+    assert workspace.conversations[ROOM][1] == FOREIGN
 
 
 @on_loop
-async def test_a_sender_off_the_workspace_domain_speaks_as_nobody(workspace: Workspace) -> None:
-    workspace.domain = "another.test"
-    workspace.members["alice@example.org"] = uuid4()
+async def test_a_stranger_on_the_bots_own_homeserver_makes_a_room_foreign(
+    workspace: Workspace,
+) -> None:
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    server.members[ROOM] = [*ROOM_MEMBERS, STRANGER]
+    await installation.step()
+    assert workspace.conversations[ROOM][1] == FOREIGN
+
+
+@on_loop
+async def test_a_workspace_with_no_domain_holds_only_foreign_rooms(workspace: Workspace) -> None:
+    workspace.domain = None
+    workspace.linked = {ALICE: uuid4(), BOB: uuid4()}
     server = Homeserver()
     server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
     installation = await primed(server, workspace)
     await installation.step()
-    assert workspace.admitted[0]["speaker"] is None
-    assert workspace.conversations[ROOM][1] == room_audience("matrix", room_key(ROOM))
+    assert workspace.conversations[ROOM][1] == FOREIGN
+
+
+@on_loop
+async def test_a_room_past_the_roster_limit_is_foreign_without_asking(
+    workspace: Workspace,
+) -> None:
+    crowd = [f"@m{n}:example.org" for n in range(ROSTER_LIMIT)]
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    server.members[ROOM] = [*ROOM_MEMBERS, *crowd]
+    await installation.step()
+    assert workspace.conversations[ROOM][1] == FOREIGN
+    assert set(workspace.linked) == {ALICE}
+
+
+@on_loop
+async def test_a_rooms_audience_only_narrows_as_people_come_and_go(workspace: Workspace) -> None:
+    """A direct room gains a member, then a non-member, who then leaves: the conversation stays
+    one, goes foreign, and stays foreign — no step raises and every line is admitted."""
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {DIRECT: [text("$d1", ALICE, "just us")]})
+    server.syncs["s2"] = batch("s3", {DIRECT: [mention("$d2", ALICE, "bob is here")]})
+    server.syncs["s3"] = batch("s4", {DIRECT: [mention("$d3", ALICE, "carol too")]})
+    server.syncs["s4"] = batch("s5", {DIRECT: [mention("$d4", ALICE, "carol left")]})
+    installation = await primed(server, workspace)
+    key = room_key(DIRECT)
+    seen = []
+    for joined in ([BOT, ALICE], [BOT, ALICE, BOB], [BOT, ALICE, BOB, OUTSIDER], [BOT, ALICE, BOB]):
+        server.members[DIRECT] = joined
+        assert await installation.step() == 0.0
+        seen.append(workspace.conversations[DIRECT][1])
+    internal, foreign = room_audience("matrix", key), foreign_room_audience("matrix", key)
+    assert seen == [internal, internal, foreign, foreign]
+    assert [a["key"] for a in workspace.admitted] == ["$d1", "$d2", "$d3", "$d4"]
+    assert len({a["conversation_id"] for a in workspace.admitted}) == 1
+
+
+@on_loop
+async def test_a_non_member_founds_nothing_and_costs_nothing(workspace: Workspace) -> None:
+    server = Homeserver()
+    server.syncs["s1"] = batch(
+        "s2",
+        {
+            DIRECT: [text("$d1", STRANGER, "hello?")],
+            ROOM: [mention("$m1", ALICE, "draft it"), text("$m2", OUTSIDER, "me too")],
+        },
+    )
+    installation = await primed(server, workspace)
+    server.members[DIRECT] = [BOT, STRANGER]
+    await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$m1"]
+    assert workspace.asked == []
+    assert STRANGER not in workspace.linked
+    assert await read_since(workspace, BOT) == "s2"
+
+
+@on_loop
+async def test_a_sender_off_the_workspace_domain_founds_nothing(workspace: Workspace) -> None:
+    workspace.domain = "another.test"
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    await installation.step()
+    assert workspace.admitted == []
+    assert workspace.conversations == {}
+
+
+@on_loop
+async def test_a_failing_event_is_skipped_and_the_stream_moves_on(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    workspace.broken = {"$bad"}
+    server = Homeserver()
+    server.syncs["s1"] = batch(
+        "s2", {ROOM: [mention("$bad", ALICE, "boom"), mention("$ok", BOB, "fine")]}
+    )
+    installation = await primed(server, workspace)
+    with caplog.at_level(logging.DEBUG):
+        assert await installation.step() == 0.0
+    assert [a["key"] for a in workspace.admitted] == ["$ok"]
+    assert await read_since(workspace, BOT) == "s2"
+    assert "matrix.message_skipped" in caplog.text
+    assert "boom" not in caplog.text
+
+
+@on_loop
+async def test_a_gap_in_the_timeline_is_filled_from_history(workspace: Workspace) -> None:
+    """A room that saw more than a sync's worth of events comes back `limited`; the missing messages
+    are paged back from `prev_batch` to where the stream stood, and admitted oldest first."""
+    server = Homeserver()
+    cut = batch("s2", {ROOM: [mention("$m3", ALICE, "third")]})
+    cut["rooms"]["join"][ROOM]["timeline"] |= {"limited": True, "prev_batch": "p2"}
+    server.syncs["s1"] = cut
+    server.history[(ROOM, "p2")] = {
+        "chunk": [mention("$m2", BOB, "second"), mention("$m1", ALICE, "first")],
+        "end": "p1",
+    }
+    server.history[(ROOM, "p1")] = {"chunk": [mention("$m3", ALICE, "third")], "end": "p0"}
+    installation = await primed(server, workspace)
+    await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$m1", "$m2", "$m3"]
+    [asked] = [r for r in server.requests if r.url.path.endswith("/messages")][:1]
+    assert (asked.url.params["dir"], asked.url.params["to"]) == ("b", "s1")
 
 
 @on_loop
@@ -268,6 +388,23 @@ async def test_an_invite_from_the_home_server_is_joined(workspace: Workspace) ->
     }
     await primed(server, workspace)
     assert server.joined == ["!mine:example.org"]
+
+
+@on_loop
+async def test_an_invite_from_a_non_member_is_left_standing(workspace: Workspace) -> None:
+    member = {
+        "type": "m.room.member",
+        "state_key": BOT,
+        "sender": STRANGER,
+        "content": {"membership": "invite"},
+    }
+    server = Homeserver()
+    server.syncs[None] = {
+        "next_batch": "s1",
+        "rooms": {"invite": {"!trap:example.org": {"invite_state": {"events": [member]}}}},
+    }
+    await primed(server, workspace)
+    assert server.joined == []
 
 
 @on_loop
@@ -328,6 +465,40 @@ async def test_the_token_reaches_no_log(
 
 
 @on_loop
+async def test_one_broken_bot_backs_off_and_never_ends_the_listener(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    server = Homeserver()
+    server.syncs[None] = {"rooms": {}}
+    installation = rig(server, workspace)
+    naps: list[float] = []
+
+    async def nap(seconds: float) -> None:
+        naps.append(seconds)
+        if len(naps) == 3:
+            raise asyncio.CancelledError
+
+    installation.surface.sleep = nap
+    with caplog.at_level(logging.DEBUG), pytest.raises(asyncio.CancelledError):
+        await installation.run()
+    assert naps == [1.0, 2.0, 5.0]
+    assert caplog.text.count("matrix.sync_failed") == 3
+
+
+@on_loop
+async def test_losing_fleet_ownership_ends_the_stream(workspace: Workspace) -> None:
+    server = Homeserver()
+    installation = Installation(
+        MatrixSurface(transport=server.transport, environ={}),
+        Listener(workspace, owned=False),  # type: ignore[arg-type]
+        BOT,
+    )
+    with pytest.raises(RuntimeError, match="fleet ownership"):
+        await installation.run()
+    assert server.requests == []
+
+
+@on_loop
 async def test_a_post_is_idempotent_under_its_turn(workspace: Workspace) -> None:
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
@@ -356,6 +527,25 @@ async def test_a_failed_turn_posts_the_surfaces_own_line(workspace: Workspace) -
     wb = writeback(TerminalFrame(status="failed", text="Traceback: secret internals"))
     await surface.post(workspace, wb)  # type: ignore[arg-type]
     assert server.sent[txn_id(wb.turn_id)]["body"] == FAILED_LINE
+
+
+@pytest.mark.parametrize(
+    ("text", "posted"),
+    [
+        ("I can only answer workspace members.", "I can only answer workspace members."),
+        ("", CANCELLED_LINE),
+    ],
+    ids=["core-gave-a-reason", "stopped"],
+)
+@on_loop
+async def test_a_cancelled_turn_posts_cores_reason(
+    workspace: Workspace, text: str, posted: str
+) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="cancelled", text=text))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert server.sent[txn_id(wb.turn_id)]["body"] == posted
 
 
 @on_loop

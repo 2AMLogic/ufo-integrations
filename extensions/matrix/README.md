@@ -13,6 +13,7 @@ turn:
 
 | Message | Turn |
 | --- | --- |
+| From a sender who resolves to no member | None, and no reply |
 | Mentions the bot, or is sent in a direct room (the bot and one other) | Founded |
 | Unaddressed, in a room that already holds a conversation | Founded only if `ambient_reply_wanted` says the agent is wanted |
 | Unaddressed, in a room with no conversation yet | None |
@@ -26,19 +27,28 @@ the recent ones are the evidence the ambient decision reads.
 | Bot MXID | The installation, bound to one workspace |
 | Room id | The conversation's key |
 | Sender MXID | A member: linked on first contact when its homeserver is the workspace's own domain and `localpart@domain` is a member's email; otherwise nobody |
-| Room with a member on another homeserver | A foreign audience: nothing internal is recalled into it |
-| Direct room with a known member | That member's audience |
+| Room where everyone but the bot is a member | A room audience: the room's memory and the workspace's shared memory |
+| Room with anyone else in it, or in a workspace with no domain | A foreign audience: the room's memory alone, nothing internal |
 | Terminal turn | `PUT /rooms/{roomId}/send/m.room.message/ufo-{turn_id}` |
+
+A direct room is a room like any other, so a room's audience only ever narrows: once anyone who is
+not a member joins, the room is foreign for good, whoever leaves after.
 
 The transaction id is the turn's, so a retried delivery is the same transaction and the homeserver
 answers it with the event it already sent. A turn whose whole answer is silence sends nothing. A
 question is written out with numbered options; a connect or credential handoff, and a turn's shared
-files, point at the workspace, since a room carries none of them.
+files, point at the workspace, since a room carries none of them. A cancelled turn posts the reason
+core gave — an archived conversation, a removed seat — or, with none, that it was stopped.
 
 The `/sync` position is stored per workspace in `matrix_ext_since`, a table the extension's
 migration owns, after each batch is delivered. A restart resumes from it; a batch replayed after a
 crash is admitted once, because each message's event id is its admission key. The first sync of a
 stream only fixes where it stands — history from before the bot listened founds nothing.
+
+A room that saw more than 50 events between two syncs comes back `limited`. The surface pages its
+history back from the gap to where the stream stood, 100 messages a page for at most 5 pages, and
+hears what it finds ahead of the timeline. A message that fails to admit is logged by error class and
+skipped, and one bot's failure backs that bot off without stopping the others.
 
 ## Install
 
@@ -54,8 +64,8 @@ ufoctl ext install matrix
 | `matrix_access_token` | Workspace credential slot | The bot user's access token |
 
 With both slots filled, a member asks in chat to connect Matrix; `matrix_connect` asks the homeserver
-whose token it holds and binds that MXID to the workspace. Invite the bot to a room from an account
-on its own homeserver and it joins.
+whose token it holds and binds that MXID to the workspace. A member who invites the bot to a room is
+joined; an invitation from anyone else is left standing.
 
 ## Traps
 
@@ -65,10 +75,19 @@ on its own homeserver and it joins.
   hears nothing it can read, and admits nothing.
 - **A new token is a new transaction scope.** Transaction ids are idempotent per access token, so a
   reply retried across a token rotation can land twice.
-- **Invitations from other homeservers are left standing.** Only a user on the bot's own homeserver
-  can bring it into a room.
-- **A member outside the workspace's domain speaks as nobody.** The turn runs, with no member's
-  memory and no member's authority.
+- **Only a member brings the bot into a room.** An invitation from anyone who resolves to no member —
+  a stranger on the bot's own homeserver included — is left standing.
+- **A non-member is not answered.** A sender outside the workspace's domain, or on it with no member
+  behind `localpart@domain`, founds no turn and gets no reply, however directly it addresses the bot.
+  Nothing is spent on the line; it is still heard as room context for the members.
+- **A homeserver username is taken to be a mailbox.** First contact links `@alice:example.com` to
+  the member `alice@example.com`, so the homeserver must hand out usernames only to the people who
+  hold those mailboxes. Disable open registration on it, and keep its usernames equal to mail names —
+  anyone who can register `@alice` before Alice does speaks as her.
+- **A room of more than 50 others is foreign.** Every joined user is resolved to a member before a
+  room reads internal memory, and past 50 the surface does not ask.
+- **A long gap is heard in part.** Past the 500 messages its history pages reach, a gap after a long
+  outage is heard from its newest end; anything earlier founds nothing.
 
 ## Tests
 

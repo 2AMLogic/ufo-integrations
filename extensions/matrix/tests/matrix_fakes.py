@@ -1,6 +1,8 @@
 """A fake homeserver behind an httpx `MockTransport`, and fakes of the two surface contexts that
 record what the surface asked core to do. The since table is real: a surface context's
-`transaction` yields an in-memory SQLite connection holding the extension's own table."""
+`transaction` yields an in-memory SQLite connection holding the extension's own table. So is the
+audience rule: `conversation_for` narrows through core's own `narrow_audience`, and raises where
+core raises."""
 
 import asyncio
 import functools
@@ -16,6 +18,8 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
+from ufo.runtime.turns.audience import narrow_audience
+from ufo.sdk.audience import Audience
 from ufo.sdk.surfaces import Admitted, AmbientMessage, CredentialSlotUnset
 from ufo_ext_matrix.since import SINCE_TABLE
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
@@ -28,6 +32,7 @@ DIRECT = "!direct:example.org"
 ALICE = "@alice:example.org"
 BOB = "@bob:example.org"
 OUTSIDER = "@carol:elsewhere.test"
+STRANGER = "@mallory:example.org"
 
 
 def text(event_id: str, sender: str, body: str, **content: object) -> dict[str, Any]:
@@ -67,6 +72,7 @@ class Homeserver:
     joined: list[str] = field(default_factory=list)
     failure: httpx.Response | None = None
     forbidden: set[str] = field(default_factory=set)
+    history: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -93,6 +99,9 @@ class Homeserver:
                 return httpx.Response(
                     200, json={"joined": {m: {} for m in self.members.get(room, [])}}
                 )
+            case "GET", ["rooms", room, "messages"]:
+                start = request.url.params.get("from", "")
+                return httpx.Response(200, json=self.history.get((room, start), {"chunk": []}))
             case "PUT", ["rooms", room, "send", "m.room.message", txn]:
                 if txn not in self.sent:
                     self.sent[txn] = {
@@ -122,7 +131,8 @@ async def since_engine() -> AsyncEngine:
 
 @dataclass
 class Workspace:
-    """A surface context's reach into core, recorded. `wanted` is the ambient decision's answer."""
+    """A surface context's reach into core, recorded. `wanted` is the ambient decision's answer;
+    `broken` names the event ids whose admission raises. Alice and Bob are members."""
 
     engine: AsyncEngine
     workspace_id: UUID = field(default_factory=uuid4)
@@ -130,12 +140,15 @@ class Workspace:
         default_factory=lambda: {HOMESERVER_SLOT: HOMESERVER, TOKEN_SLOT: TOKEN}
     )
     domain: str | None = "example.org"
-    members: dict[str, UUID] = field(default_factory=dict)
+    members: dict[str, UUID] = field(
+        default_factory=lambda: {"alice@example.org": uuid4(), "bob@example.org": uuid4()}
+    )
     linked: dict[str, UUID] = field(default_factory=dict)
     conversations: dict[str, tuple[UUID, str]] = field(default_factory=dict)
     wanted: bool = True
     asked: list[tuple[AmbientMessage, tuple[AmbientMessage, ...]]] = field(default_factory=list)
     admitted: list[dict[str, Any]] = field(default_factory=list)
+    broken: set[str] = field(default_factory=set)
 
     async def credential(self, slot: str) -> str:
         if slot not in self.credentials:
@@ -166,9 +179,13 @@ class Workspace:
         found = self.conversations.get(queue_key)
         return None if found is None else found[0]
 
-    async def conversation_for(self, queue_key: str, audience: str, **kwargs: object) -> UUID:
-        found = self.conversations.setdefault(queue_key, (uuid4(), audience))
-        return found[0]
+    async def conversation_for(self, queue_key: str, audience: Audience, **kwargs: object) -> UUID:
+        found = self.conversations.get(queue_key)
+        if found is None:
+            self.conversations[queue_key] = (uuid4(), audience)
+        else:
+            self.conversations[queue_key] = (found[0], narrow_audience(found[1], audience))
+        return self.conversations[queue_key][0]
 
     async def ambient_reply_wanted(
         self, message: AmbientMessage, history: tuple[AmbientMessage, ...]
@@ -185,6 +202,8 @@ class Workspace:
         *,
         speaker_member_id: UUID | None,
     ) -> Admitted:
+        if idempotency_key in self.broken:
+            raise ValueError("admission refused this event")
         for prior in self.admitted:
             if prior["key"] == idempotency_key:
                 return Admitted(turn_id=prior["turn_id"], opened_run=False)
@@ -209,9 +228,12 @@ class Listener:
     workspace_ctx: Workspace
     bound: frozenset[str] = frozenset({BOT})
     surface: str = "matrix"
+    owned: bool = True
 
     @asynccontextmanager
     async def workspace(self, installation_id: str) -> AsyncIterator[Workspace | None]:
+        if not self.owned:
+            raise RuntimeError("surface listener 'matrix' lost fleet ownership")
         yield self.workspace_ctx if installation_id in self.bound else None
 
 

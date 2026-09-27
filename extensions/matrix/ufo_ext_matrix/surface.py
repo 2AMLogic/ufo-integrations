@@ -4,10 +4,11 @@ A room is a conversation, keyed by its room id; its speakers are members where o
 surface is durable and installation-routed — the installation id is the bot's MXID, bound to one
 workspace — so ingress is the listener alone and no request is routed to it.
 
-Most lines in a room are not addressed to the agent. A message founds a turn when it mentions the
-bot, when it is sent in a direct room (the bot and one other), or when the room already holds a
-conversation and `ambient_reply_wanted` says the agent is wanted; anything else is heard, kept as
-evidence for the next decision, and admits nothing."""
+Most lines in a room are not addressed to the agent. A message from a member founds a turn when it
+mentions the bot, when it is sent in a direct room (the bot and one other), or when the room already
+holds a conversation and `ambient_reply_wanted` says the agent is wanted; anything else is heard,
+kept as evidence for the next decision, and admits nothing. A sender who resolves to no member
+founds nothing, however it addresses the bot."""
 
 import asyncio
 import math
@@ -19,11 +20,11 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import sqlalchemy as sa
 from pydantic import BaseModel
 
 from ufo.sdk.audience import (
     Audience,
-    conversation_audience,
     foreign_room_audience,
     room_audience,
 )
@@ -53,6 +54,7 @@ from ufo_ext_matrix.client import MatrixClient, MatrixError
 from ufo_ext_matrix.events import (
     SURFACE,
     RoomMessage,
+    gaps,
     invites,
     localpart,
     next_batch,
@@ -72,6 +74,8 @@ TOKEN_SLOT = "matrix_access_token"
 IDLE_SECONDS = 30.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 AMBIENT_CONTEXT_LINES = 10
+ROSTER_LIMIT = 50
+BACKFILL_PAGES = 5
 
 FAILED_LINE = "This turn failed before it could answer."
 CANCELLED_LINE = "This turn was stopped."
@@ -90,16 +94,18 @@ def installations(configured: str) -> tuple[str, ...]:
 
 
 def reply_text(writeback: Writeback, workspace_url: str | None) -> str:
-    """The one message a terminal turn becomes. A failed or stopped turn says so in the surface's
-    own words; a question is written out with its options, since a room has no buttons; and what a
-    room cannot carry — a connect or credential handoff, a shared file — points at the workspace."""
+    """The one message a terminal turn becomes. A failed turn says so in the surface's own words; a
+    cancelled turn posts the reason core gave — an archived conversation, a revoked seat — or, with
+    none, says it was stopped; a question is written out with its options, since a room has no
+    buttons; and what a room cannot carry — a connect or credential handoff, a shared file — points
+    at the workspace."""
     terminal = writeback.terminal
+    text = terminal.text.strip()
     if terminal.status == "failed":
         return FAILED_LINE
     if terminal.status == "cancelled":
-        return CANCELLED_LINE
+        return text if text and not is_silence_sentinel(text) else CANCELLED_LINE
     parts: list[str] = []
-    text = terminal.text.strip()
     if text and not is_silence_sentinel(text):
         parts.append(text)
     if terminal.question is not None:
@@ -136,19 +142,13 @@ def room_context(marker: str, heard: Sequence[Heard]) -> str:
     return f"<{element}>\n" + "\n".join(lines) + f"\n</{element}>\n"
 
 
-def audience_for(
-    bot: str, room_id: str, joined: frozenset[str], direct: bool, member_id: UUID | None
-) -> Audience:
-    """Who a room's conversation may disclose to. A room with anyone joined from another homeserver
-    is foreign and reads nothing internal; a direct room with a known member is that member's; any
-    other room is a room."""
-    home = server_name(bot)
+def audience_for(room_id: str, internal: bool) -> Audience:
+    """Who a room's conversation may disclose to: the room, and workspace-shared memory with it, when
+    everyone in it is a member; otherwise the room alone, sealed foreign. A direct room is a room
+    like any other, so a room's audience only ever narrows — room to foreign when a non-member
+    joins, and foreign for good after that."""
     key = room_key(room_id)
-    if any(_server(mxid) != home for mxid in joined):
-        return foreign_room_audience(SURFACE, key)
-    if direct and member_id is not None:
-        return conversation_audience(member_id)
-    return room_audience(SURFACE, key)
+    return room_audience(SURFACE, key) if internal else foreign_room_audience(SURFACE, key)
 
 
 def _refused(error: MatrixError) -> bool:
@@ -163,6 +163,48 @@ def _server(mxid: str) -> str | None:
         return server_name(mxid)
     except ValueError:
         return None
+
+
+@dataclass
+class Roster:
+    """Who in one batch resolves to a member, each MXID asked once. A linked MXID is its member; on
+    first contact an MXID on the workspace's own domain links to the member whose email is
+    `localpart@domain` — the homeserver serving that domain vouches for its users as the mail
+    server does for addresses. Any other MXID is nobody."""
+
+    ctx: SurfaceContext
+    known: dict[str, UUID | None] = field(default_factory=dict)
+    _domain: list[str | None] = field(default_factory=list)
+
+    async def domain(self) -> str | None:
+        if not self._domain:
+            self._domain.append(await self.ctx.workspace_domain())
+        return self._domain[0]
+
+    async def member(self, mxid: str) -> UUID | None:
+        if mxid not in self.known:
+            self.known[mxid] = await self._resolve(mxid)
+        return self.known[mxid]
+
+    async def internal(self, bot: str, joined: frozenset[str]) -> bool:
+        """Whether everyone joined but the bot is a member. A workspace with no domain of its own,
+        and a room past `ROSTER_LIMIT`, are foreign without asking."""
+        others = sorted(joined - {bot})
+        if len(others) > ROSTER_LIMIT or await self.domain() is None:
+            return False
+        for mxid in others:
+            if await self.member(mxid) is None:
+                return False
+        return True
+
+    async def _resolve(self, mxid: str) -> UUID | None:
+        linked = await self.ctx.linked_member(mxid)
+        if linked is not None:
+            return linked
+        domain = await self.domain()
+        if domain is None or _server(mxid) != domain:
+            return None
+        return await self.ctx.link_member(mxid, f"{localpart(mxid)}@{domain}")
 
 
 async def refuse_requests(_request: Request, _auth: SurfaceAuth) -> None:
@@ -255,12 +297,17 @@ class Installation:
     names: dict[str, str] = field(default_factory=dict)
 
     async def run(self) -> None:
+        """Sync until cancelled. A failure backs this bot off and leaves every other bot running;
+        only the listener gate's `RuntimeError` — the fleet no longer owns this listener — ends
+        the stream, since that is the runner's to act on."""
         failures = 0
         while True:
             try:
                 wait = await self.step()
                 failures = 0
-            except (MatrixError, httpx.HTTPError) as error:
+            except RuntimeError:
+                raise
+            except Exception as error:
                 wait = self._backoff(error, failures)
                 failures += 1
                 warn(
@@ -302,7 +349,7 @@ class Installation:
             async with self.listener.workspace(self.bot) as ctx:
                 if ctx is None:
                     return IDLE_SECONDS
-                await self.deliver(ctx, client, batch, admitting=since is not None)
+                await self.deliver(ctx, client, batch, since)
                 await write_since(ctx, self.bot, next_batch(batch))
         return 0.0
 
@@ -311,14 +358,19 @@ class Installation:
         ctx: SurfaceContext,
         client: MatrixClient,
         batch: Mapping[str, Any],
-        *,
-        admitting: bool,
+        since: str | None,
     ) -> None:
+        """Hear every message in the batch and admit the ones that found a turn. A message that
+        fails is logged and skipped, so one bad event never holds the stream; a homeserver error
+        or a lost database raises, and the batch is read again."""
+        admitting = since is not None
+        roster = Roster(ctx)
         self.names.update(room_names(batch))
         for room_id, inviter in invites(batch, self.bot):
-            await self._invited(client, room_id, inviter)
+            await self._invited(roster, client, room_id, inviter)
+        earlier = await self._backfill(client, batch, since) if since is not None else {}
         joined: dict[str, frozenset[str]] = {}
-        for room_id, event in timeline(batch):
+        for room_id, event in timeline(batch, earlier):
             message = room_message(room_id, event)
             if message is None:
                 continue
@@ -337,13 +389,51 @@ class Installation:
                         raise
                     log("matrix.room_unreadable", installation=self.bot, status=error.status)
                     joined[room_id] = frozenset()
-            if joined[room_id]:
-                entry.admitted = await self.consider(ctx, message, prior, joined[room_id])
+            if not joined[room_id]:
+                continue
+            try:
+                entry.admitted = await self.consider(ctx, roster, message, prior, joined[room_id])
+            except sa.exc.OperationalError:
+                raise
+            except Exception as error:
+                warn(
+                    "matrix.message_skipped",
+                    installation=self.bot,
+                    error_class=type(error).__name__,
+                )
 
-    async def _invited(self, client: MatrixClient, room_id: str, inviter: str) -> None:
-        """Join a room a user of the bot's own homeserver invited it to; an invitation from any
-        other server is left standing."""
-        if _server(inviter) != server_name(self.bot):
+    async def _backfill(
+        self, client: MatrixClient, batch: Mapping[str, Any], since: str
+    ) -> dict[str, list[Mapping[str, Any]]]:
+        """The messages each cut-short room held between `since` and its timeline, oldest first,
+        walked back at most `BACKFILL_PAGES` pages. A room the bot can no longer read is left
+        with its timeline alone."""
+        earlier: dict[str, list[Mapping[str, Any]]] = {}
+        for room_id, start in gaps(batch).items():
+            found: list[Mapping[str, Any]] = []
+            page: str | None = start
+            for _ in range(BACKFILL_PAGES):
+                if page is None:
+                    break
+                try:
+                    events, page = await client.messages_before(room_id, page, since)
+                except MatrixError as error:
+                    if not _refused(error):
+                        raise
+                    log("matrix.backfill_refused", installation=self.bot, status=error.status)
+                    break
+                found.extend(events)
+            if page is not None:
+                log("matrix.backfill_bounded", installation=self.bot, pages=BACKFILL_PAGES)
+            earlier[room_id] = found[::-1]
+        return earlier
+
+    async def _invited(
+        self, roster: Roster, client: MatrixClient, room_id: str, inviter: str
+    ) -> None:
+        """Join a room a workspace member invited the bot to; an invitation from anyone else is
+        left standing."""
+        if await roster.member(inviter) is None:
             log("matrix.invite_left", installation=self.bot, inviter_server=_server(inviter))
             return
         try:
@@ -356,21 +446,26 @@ class Installation:
     async def consider(
         self,
         ctx: SurfaceContext,
+        roster: Roster,
         message: RoomMessage,
         prior: Sequence[Heard],
         joined: frozenset[str],
     ) -> bool:
-        """Admit one message or decline it, returning whether it founded or joined a turn."""
-        direct = len(joined) == 2 and self.bot in joined
-        if not direct and not message.addresses(self.bot):
-            if await ctx.find_conversation(message.room_id) is None:
-                return False
+        """Admit one message or decline it, returning whether it founded or joined a turn. A sender
+        who is no member is declined before anything is spent on the line."""
+        addressed = (len(joined) == 2 and self.bot in joined) or message.addresses(self.bot)
+        if not addressed and await ctx.find_conversation(message.room_id) is None:
+            return False
+        member_id = await roster.member(message.sender)
+        if member_id is None:
+            log("matrix.speaker_unresolved", installation=self.bot)
+            return False
+        if not addressed:
             asked = AmbientMessage(speaker=message.sender, text=message.body)
             if not await ctx.ambient_reply_wanted(asked, tuple(h.line for h in prior)):
                 log("matrix.ambient_declined", installation=self.bot)
                 return False
-        member_id = await self.member(ctx, message.sender)
-        audience = audience_for(self.bot, message.room_id, joined, direct, member_id)
+        audience = audience_for(message.room_id, await roster.internal(self.bot, joined))
         conversation_id = await ctx.conversation_for(
             message.room_id, audience, label=self.names.get(message.room_id)
         )
@@ -385,16 +480,3 @@ class Installation:
             speaker_member_id=member_id,
         )
         return True
-
-    async def member(self, ctx: SurfaceContext, sender: str) -> UUID | None:
-        """The member an MXID speaks as. A linked MXID is its member; on first contact an MXID on
-        the workspace's own domain links to the member whose email is `localpart@domain` — the
-        homeserver serving that domain vouches for its users as the mail server does for addresses.
-        Any other sender speaks as nobody."""
-        linked = await ctx.linked_member(sender)
-        if linked is not None:
-            return linked
-        domain = await ctx.workspace_domain()
-        if domain is None or _server(sender) != domain:
-            return None
-        return await ctx.link_member(sender, f"{localpart(sender)}@{domain}")

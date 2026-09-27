@@ -13,6 +13,7 @@ import pytest
 
 from ufo_ext_matrix.events import (
     SURFACE,
+    gaps,
     invites,
     localpart,
     next_batch,
@@ -201,6 +202,20 @@ def test_a_batch_reads_in_order() -> None:
     assert next_batch(batch) == "s2"
     with pytest.raises(ValueError):
         next_batch({})
+
+
+def event_with_id(body: str, event_id: str) -> dict:
+    return text_event(body) | {"event_id": event_id}
+
+
+def test_a_cut_short_timeline_reads_its_gap_first_and_each_event_once() -> None:
+    cut = {"limited": True, "prev_batch": "p1", "events": [event_with_id("c", "$c")]}
+    whole = {"limited": False, "prev_batch": "p9", "events": [event_with_id("z", "$z")]}
+    batch = {"rooms": {"join": {ROOM: {"timeline": cut}, "!calm:example.org": {"timeline": whole}}}}
+    assert gaps(batch) == {ROOM: "p1"}
+    earlier = {ROOM: [event_with_id("a", "$a"), event_with_id("b", "$b"), event_with_id("c", "$c")]}
+    read = [(room, event["content"]["body"]) for room, event in timeline(batch, earlier)]
+    assert read == [(ROOM, "a"), (ROOM, "b"), (ROOM, "c"), ("!calm:example.org", "z")]
 
 
 def test_a_permalink_names_the_event() -> None:

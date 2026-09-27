@@ -12,9 +12,10 @@ from urllib.parse import quote
 
 import httpx
 
-from ufo_ext_matrix.events import SYNC_FILTER
+from ufo_ext_matrix.events import BACKFILL_FILTER, SYNC_FILTER
 
 CLIENT_PATH = "/_matrix/client/v3"
+BACKFILL_PAGE = 100
 SYNC_TIMEOUT_MS = 30_000
 REQUEST_TIMEOUT_SECONDS = 20.0
 
@@ -106,6 +107,25 @@ class MatrixClient:
         )
         joined = answer.get("joined")
         return frozenset(joined) if isinstance(joined, Mapping) else frozenset()
+
+    async def messages_before(
+        self, room_id: str, start: str, stop: str
+    ) -> tuple[list[Mapping[str, Any]], str | None]:
+        """One page of a room's messages walking back from `start` toward `stop`, newest first,
+        and the token the next page starts from — None once the walk reached `stop`."""
+        params: dict[str, str | int] = {
+            "dir": "b",
+            "from": start,
+            "to": stop,
+            "limit": BACKFILL_PAGE,
+            "filter": BACKFILL_FILTER,
+        }
+        path = f"/rooms/{quote(room_id, safe='')}/messages"
+        answer = await self._call("GET", path, "messages", params=params)
+        chunk = answer.get("chunk")
+        events = [e for e in chunk if isinstance(e, Mapping)] if isinstance(chunk, list) else []
+        end = answer.get("end")
+        return events, end if events and isinstance(end, str) and end != start else None
 
     async def _call(
         self,
