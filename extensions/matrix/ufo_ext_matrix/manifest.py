@@ -1,11 +1,14 @@
 """What the matrix extension declares: one durable surface, the two credential slots its bot needs,
-the setup action that binds that bot to a workspace, and the skill that walks an admin through it.
+the setup action that binds that bot to a workspace, the skill that walks an admin through it, and
+the two tools that link and unlink a member's MXID.
 
 A Matrix room is a conversation and the people in it are members. The bot user's `/sync` stream is
 the surface's listener, and each terminal turn is one message back into its room, sent under a
 transaction id derived from the turn so a retried delivery lands once. The deploy names the bots
 its listener runs in `UFO_MATRIX_BOTS`; each workspace holds its own bot's homeserver and token, and
-`matrix_connect` binds the bot the token belongs to.
+`matrix_connect` binds the bot the token belongs to. A member whose MXID the workspace's domain does
+not vouch for links it with `matrix_link_account` and a code sent from it; an admin undoes a link
+with `matrix_unlink_account`.
 
 Setup happens in chat and nowhere else. `matrix_connect` is an instance action bound to the `matrix`
 surface, so it is offered on that one surface row — `action:surface:matrix_connect` — rather than as a
@@ -21,6 +24,7 @@ from ufo.sdk.objects import SURFACE_KIND
 from ufo.sdk.surfaces import SurfaceSpec
 from ufo.sdk.tools import ObjectBinding, ToolDef
 from ufo_ext_matrix.events import SURFACE
+from ufo_ext_matrix.linking import CLAIM_MINUTES, LinkInput, UnlinkInput
 from ufo_ext_matrix.surface import (
     BOTS_ENV,
     HOMESERVER_SLOT,
@@ -33,6 +37,8 @@ from ufo_ext_matrix.surface import (
 NAME = "matrix"
 VERSION = "0.1.0"
 CONNECT_TOOL = "matrix_connect"
+LINK_TOOL = "matrix_link_account"
+UNLINK_TOOL = "matrix_unlink_account"
 
 SKILLS_ROOT = Path(__file__).parent / "skills"
 SKILL_NAMES = ("matrix-setup",)
@@ -72,6 +78,27 @@ def manifest(surface: MatrixSurface | None = None) -> Manifest:
                 handler=matrix.connect,
                 side_effecting=True,
                 bound=ObjectBinding(kind=SURFACE_KIND, binding="instance", name=SURFACE),
+            ),
+            ToolDef(
+                name=LINK_TOOL,
+                description=(
+                    "Link the speaking member's own Matrix ID, one on any homeserver: returns a "
+                    "one-time code the member sends the bot in a direct room from that ID within "
+                    f"{CLAIM_MINUTES} minutes. Relay the code and the steps to the member exactly."
+                ),
+                input_model=LinkInput,
+                handler=matrix.linking.link_account,
+                side_effecting=True,
+            ),
+            ToolDef(
+                name=UNLINK_TOOL,
+                description=(
+                    "Admin only: unlink a Matrix ID from whichever member it speaks for, so it "
+                    "reaches the agent as nobody until it is linked again by code."
+                ),
+                input_model=UnlinkInput,
+                handler=matrix.linking.unlink_account,
+                side_effecting=True,
             ),
         ),
         skills=tuple(SkillSpec(path=SKILLS_ROOT / name) for name in SKILL_NAMES),

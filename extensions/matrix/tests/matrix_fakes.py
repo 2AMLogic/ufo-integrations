@@ -1,6 +1,6 @@
 """A fake homeserver behind an httpx `MockTransport`, and fakes of the two surface contexts that
-record what the surface asked core to do. The since table is real: a surface context's
-`transaction` yields an in-memory SQLite connection holding the extension's own table. So is the
+record what the surface asked core to do. The extension's tables are real: a surface context's
+`transaction` yields an in-memory SQLite connection holding the extension's own tables. So is the
 audience rule: `conversation_for` narrows through core's own `narrow_audience`, and raises where
 core raises."""
 
@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from ufo.runtime.turns.audience import narrow_audience
 from ufo.sdk.audience import Audience
 from ufo.sdk.surfaces import Admitted, AmbientMessage, CredentialSlotUnset
+from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
 
@@ -123,7 +124,8 @@ async def since_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    SINCE_TABLE.to_metadata(metadata)
+    for table in (SINCE_TABLE, CLAIM_TABLE, LINK_TABLE):
+        table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
     return engine
@@ -176,6 +178,12 @@ class Workspace:
         if member is not None:
             self.linked[external_id] = member
         return member
+
+    async def link_member_id(self, external_id: str, member_id: UUID) -> UUID | None:
+        if member_id not in self.members.values():
+            return None
+        self.linked.setdefault(external_id, member_id)
+        return member_id
 
     async def find_conversation(self, queue_key: str) -> UUID | None:
         found = self.conversations.get(queue_key)
