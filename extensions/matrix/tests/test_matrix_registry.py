@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("ufo", reason="install ufo from git to run the registry integration test")
 
 from cryptography.fernet import Fernet  # noqa: E402
+
 from ufo.db import apply_migrations  # noqa: E402
 from ufo.host.ext.loader import (  # noqa: E402
     discovered,
@@ -19,7 +20,6 @@ from ufo.host.ext.loader import (  # noqa: E402
 )
 from ufo.host.kinds.surface_kind import registered_surfaces  # noqa: E402
 from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
-
 from ufo_ext_matrix.manifest import CONNECT_TOOL  # noqa: E402
 from ufo_ext_matrix.surface import BOTS_ENV, HOMESERVER_SLOT, TOKEN_SLOT  # noqa: E402
 

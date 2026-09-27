@@ -28,8 +28,11 @@ from matrix_fakes import (  # noqa: E402
     on_loop,
     text,
 )
-
-from ufo.sdk.audience import conversation_audience, foreign_room_audience, room_audience  # noqa: E402
+from ufo.sdk.audience import (  # noqa: E402
+    conversation_audience,
+    foreign_room_audience,
+    room_audience,
+)
 from ufo.sdk.surfaces import (  # noqa: E402
     NOTHING_DELIVERED,
     SILENCE_SENTINEL,
@@ -276,7 +279,7 @@ async def test_a_room_the_bot_was_removed_from_does_not_stall_the_stream(
         "s2", {ROOM: [mention("$gone", ALICE, "hi")], DIRECT: [text("$d1", ALICE, "still here")]}
     )
     installation = await primed(server, workspace)
-    server.forbidden = {ROOM, "!mine:example.org"}
+    server.forbidden = {ROOM}
     await installation.step()
     assert [a["key"] for a in workspace.admitted] == ["$d1"]
     assert await read_since(workspace, BOT) == "s2"

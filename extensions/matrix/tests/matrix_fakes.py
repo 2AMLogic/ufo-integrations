@@ -47,7 +47,9 @@ def batch(token: str, rooms: Mapping[str, list[dict[str, Any]]] | None = None) -
     return {
         "next_batch": token,
         "rooms": {
-            "join": {room: {"timeline": {"events": events}} for room, events in (rooms or {}).items()}
+            "join": {
+                room: {"timeline": {"events": events}} for room, events in (rooms or {}).items()
+            }
         },
     }
 

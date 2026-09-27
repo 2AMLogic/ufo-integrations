@@ -1,6 +1,6 @@
-"""The rules the matrix surface holds without the runtime: what it may import, which events may found
-a turn, and the identifiers it derives. `events.py` imports neither `ufo` nor an HTTP client, so
-these run on a checkout with only `pytest` installed."""
+"""The rules the matrix surface holds without the runtime: what it may import, which events may
+found a turn, and the identifiers it derives. `events.py` imports neither `ufo` nor an HTTP client,
+so these run on a checkout with only `pytest` installed."""
 
 import ast
 import re
@@ -29,9 +29,7 @@ EXTENSION = Path(__file__).resolve().parents[1]
 PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
-TRANSITION_WORDS = re.compile(
-    r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE
-)
+TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"

@@ -232,7 +232,9 @@ class MatrixSurface:
         except SurfaceInstallationConflict:
             return _said(f"{bot} is already connected to another workspace.", error=True)
         listed = bot in installations(self.environ.get(BOTS_ENV, ""))
-        tail = "It is listening." if listed else f"It listens once the deploy's {BOTS_ENV} names it."
+        tail = (
+            "It is listening." if listed else f"It listens once the deploy's {BOTS_ENV} names it."
+        )
         return _said(f"Connected {bot}. {tail}")
 
 

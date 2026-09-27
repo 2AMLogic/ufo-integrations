@@ -90,12 +90,8 @@ class MatrixClient:
     async def send_text(self, room_id: str, txn_id: str, body: str) -> str:
         """Send one `m.text` message under a caller-chosen transaction id and return its event id.
         The homeserver answers a repeated transaction id with the event it already created."""
-        path = (
-            f"/rooms/{quote(room_id, safe='')}/send/m.room.message/{quote(txn_id, safe='')}"
-        )
-        answer = await self._call(
-            "PUT", path, "send", json={"msgtype": "m.text", "body": body}
-        )
+        path = f"/rooms/{quote(room_id, safe='')}/send/m.room.message/{quote(txn_id, safe='')}"
+        answer = await self._call("PUT", path, "send", json={"msgtype": "m.text", "body": body})
         event_id = answer.get("event_id")
         if not isinstance(event_id, str):
             raise MatrixError("send", 200, "M_BAD_JSON", None)

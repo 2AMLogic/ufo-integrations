@@ -60,6 +60,4 @@ async def _write(
         sa.update(SINCE_TABLE).where(SINCE_TABLE.c.workspace_id == workspace_id).values(**values)
     )
     if updated.rowcount == 0:
-        await connection.execute(
-            sa.insert(SINCE_TABLE).values(workspace_id=workspace_id, **values)
-        )
+        await connection.execute(sa.insert(SINCE_TABLE).values(workspace_id=workspace_id, **values))
