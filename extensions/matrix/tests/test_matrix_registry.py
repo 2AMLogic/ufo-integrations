@@ -1,7 +1,8 @@
 """The manifest against the real runtime: the installed entry point loads through ufo's own loader,
-the surface registers as durable, the tools validate beside every builtin, the setup action addresses
-as the `matrix` surface row's own, the skill parses into the registry, and the migration lands the
-since, claim and link tables on a fresh database. Skipped where `ufo` is not installed."""
+the surface registers as durable with all three of its delivery handlers, the tools validate beside
+every builtin, the setup action addresses as the `matrix` surface row's own, the skill parses into
+the registry, and the migrations land the since, answering, claim and link tables on a fresh
+database. Skipped where `ufo` is not installed."""
 
 import sqlite3
 from pathlib import Path
@@ -46,7 +47,7 @@ def test_the_entry_point_declares_one_durable_listening_surface(manifest) -> Non
     assert surface.name == "matrix"
     assert surface.listen is not None and surface.post is not None
     assert surface.identify is not None
-    assert surface.attach is None and surface.speak is None
+    assert surface.attach is not None and surface.speak is not None
     assert surface.routes == () and not surface.addressed
     assert durable_surfaces((manifest,)) == frozenset({"matrix"})
     assert registered_surfaces((manifest,))["matrix"].durable
@@ -107,6 +108,14 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "installation_id",
             "since",
             "updated_at",
+        ]
+        assert columns("matrix_ext_answering") == [
+            "workspace_id",
+            "turn_id",
+            "room_id",
+            "event_id",
+            "thread_root",
+            "created_at",
         ]
         assert columns("matrix_ext_claim") == [
             "workspace_id",

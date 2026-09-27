@@ -3,8 +3,10 @@ the setup action that binds that bot to a workspace, the skill that walks an adm
 the two tools that link and unlink a member's MXID.
 
 A Matrix room is a conversation and the people in it are members. The bot user's `/sync` stream is
-the surface's listener, and each terminal turn is one message back into its room, sent under a
-transaction id derived from the turn so a retried delivery lands once. The deploy names the bots
+the surface's listener, and each terminal turn is one message back into its room — rich text under a
+relation to the message it answers — sent under a transaction id derived from the turn so a retried
+delivery lands once. The turn's shared files follow that reply as messages of their own, and words
+the turn marks for delivery before it ends reach the room as they are marked. The deploy names the bots
 its listener runs in `UFO_MATRIX_BOTS`; each workspace holds its own bot's homeserver and token, and
 `matrix_connect` binds the bot the token belongs to. A member whose MXID the workspace's domain does
 not vouch for links it with `matrix_link_account` and a code sent from it; an admin undoes a link
@@ -54,6 +56,8 @@ def manifest(surface: MatrixSurface | None = None) -> Manifest:
                 identify=refuse_requests,
                 listen=matrix.listen,
                 post=matrix.post,
+                attach=matrix.attach,
+                speak=matrix.speak,
             ),
         ),
         credentials=(

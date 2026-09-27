@@ -1,9 +1,10 @@
 """The rules the matrix surface holds without the runtime: what it may import, which events may
-found a turn, the identifiers it derives, and the frontmatter contract its skill is loaded under.
-`events.py` imports neither `ufo` nor an HTTP client, and a skill is data on disk, so these run on a
-checkout with only `pytest` and `pyyaml` installed."""
+found a turn, the identifiers it derives, the messages it writes, and the frontmatter contract its
+skill is loaded under. `events.py` and `messages.py` import neither `ufo` nor an HTTP client, and a
+skill is data on disk, so these run on a checkout with only `pytest` and `pyyaml` installed."""
 
 import ast
+import json
 import re
 import sys
 import tomllib
@@ -15,17 +16,32 @@ import yaml
 
 from ufo_ext_matrix.events import (
     SURFACE,
+    TEXT_MSGTYPE,
+    file_txn_id,
     gaps,
     invites,
     localpart,
     next_batch,
+    part_txn_id,
     permalink,
     room_key,
     room_message,
     room_names,
+    say_txn_id,
     server_name,
     timeline,
     txn_id,
+)
+from ufo_ext_matrix.messages import (
+    EVENT_LIMIT_BYTES,
+    FENCE,
+    PART_BUDGET_BYTES,
+    file_content,
+    html_body,
+    message_content,
+    msgtype_for,
+    parts,
+    reply_relation,
 )
 
 EXTENSION = Path(__file__).resolve().parents[1]
@@ -39,6 +55,8 @@ TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
+PURE = ("events.py", "messages.py")
+ENVELOPE_BYTES = 2048
 
 
 def text_event(body: str = "hello", **content: object) -> dict:
@@ -74,9 +92,14 @@ def test_imports_only_the_sdk(path: Path) -> None:
             assert top in sys.stdlib_module_names | THIRD_PARTY | {"ufo_ext_matrix"}, name
 
 
-def test_events_import_nothing_installed() -> None:
-    for name in imported_modules(PACKAGE / "events.py"):
-        assert name.split(".")[0] in sys.stdlib_module_names, name
+@pytest.mark.parametrize("module", PURE)
+def test_the_contract_modules_import_nothing_installed(module: str) -> None:
+    for name in imported_modules(PACKAGE / module):
+        top, _, leaf = name.partition(".")
+        if top == "ufo_ext_matrix":
+            assert f"{leaf}.py" in PURE, name
+        else:
+            assert top in sys.stdlib_module_names, name
 
 
 def test_the_package_declares_its_entry_point_and_client() -> None:
@@ -295,3 +318,158 @@ def test_a_cut_short_timeline_reads_its_gap_first_and_each_event_once() -> None:
 
 def test_a_permalink_names_the_event() -> None:
     assert permalink(ROOM, "$abc") == "https://matrix.to/#/!room:example.org/$abc"
+
+
+def test_a_threaded_message_carries_its_root() -> None:
+    threaded = room_message(
+        ROOM,
+        text_event("in the thread", **{"m.relates_to": {"rel_type": "m.thread", "event_id": "$r"}}),
+    )
+    plain = room_message(ROOM, text_event("in the room"))
+    assert threaded is not None and threaded.thread_root == "$r"
+    assert plain is not None and plain.thread_root is None
+
+
+def test_a_reply_relates_to_the_message_it_answers() -> None:
+    assert reply_relation("$asked", None) == {"m.in_reply_to": {"event_id": "$asked"}}
+    assert reply_relation("$asked", "$root") == {
+        "rel_type": "m.thread",
+        "event_id": "$root",
+        "is_falling_back": True,
+        "m.in_reply_to": {"event_id": "$asked"},
+    }
+
+
+def test_every_send_of_one_turn_has_its_own_transaction_id() -> None:
+    turn = UUID("00000000-0000-4000-8000-000000000001")
+    artifact = UUID("00000000-0000-4000-8000-00000000000a")
+    reply = UUID("00000000-0000-4000-8000-00000000000b")
+    ids = {
+        part_txn_id(txn_id(turn), 1),
+        part_txn_id(txn_id(turn), 2),
+        file_txn_id(turn, artifact),
+        say_txn_id(reply),
+    }
+    assert len(ids) == 4
+    assert part_txn_id(txn_id(turn), 1) == txn_id(turn)
+    assert file_txn_id(turn, artifact) == file_txn_id(turn, artifact)
+
+
+@pytest.mark.parametrize(
+    ("media_type", "msgtype"),
+    [
+        ("image/png", "m.image"),
+        ("video/mp4", "m.video"),
+        ("audio/ogg", "m.audio"),
+        ("application/pdf", "m.file"),
+        ("", "m.file"),
+    ],
+)
+def test_a_file_is_sent_as_what_it_is(media_type: str, msgtype: str) -> None:
+    assert msgtype_for(media_type) == msgtype
+
+
+def test_a_file_message_carries_its_caption_and_its_name() -> None:
+    captioned = file_content(
+        "m.image", "chart.png", "Last week", "image/png", 12, "mxc://s/1", {"a": "b"}
+    )
+    bare = file_content("m.file", "notes.md", None, "text/markdown", 3, "mxc://s/2")
+    assert captioned["body"] == "Last week" and captioned["filename"] == "chart.png"
+    assert captioned["info"] == {"mimetype": "image/png", "size": 12}
+    assert captioned["m.relates_to"] == {"a": "b"}
+    assert bare["body"] == "notes.md" and "filename" not in bare
+    assert "m.relates_to" not in bare
+
+
+def test_a_message_carries_the_words_and_the_same_words_as_html() -> None:
+    content = message_content("**now**", TEXT_MSGTYPE, {"m.in_reply_to": {"event_id": "$a"}})
+    assert content["msgtype"] == TEXT_MSGTYPE
+    assert content["body"] == "**now**"
+    assert content["format"] == "org.matrix.custom.html"
+    assert content["formatted_body"] == "<p><strong>now</strong></p>"
+    assert content["m.relates_to"] == {"m.in_reply_to": {"event_id": "$a"}}
+    assert "m.relates_to" not in message_content("hi", TEXT_MSGTYPE)
+
+
+@pytest.mark.parametrize(
+    ("markdown", "rendered"),
+    [
+        ("plain words", "<p>plain words</p>"),
+        ("two\nlines", "<p>two<br />lines</p>"),
+        (
+            "**bold** and *thin* and _thin_",
+            "<p><strong>bold</strong> and <em>thin</em> and <em>thin</em></p>",
+        ),
+        ("call `run()` first", "<p>call <code>run()</code> first</p>"),
+        ("[the report](https://ufo.test/r)", '<p><a href="https://ufo.test/r">the report</a></p>'),
+        (
+            "[**bold link**](https://ufo.test)",
+            '<p><a href="https://ufo.test"><strong>bold link</strong></a></p>',
+        ),
+        ("[nope](javascript:alert)", "<p>nope</p>"),
+        ("## Heading", "<h2>Heading</h2>"),
+        ("- one\n- two", "<ul><li>one</li><li>two</li></ul>"),
+        ("1. one\n2. two", "<ol><li>one</li><li>two</li></ol>"),
+        ("> quoted\n> again", "<blockquote>quoted<br />again</blockquote>"),
+        ("a < b & c", "<p>a &lt; b &amp; c</p>"),
+        (
+            "```python\nx = 1 < 2\n```",
+            '<pre><code class="language-python">x = 1 &lt; 2</code></pre>',
+        ),
+        ("```\nplain\n```", "<pre><code>plain</code></pre>"),
+    ],
+    ids=[
+        "paragraph",
+        "soft-break",
+        "emphasis",
+        "code-span",
+        "link",
+        "emphasis-in-link",
+        "unfollowable-link",
+        "heading",
+        "bullets",
+        "numbers",
+        "quote",
+        "escaped",
+        "fence-with-language",
+        "fence",
+    ],
+)
+def test_markdown_renders_as_the_subset_matrix_names(markdown: str, rendered: str) -> None:
+    assert html_body(markdown) == rendered
+
+
+def test_a_reply_within_the_budget_is_one_message() -> None:
+    reply = "First paragraph.\n\nSecond paragraph."
+    assert parts(reply) == (reply,)
+    assert parts("") == ("",)
+
+
+def test_a_long_reply_splits_on_paragraph_boundaries() -> None:
+    paragraph = "word " * 200
+    reply = "\n\n".join(f"{n}. {paragraph}" for n in range(6))
+    written = parts(reply)
+    assert len(written) > 1
+    assert "\n\n".join(written) == reply
+    assert all(len(part.encode()) <= PART_BUDGET_BYTES for part in written)
+
+
+def test_no_part_leaves_a_fence_open() -> None:
+    code = "\n".join(f"line_{n} = {n}" for n in range(600))
+    written = parts(f"Here it is.\n\n{FENCE}python\n{code}\n{FENCE}")
+    assert len(written) > 1
+    for part in written:
+        assert part.count(FENCE) % 2 == 0, part[:80]
+    assert all(FENCE not in part or part.strip().endswith(FENCE) for part in written)
+    assert "line_599 = 599" in written[-1]
+
+
+@pytest.mark.parametrize(
+    "written",
+    ['"' * 20000, "&" * 20000, '> "\n\n' * 4000, "- &\n" * 4000, "word" * 5000],
+    ids=["quotes", "ampersands", "quoted-lines", "list-items", "one-long-word"],
+)
+def test_every_part_fits_one_event_however_it_expands(written: str) -> None:
+    for part in parts(written):
+        event = json.dumps(message_content(part, TEXT_MSGTYPE, reply_relation("$a", "$b")))
+        assert len(event.encode()) + ENVELOPE_BYTES < EVENT_LIMIT_BYTES, len(event)
