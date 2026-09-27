@@ -58,8 +58,9 @@ reasoning back from the silence.
 
 - **The deploy's pack does not bundle `matrix`.** A `[pack] name = "assistant"` in the deploy's
   configuration narrows the active set to that pack's own extensions, and `matrix` is not among them,
-  so the surface never activates and no listener runs. A throwaway local pack, or a lockfile pinning
-  the extension set this deploy wants, is the way through.
+  so the surface never activates and no listener runs. A throwaway local pack listing the assistant
+  set and `matrix` is the way through. A lockfile pinning the set reaches it only with `[pack] name`
+  unset, because the pack narrows the active set after the lockfile has filled it.
 - **The room is encrypted.** The listener reads an encrypted room's events as `m.room.encrypted`, with
   no body to hear, and founds nothing. Turn encryption off for that room, or use an unencrypted one.
 - **Two readers share one account.** A token reused from another agent's bot makes both sync as the
