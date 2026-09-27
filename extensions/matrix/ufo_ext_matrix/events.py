@@ -17,6 +17,7 @@ SURFACE = "matrix"
 MESSAGE_TYPE = "m.room.message"
 POLL_START_TYPE = "m.poll.start"
 POLL_RESPONSE_TYPE = "m.poll.response"
+ENCRYPTED_TYPE = "m.room.encrypted"
 TEXT_MSGTYPE = "m.text"
 NOTICE_MSGTYPE = "m.notice"
 REPLACE_RELATION = "m.replace"
@@ -37,7 +38,7 @@ SYNC_FILTER = json.dumps(
     },
     separators=(",", ":"),
 )
-BACKFILL_FILTER = json.dumps({"types": [MESSAGE_TYPE]}, separators=(",", ":"))
+BACKFILL_FILTER = json.dumps({"types": [MESSAGE_TYPE, ENCRYPTED_TYPE]}, separators=(",", ":"))
 
 
 @dataclass(frozen=True)

@@ -41,6 +41,7 @@ from ufo.sdk.surfaces import (
 from ufo_ext_matrix.answering import ANSWERING_TABLE
 from ufo_ext_matrix.asking import ASKING_TABLE
 from ufo_ext_matrix.client import MEDIA_PATH
+from ufo_ext_matrix.crypto_store import CRYPTO_TABLE
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
@@ -183,12 +184,15 @@ class Homeserver:
                         "room": room,
                         "type": event_type,
                         "event_id": f"$sent{len(self.sent)}",
+                        "type": event_type,
                         **json.loads(request.content),
                     }
                 return httpx.Response(200, json={"event_id": self.sent[txn]["event_id"]})
             case "POST", ["join", room]:
                 self.joined.append(room)
                 return httpx.Response(200, json={"room_id": room})
+            case "GET", ["rooms", _, "state", "m.room.encryption", ""]:
+                return httpx.Response(404, json={"errcode": "M_NOT_FOUND"})
         return httpx.Response(404, json={"errcode": "M_UNRECOGNIZED"})
 
     def uploaded_media(self, request: httpx.Request) -> httpx.Response:
@@ -224,7 +228,7 @@ async def extension_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SINCE_TABLE, ANSWERING_TABLE, ASKING_TABLE, CLAIM_TABLE, LINK_TABLE):
+    for table in (SINCE_TABLE, ANSWERING_TABLE, ASKING_TABLE, CLAIM_TABLE, LINK_TABLE, CRYPTO_TABLE):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)

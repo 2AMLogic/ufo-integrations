@@ -65,6 +65,7 @@ from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.answering import Answering, read_answering, write_answering
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking
 from ufo_ext_matrix.client import MatrixClient, MatrixError
+from ufo_ext_matrix.crypto import CryptoUnavailable, device_for, inbound, outbound
 from ufo_ext_matrix.events import (
     MESSAGE_TYPE,
     NOTICE_MSGTYPE,
@@ -89,7 +90,6 @@ from ufo_ext_matrix.events import (
     room_names,
     say_txn_id,
     server_name,
-    timeline,
     txn_id,
 )
 from ufo_ext_matrix.feedback import attend
@@ -228,9 +228,12 @@ async def report_links(ctx: SurfaceContext, writeback: Writeback) -> tuple[str, 
 async def delivering() -> AsyncIterator[None]:
     """Every homeserver failure a writeback handler meets, as the delivery error core retries on: a
     rate limit carries the wait the homeserver itself asked for, and nothing repeats the body of the
-    answer the homeserver sent."""
+    answer the homeserver sent. A room this bot cannot encrypt for is the same kind of refusal: the
+    reply is not delivered rather than delivered in the clear."""
     try:
         yield
+    except CryptoUnavailable as error:
+        raise SurfaceDeliveryError(str(error)) from None
     except MatrixError as error:
         retry = error.retry_after_ms
         raise SurfaceDeliveryError(
@@ -379,7 +382,12 @@ class MatrixSurface:
                 reference = None
                 if body:
                     reference = await self.say(
-                        client, writeback.queue_key, txn_id(writeback.turn_id), body, answering
+                        ctx,
+                        client,
+                        writeback.queue_key,
+                        txn_id(writeback.turn_id),
+                        body,
+                        answering,
                     )
                 asked = await self.ask(ctx, client, writeback, answering)
                 await self.poll(client, writeback, answering)
@@ -403,7 +411,7 @@ class MatrixSurface:
             return None
         block = question_block(question.title, asked_questions(question))
         sent = await self.say(
-            client, writeback.queue_key, question_txn_id(writeback.turn_id), block, answering
+            ctx, client, writeback.queue_key, question_txn_id(writeback.turn_id), block, answering
         )
         if len(parts(block)) == 1:
             await write_asking(ctx, writeback.turn_id, Asking(writeback.queue_key, sent))
@@ -486,10 +494,16 @@ class MatrixSurface:
     ) -> None:
         """One shared file into the room: its bytes to the media repository, then the message that
         carries the `mxc://` the repository answered. A repeated upload leaves an unreferenced
-        object behind, which the media repository is welcome to."""
+        object behind, which the media repository is welcome to.
+
+        In an encrypted room that message is Megolm ciphertext, so the filename, the subject and the
+        `mxc://` are not on the server's timeline in the clear — the bytes behind the `mxc://` are
+        not themselves sealed, which is what an `EncryptedFile` would add."""
         data = await ctx.blob.get(artifact.blob_key)
         url = await client.upload(artifact.filename, artifact.media_type, data)
-        await client.send_message(
+        await self.send(
+            ctx,
+            client,
             writeback.queue_key,
             file_txn_id(writeback.turn_id, artifact.id),
             file_content(
@@ -513,6 +527,7 @@ class MatrixSurface:
         async with delivering():
             async with self.client(homeserver, token) as client:
                 return await self.say(
+                    ctx,
                     client,
                     reply.queue_key,
                     say_txn_id(reply.id),
@@ -521,8 +536,25 @@ class MatrixSurface:
                     msgtype=msgtype,
                 )
 
+    async def send(
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        room_id: str,
+        txn: str,
+        content: Mapping[str, Any],
+    ) -> str:
+        """One message into the room: itself in a plain room, Megolm ciphertext in an encrypted one.
+        Every message this surface sends leaves through here, so no delivery path puts a room's own
+        words on the wire in the clear because it did not think to ask whether the room is
+        encrypted. A room the bot has no device keys for raises `CryptoUnavailable` rather than
+        falling back to cleartext."""
+        event_type, event = await outbound(ctx, client, room_id, content)
+        return await client.send_event(room_id, event_type, txn, event)
+
     async def say(
         self,
+        ctx: SurfaceContext,
         client: MatrixClient,
         room_id: str,
         base: str,
@@ -539,8 +571,12 @@ class MatrixSurface:
         sent: list[str] = []
         for part, text in enumerate(parts(body), 1):
             sent.append(
-                await client.send_message(
-                    room_id, part_txn_id(base, part), message_content(text, msgtype, relation)
+                await self.send(
+                    ctx,
+                    client,
+                    room_id,
+                    part_txn_id(base, part),
+                    message_content(text, msgtype, relation),
                 )
             )
         return sent[0]
@@ -743,8 +779,9 @@ class Installation:
         earlier = await self._backfill(client, batch, since) if since is not None else {}
         if admitting and self.display_name is None:
             self.display_name = await self._display_name(client)
+        device = await device_for(ctx, client)
         joined: dict[str, frozenset[str]] = {}
-        for room_id, event in timeline(batch, earlier):
+        for room_id, event in await inbound(device, batch, earlier, admitting):
             message = room_message(room_id, event)
             if message is None:
                 answer = poll_answer(room_id, event)
@@ -884,9 +921,16 @@ class Installation:
         if proof.member_id is not None:
             roster.known[message.sender] = proof.member_id
         log("matrix.proof_read", installation=self.bot, linked=proof.member_id is not None)
-        await client.send_message(
-            message.room_id, proof_txn(message.event_id), message_content(proof.reply, TEXT_MSGTYPE)
-        )
+        try:
+            await self.surface.send(
+                ctx,
+                client,
+                message.room_id,
+                proof_txn(message.event_id),
+                message_content(proof.reply, TEXT_MSGTYPE),
+            )
+        except CryptoUnavailable as error:
+            warn("matrix.proof_answer_unsent", error_class=type(error).__name__)
         return True
 
     async def consider(

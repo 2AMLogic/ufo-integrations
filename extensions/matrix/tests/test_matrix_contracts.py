@@ -70,11 +70,14 @@ from ufo_ext_matrix.questions import (
 EXTENSION = Path(__file__).resolve().parents[1]
 PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
+MIGRATIONS = PACKAGE / "migrations"
 SKILLS_ROOT = PACKAGE / "skills"
 SKILL_NAMES = ("matrix-setup",)
 DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
+E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
+PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -131,7 +134,8 @@ def test_the_contract_modules_import_nothing_installed(module: str) -> None:
 def test_the_package_declares_its_entry_point_and_client() -> None:
     project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
     assert project["entry-points"]["ufo.extension"]["matrix"] == "ufo_ext_matrix.manifest:manifest"
-    assert any(dep.startswith("httpx") for dep in project["dependencies"])
+    for client in ("httpx", "vodozemac", "cryptography"):
+        assert any(dep.startswith(client) for dep in project["dependencies"]), client
 
 
 def test_deploy_keys_are_bare_names_core_prefixes() -> None:
@@ -167,7 +171,9 @@ def test_deploy_keys_are_bare_names_core_prefixes() -> None:
 def test_no_transition_language(path: Path) -> None:
     if path.name == "test_matrix_contracts.py":
         return
-    assert TRANSITION_WORDS.search(path.read_text()) is None
+    """A Matrix algorithm name such as the Olm one carries its protocol version, which is a wire
+    identifier and not transition language."""
+    assert TRANSITION_WORDS.search(PROTOCOL_NAMES.sub("", path.read_text())) is None
 
 
 def test_readme_matches_the_pack_shape() -> None:
