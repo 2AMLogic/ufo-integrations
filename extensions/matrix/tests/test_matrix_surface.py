@@ -51,6 +51,7 @@ from ufo_ext_matrix.surface import (  # noqa: E402
     IDLE_SECONDS,
     TOKEN_SLOT,
     ConnectInput,
+    FleetOwnershipLost,
     Installation,
     MatrixSurface,
     ROSTER_LIMIT,
@@ -526,9 +527,38 @@ async def test_losing_fleet_ownership_ends_the_stream(workspace: Workspace) -> N
         Listener(workspace, owned=False),  # type: ignore[arg-type]
         BOT,
     )
-    with pytest.raises(RuntimeError, match="fleet ownership"):
+    with pytest.raises(FleetOwnershipLost, match="fleet ownership"):
         await installation.run()
     assert server.requests == []
+
+
+@on_loop
+async def test_a_runtime_error_inside_a_round_backs_off_and_never_ends_the_listener(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`NotImplementedError` is a `RuntimeError`; raised past the listener gate it is one bot's
+    failure, not lost ownership."""
+    server = Homeserver()
+    server.syncs[None] = batch("s1", {})
+    installation = rig(server, workspace)
+
+    async def unfinished(*_args: object) -> None:
+        raise NotImplementedError
+
+    installation.deliver = unfinished  # type: ignore[method-assign]
+    naps: list[float] = []
+
+    async def nap(seconds: float) -> None:
+        naps.append(seconds)
+        if len(naps) == 2:
+            raise asyncio.CancelledError
+
+    installation.surface.sleep = nap
+    with caplog.at_level(logging.DEBUG), pytest.raises(asyncio.CancelledError):
+        await installation.run()
+    assert naps == [1.0, 2.0]
+    assert caplog.text.count("matrix.sync_failed") == 2
+    assert await read_since(workspace, BOT) is None
 
 
 @on_loop

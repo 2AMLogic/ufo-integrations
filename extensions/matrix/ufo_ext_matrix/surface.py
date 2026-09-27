@@ -14,7 +14,8 @@ import asyncio
 import math
 import os
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
@@ -81,6 +82,10 @@ FAILED_LINE = "This turn failed before it could answer."
 CANCELLED_LINE = "This turn was stopped."
 ELSEWHERE_LINE = "The next step happens in the workspace"
 FILES_LINE = "This turn shared files, which are in the workspace"
+
+
+class FleetOwnershipLost(RuntimeError):
+    """The fleet no longer owns this listener: the runner's to act on, so it ends the stream."""
 
 
 class ConnectInput(BaseModel):
@@ -301,14 +306,13 @@ class Installation:
 
     async def run(self) -> None:
         """Sync until cancelled. A failure backs this bot off and leaves every other bot running;
-        only the listener gate's `RuntimeError` — the fleet no longer owns this listener — ends
-        the stream, since that is the runner's to act on."""
+        only `FleetOwnershipLost` ends the stream, since that is the runner's to act on."""
         failures = 0
         while True:
             try:
                 wait = await self.step()
                 failures = 0
-            except RuntimeError:
+            except FleetOwnershipLost:
                 raise
             except Exception as error:
                 wait = self._backoff(error, failures)
@@ -331,12 +335,24 @@ class Installation:
                 return IDLE_SECONDS
         return BACKOFF_SECONDS[min(failures, len(BACKOFF_SECONDS) - 1)]
 
+    @asynccontextmanager
+    async def _bound(self) -> AsyncIterator[SurfaceContext | None]:
+        """The listener gate for this bot. The gate reports lost ownership as a bare `RuntimeError`
+        on entry; only that entry is read as `FleetOwnershipLost`, so a `RuntimeError` from the body
+        backs this bot off like any other failure."""
+        async with AsyncExitStack() as stack:
+            try:
+                ctx = await stack.enter_async_context(self.listener.workspace(self.bot))
+            except RuntimeError as error:
+                raise FleetOwnershipLost(str(error)) from error
+            yield ctx
+
     async def step(self) -> float:
         """One sync round, returning how long to wait before the next. An unbound bot or an empty
         slot waits and asks again, since both are fixed by a member in chat, not by a restart. The
         first round of a stream only fixes where it stands: history from before the bot was
         listening founds nothing."""
-        async with self.listener.workspace(self.bot) as ctx:
+        async with self._bound() as ctx:
             if ctx is None:
                 log("matrix.unbound", installation=self.bot)
                 return IDLE_SECONDS
@@ -349,7 +365,7 @@ class Installation:
             since = await read_since(ctx, self.bot)
         async with self.surface.client(homeserver, token) as client:
             batch = await client.sync(since)
-            async with self.listener.workspace(self.bot) as ctx:
+            async with self._bound() as ctx:
                 if ctx is None:
                     return IDLE_SECONDS
                 await self.deliver(ctx, client, batch, since)
