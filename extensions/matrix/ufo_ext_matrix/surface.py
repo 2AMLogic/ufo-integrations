@@ -365,7 +365,10 @@ class Installation:
     ) -> None:
         """Hear every message in the batch and admit the ones that found a turn. A message that
         fails is logged and skipped, so one bad event never holds the stream; a homeserver error
-        or a lost database raises, and the batch is read again."""
+        or any database failure raises, and the batch is read again. A database failure reaches
+        here through the session `write_since` then writes through, so that session's state is not
+        knowably intact whatever caused it: a failure that recurs parks the stream and names itself
+        every cycle, rather than dropping a member's message and advancing the position past it."""
         admitting = since is not None
         roster = Roster(ctx)
         self.names.update(room_names(batch))
@@ -396,7 +399,7 @@ class Installation:
                 continue
             try:
                 entry.admitted = await self.consider(ctx, roster, message, prior, joined[room_id])
-            except sa.exc.OperationalError:
+            except sa.exc.SQLAlchemyError:
                 raise
             except Exception as error:
                 warn(

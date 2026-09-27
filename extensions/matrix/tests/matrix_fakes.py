@@ -132,7 +132,8 @@ async def since_engine() -> AsyncEngine:
 @dataclass
 class Workspace:
     """A surface context's reach into core, recorded. `wanted` is the ambient decision's answer;
-    `broken` names the event ids whose admission raises. Alice and Bob are members."""
+    `broken` names the event ids whose admission raises, and `lost` maps an event id to the
+    database failure its admission raises. Alice and Bob are members."""
 
     engine: AsyncEngine
     workspace_id: UUID = field(default_factory=uuid4)
@@ -149,6 +150,7 @@ class Workspace:
     asked: list[tuple[AmbientMessage, tuple[AmbientMessage, ...]]] = field(default_factory=list)
     admitted: list[dict[str, Any]] = field(default_factory=list)
     broken: set[str] = field(default_factory=set)
+    lost: dict[str, BaseException] = field(default_factory=dict)
 
     async def credential(self, slot: str) -> str:
         if slot not in self.credentials:
@@ -204,6 +206,8 @@ class Workspace:
     ) -> Admitted:
         if idempotency_key in self.broken:
             raise ValueError("admission refused this event")
+        if idempotency_key in self.lost:
+            raise self.lost[idempotency_key]
         for prior in self.admitted:
             if prior["key"] == idempotency_key:
                 return Admitted(turn_id=prior["turn_id"], opened_run=False)

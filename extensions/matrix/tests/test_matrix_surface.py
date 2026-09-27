@@ -13,6 +13,8 @@ import pytest
 
 pytest.importorskip("ufo", reason="install ufo from git to run the surface tests")
 
+import sqlalchemy as sa  # noqa: E402
+
 from matrix_fakes import (  # noqa: E402
     ALICE,
     BOB,
@@ -343,6 +345,37 @@ async def test_a_failing_event_is_skipped_and_the_stream_moves_on(
     assert await read_since(workspace, BOT) == "s2"
     assert "matrix.message_skipped" in caplog.text
     assert "boom" not in caplog.text
+
+
+async def _read_again_rather_than_skipped(workspace: Workspace, error: BaseException) -> None:
+    """One database failure during admission: nothing admitted, and the position where it was."""
+    workspace.lost = {"$gone": error}
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$gone", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    before = await read_since(workspace, BOT)
+    with pytest.raises(sa.exc.SQLAlchemyError):
+        await installation.step()
+    assert workspace.admitted == []
+    assert await read_since(workspace, BOT) == before
+
+
+@on_loop
+async def test_a_dropped_connection_is_read_again_rather_than_skipped(
+    workspace: Workspace,
+) -> None:
+    """A dropped connection reaches `admit` as `InterfaceError`, which is a sibling of
+    `DatabaseError` and so never an `OperationalError`."""
+    await _read_again_rather_than_skipped(
+        workspace, sa.exc.InterfaceError("admit", None, OSError("connection lost"))
+    )
+
+
+@on_loop
+async def test_an_exhausted_pool_is_read_again_rather_than_skipped(workspace: Workspace) -> None:
+    """An exhausted pool reaches `admit` as `TimeoutError`, which reaches `SQLAlchemyError` without
+    passing through `DBAPIError` at all. A guard narrowed to connection shapes drops it."""
+    await _read_again_rather_than_skipped(workspace, sa.exc.TimeoutError("pool exhausted"))
 
 
 @on_loop
