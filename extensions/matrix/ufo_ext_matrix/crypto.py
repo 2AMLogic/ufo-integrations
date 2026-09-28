@@ -192,14 +192,17 @@ def open_file(sealed: Mapping[str, Any], ciphertext: bytes) -> bytes:
     of that claim the sender signed for. A mismatch raises rather than returning bytes nobody
     vouched for.
 
-    Every field is a hostile sender's to choose, so each is read as a shape rather than trusted to
-    be one. Anything malformed leaves as `FileHashMismatch`, which is the one failure a reader
+    Every field is a hostile sender's to choose — the argument itself included, since it arrives as
+    an event's `file` and `json.loads` hands back whatever was typed there — so each is read as a
+    shape rather than trusted to be one. Anything malformed leaves as `FileHashMismatch`, which is the one failure a reader
     handles by dropping the file — an escaping `AttributeError` would turn a dropped attachment into
     an unhandled exception in whoever is reading the room.
 
     `compare_digest` is used because it is the right default for "is this the value I was supposed
     to get", not because a leak of this digest would matter: the attacker chose the ciphertext, so
     they already know its hash, and knowing it buys no second preimage."""
+    if not isinstance(sealed, Mapping):
+        raise FileHashMismatch("the file is not an object")
     hashes = sealed.get("hashes")
     expected = hashes.get("sha256") if isinstance(hashes, Mapping) else None
     if not isinstance(expected, str):

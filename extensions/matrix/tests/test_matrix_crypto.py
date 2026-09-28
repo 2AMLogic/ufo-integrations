@@ -713,11 +713,18 @@ def test_a_hash_that_does_not_match_is_never_decrypted(monkeypatch: pytest.Monke
 
 
 def test_a_malformed_file_is_a_dropped_file_and_never_an_unhandled_error() -> None:
-    """Every field is a hostile sender's to choose. A reader drops a file by catching
-    `FileHashMismatch`, so a shape that escapes as `AttributeError` or `KeyError` turns a dropped
-    attachment into an unhandled exception in whoever is reading the room."""
+    """Every field is a hostile sender's to choose, the whole object included.
+
+    It arrives as an event's `file`, so `{"msgtype": "m.image", "file": "gotcha"}` reaches this with
+    a string. A reader drops a file by catching `FileHashMismatch`, so a shape that escapes as
+    `AttributeError` or `KeyError` turns a dropped attachment into an unhandled exception in
+    whoever is reading the room."""
     ciphertext, sealed = crypto.seal_file(b"a file")
     for broken in (
+        "gotcha",
+        None,
+        42,
+        [],
         {},
         {**sealed, "hashes": None},
         {**sealed, "hashes": "deadbeef"},
