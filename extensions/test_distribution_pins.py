@@ -20,11 +20,16 @@ import pytest
 
 pytest.importorskip("ufo", reason="install ufo from git to run the distribution pin tests")
 
+from pathlib import Path  # noqa: E402
+
 import ufo  # noqa: E402
+import ufo_ext_matrix  # noqa: E402
+import ufo_ext_pulse  # noqa: E402
 from ufo.host.ext.loader import (  # noqa: E402
     ExtensionPin,
     Lockfile,
     discovered,
+    extension_content_digest,
     extension_digest,
     load_manifests,
     write_lockfile,
@@ -77,35 +82,73 @@ def test_a_digest_covers_only_its_own_package(installed: dict) -> None:
     assert digests["pulse"] != digests["matrix"]
 
 
-def test_editing_one_package_leaves_the_other_pin_unchanged(installed: dict, tmp_path) -> None:
-    """The property an operator depends on: a matrix change must not invalidate a pulse pin.
+def _package_files(root: Path) -> dict[str, bytes]:
+    """Rebuild the file map `extension_digest` builds, by the same rules.
 
-    Rather than mutate the checkout, this re-derives matrix's digest from its own file map with one
-    file altered, and checks pulse's digest is untouched — the digest is a pure function of the
-    package's files, so the same conclusion holds without editing anything on disk.
+    Kept deliberately identical to `loader.extension_digest` — `as_posix()` keys, `__pycache__`
+    directories and `.pyc` files excluded. The test below asserts this reconstruction hashes to the
+    real pin, so a divergence here fails loudly rather than quietly testing something else.
     """
-    from pathlib import Path
-
-    import ufo_ext_matrix
-
-    from ufo.host.ext.loader import extension_content_digest
-
-    before_pulse = extension_digest(installed["pulse"][1])
-    matrix_root = Path(ufo_ext_matrix.__file__).parent
-    files = {
-        str(p.relative_to(matrix_root)): p.read_bytes()
-        for p in sorted(matrix_root.rglob("*"))
-        if p.is_file() and "__pycache__" not in p.parts
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
     }
+
+
+def test_the_reconstruction_matches_the_real_pin(installed: dict) -> None:
+    """Ties the hand-rolled file map to what the loader actually hashes.
+
+    Without this the edit test below would only prove sha256 is content-sensitive — a property of
+    core's hash function, not of this repo. It is also the guard on core's exclusion rules moving:
+    the reconstruction has to keep agreeing with `extension_digest`, or this fails.
+    """
+    for name, module in (("matrix", ufo_ext_matrix), ("pulse", ufo_ext_pulse)):
+        root = Path(module.__file__).parent
+        assert extension_content_digest(_package_files(root)) == extension_digest(
+            installed[name][1]
+        )
+
+
+def test_the_two_packages_share_no_file(installed: dict) -> None:
+    """Why editing one cannot move the other's digest, stated as a fact about the layout.
+
+    The digest is a pure function of the files under a package root. Two roots that are not nested
+    in either direction therefore have disjoint file sets, so no edit can appear in both maps. That
+    is the argument the independence rests on — asserting it here earns the conclusion, where
+    re-reading an unchanged file on disk would only restate it.
+    """
+    matrix_root = Path(ufo_ext_matrix.__file__).parent.resolve()
+    pulse_root = Path(ufo_ext_pulse.__file__).parent.resolve()
+    assert matrix_root != pulse_root
+    assert pulse_root not in matrix_root.parents
+    assert matrix_root not in pulse_root.parents
+
+
+def test_editing_one_package_moves_only_its_own_digest(installed: dict) -> None:
+    """Editing a file in matrix changes matrix's digest, and pulse's file set is untouched by it.
+
+    The edit is applied to a reconstructed file map rather than to the checkout: the digest is a
+    pure function of those bytes (`test_the_reconstruction_matches_the_real_pin` ties the map to the
+    real pin), so the conclusion is the same without a test that writes into a sibling extension's
+    source — which is also a directory another worker may hold a claim on.
+    """
+    matrix_root = Path(ufo_ext_matrix.__file__).parent
+    files = _package_files(matrix_root)
     assert files, "matrix package resolved to no files"
 
     unchanged = extension_content_digest(files)
     edited = dict(files)
     victim = next(iter(sorted(edited)))
     edited[victim] = edited[victim] + b"\n# touched by a test\n"
-    assert extension_content_digest(edited) != unchanged, "editing matrix must move matrix's digest"
+    assert extension_content_digest(edited) != unchanged
 
-    assert extension_digest(installed["pulse"][1]) == before_pulse
+    # The edited file is under matrix's root and therefore outside pulse's, so it is not a member
+    # of pulse's file set. Keys are package-relative, so `__init__.py` names a different file in
+    # each package -- the disjointness is between the roots, which
+    # `test_the_two_packages_share_no_file` asserts.
+    pulse_root = Path(ufo_ext_pulse.__file__).parent.resolve()
+    assert pulse_root not in (matrix_root / victim).resolve().parents
 
 
 def test_a_lockfile_pinning_one_activates_only_that_one(
@@ -130,7 +173,7 @@ def test_dropping_one_from_a_lockfile_leaves_the_other_pin_byte_identical(
     assert pin_in_both == pin_alone
 
 
-def test_a_pack_naming_one_does_not_activate_the_other(installed: dict) -> None:
+def test_a_pack_bundling_neither_activates_neither(installed: dict) -> None:
     """`[pack] name` narrows to exactly what the pack bundles. The assistant pack bundles neither,
     which is the documented trap; the point here is that naming a pack cannot smuggle in a sibling
     extension from the same distribution."""
