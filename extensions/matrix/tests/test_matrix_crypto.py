@@ -672,24 +672,63 @@ def test_each_file_is_sealed_under_its_own_key_and_counter() -> None:
 
 
 def test_the_counter_half_of_the_iv_starts_at_zero() -> None:
-    """The low half of the IV is the block counter. Starting it anywhere else runs the stream off
-    the end for a long enough file, so the random half is the high half alone."""
+    """The low half of the IV is the block counter and the high half is the nonce.
+
+    The literals are written out rather than taken from the constants under test: sliced by its own
+    `FILE_COUNTER_BYTES`, this holds for any value of it, and a four-byte counter is both off-spec
+    and a 32 GiB ceiling before it carries into the nonce."""
+    assert crypto.FILE_IV_BYTES == 16
+    assert crypto.FILE_COUNTER_BYTES == 8
     _, sealed = crypto.seal_file(b"x")
-    assert crypto.decode(sealed["iv"])[crypto.FILE_IV_BYTES - crypto.FILE_COUNTER_BYTES :] == bytes(
-        crypto.FILE_COUNTER_BYTES
-    )
+    iv = crypto.decode(sealed["iv"])
+    assert len(iv) == 16
+    assert iv[8:] == bytes(8)
+    assert iv[:8] != bytes(8)
 
 
-def test_a_hash_that_does_not_match_is_never_decrypted() -> None:
-    """What the media repository answers with is not yet what the sender sealed. The hash decides
-    that, and it is checked before any decryption — a tampered body raises rather than returning
-    bytes nobody vouched for."""
+def test_a_hash_that_does_not_match_is_never_decrypted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the media repository answers with is not yet what the sender sealed.
+
+    The cipher is replaced with a failure, so this asserts the ordering rather than the raise: a
+    test that only catches `FileHashMismatch` passes just as well when the decryption happens first
+    and the check happens after, which is the arrangement the bold claim rules out."""
     ciphertext, sealed = crypto.seal_file(b"the original file")
     tampered = bytes([ciphertext[0] ^ 0xFF]) + ciphertext[1:]
-    with pytest.raises(crypto.FileHashMismatch):
-        crypto.open_file(sealed, tampered)
-    with pytest.raises(crypto.FileHashMismatch):
-        crypto.open_file({**sealed, "hashes": {}}, ciphertext)
+    monkeypatch.setattr(
+        crypto,
+        "_stream",
+        lambda *_: pytest.fail("the ciphertext reached the cipher before the hash was checked"),
+    )
+    for sealed_file, body in (
+        (sealed, tampered),
+        ({**sealed, "hashes": {}}, ciphertext),
+        ({**sealed, "hashes": None}, ciphertext),
+        ({**sealed, "hashes": "deadbeef"}, ciphertext),
+        ({**sealed, "key": {**sealed["key"], "alg": "A128CTR"}}, ciphertext),
+        ({**sealed, "key": {**sealed["key"], "k": None}}, ciphertext),
+        ({k: v for k, v in sealed.items() if k != "iv"}, ciphertext),
+    ):
+        with pytest.raises(crypto.FileHashMismatch):
+            crypto.open_file(sealed_file, body)
+
+
+def test_a_malformed_file_is_a_dropped_file_and_never_an_unhandled_error() -> None:
+    """Every field is a hostile sender's to choose. A reader drops a file by catching
+    `FileHashMismatch`, so a shape that escapes as `AttributeError` or `KeyError` turns a dropped
+    attachment into an unhandled exception in whoever is reading the room."""
+    ciphertext, sealed = crypto.seal_file(b"a file")
+    for broken in (
+        {},
+        {**sealed, "hashes": None},
+        {**sealed, "hashes": "deadbeef"},
+        {**sealed, "hashes": {"sha256": "not base64 !!"}},
+        {**sealed, "key": None},
+        {**sealed, "key": {**sealed["key"], "k": None}},
+        {**sealed, "key": {**sealed["key"], "k": "c2hvcnQ="}},
+        {k: v for k, v in sealed.items() if k != "iv"},
+    ):
+        with pytest.raises(crypto.FileHashMismatch):
+            crypto.open_file(broken, ciphertext)
 
 
 def test_a_file_naming_another_algorithm_is_refused() -> None:

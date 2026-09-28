@@ -190,16 +190,40 @@ def open_file(sealed: Mapping[str, Any], ciphertext: bytes) -> bytes:
     The hash is checked before anything is decrypted. What the media repository answers with is not
     yet what the sender sealed — the repository is the homeserver's, and the hash is the only part
     of that claim the sender signed for. A mismatch raises rather than returning bytes nobody
-    vouched for."""
-    expected = sealed.get("hashes", {}).get("sha256")
+    vouched for.
+
+    Every field is a hostile sender's to choose, so each is read as a shape rather than trusted to
+    be one. Anything malformed leaves as `FileHashMismatch`, which is the one failure a reader
+    handles by dropping the file — an escaping `AttributeError` would turn a dropped attachment into
+    an unhandled exception in whoever is reading the room.
+
+    `compare_digest` is used because it is the right default for "is this the value I was supposed
+    to get", not because a leak of this digest would matter: the attacker chose the ciphertext, so
+    they already know its hash, and knowing it buys no second preimage."""
+    hashes = sealed.get("hashes")
+    expected = hashes.get("sha256") if isinstance(hashes, Mapping) else None
     if not isinstance(expected, str):
         raise FileHashMismatch("the file carries no sha256")
-    if not hmac.compare_digest(decode(expected), hashlib.sha256(ciphertext).digest()):
+    try:
+        digest = decode(expected)
+    except ValueError as unreadable:
+        raise FileHashMismatch("the file's sha256 is not base64") from unreadable
+    if not hmac.compare_digest(digest, hashlib.sha256(ciphertext).digest()):
         raise FileHashMismatch("the fetched bytes do not match the file's sha256")
-    key = sealed.get("key") or {}
-    if key.get("alg") != FILE_ALGORITHM:
-        raise FileHashMismatch(f"the file names {key.get('alg')!r} rather than {FILE_ALGORITHM}")
-    return _stream(unurlsafe(key["k"]), decode(sealed["iv"]), ciphertext)
+    key = sealed.get("key")
+    named = key.get("alg") if isinstance(key, Mapping) else None
+    if named != FILE_ALGORITHM:
+        raise FileHashMismatch(f"the file names {named!r} rather than {FILE_ALGORITHM}")
+    secret, iv = key.get("k"), sealed.get("iv")
+    if not isinstance(secret, str) or not isinstance(iv, str):
+        raise FileHashMismatch("the file names no key or no iv")
+    try:
+        raw_key, raw_iv = unurlsafe(secret), decode(iv)
+    except ValueError as unreadable:
+        raise FileHashMismatch("the file's key or iv is not base64") from unreadable
+    if len(raw_key) != FILE_KEY_BYTES or len(raw_iv) != FILE_IV_BYTES:
+        raise FileHashMismatch("the file's key or iv is the wrong length")
+    return _stream(raw_key, raw_iv, ciphertext)
 
 
 def verified_device(user_id: str, device_id: str, keys: Any) -> dict[str, str] | None:
