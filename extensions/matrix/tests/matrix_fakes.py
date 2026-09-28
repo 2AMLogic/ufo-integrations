@@ -74,6 +74,24 @@ def text(event_id: str, sender: str, body: str, **content: object) -> dict[str, 
     }
 
 
+def shared_file(
+    event_id: str, sender: str, filename: str, url: str, **content: object
+) -> dict[str, Any]:
+    """One file a member sent, as the event a room carries it by."""
+    return {
+        "type": "m.room.message",
+        "event_id": event_id,
+        "sender": sender,
+        "content": {
+            "msgtype": "m.image",
+            "body": filename,
+            "url": url,
+            "info": {"mimetype": "image/png", "size": 4},
+            **content,
+        },
+    }
+
+
 def mention(event_id: str, sender: str, body: str) -> dict[str, Any]:
     return text(event_id, sender, body, **{"m.mentions": {"user_ids": [BOT]}})
 
@@ -383,6 +401,29 @@ class Workspace:
         else:
             self.conversations[queue_key] = (found[0], narrow_audience(found[1], audience))
         return self.conversations[queue_key][0]
+
+    inbound_files: dict[str, bytes] = field(default_factory=dict)
+    delivered: list[tuple[UUID, str, str]] = field(default_factory=list)
+    member_files: list[tuple[UUID, tuple[str, ...]]] = field(default_factory=list)
+    write_limit_bytes: int | None = None
+
+    async def store_inbound_file(self, filename: str, chunks: AsyncIterator[bytes]) -> str:
+        """The store's own bound refuses rather than truncating, which is what the surface has to
+        survive: a file too large for the workspace costs that file, never the turn."""
+        body = b"".join([chunk async for chunk in chunks])
+        if self.write_limit_bytes is not None and len(body) > self.write_limit_bytes:
+            raise ValueError("file exceeds the workspace write limit")
+        key = f"artifact-{len(self.inbound_files)}"
+        self.inbound_files[key] = body
+        return key
+
+    async def deliver_attachment(self, conversation_id: UUID, blob_key: str, rel: str) -> None:
+        self.delivered.append((conversation_id, blob_key, rel))
+
+    async def attach_member_files(
+        self, turn_id: UUID, blob_keys: tuple[str, ...], *, member_id: UUID | None
+    ) -> None:
+        self.member_files.append((turn_id, tuple(blob_keys)))
 
     async def ambient_reply_wanted(
         self, message: AmbientMessage, history: tuple[AmbientMessage, ...]

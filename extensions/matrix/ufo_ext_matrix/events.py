@@ -155,6 +155,9 @@ class RoomFile:
     size_bytes: int
     url: str = ""
     sealed: Mapping[str, Any] | None = None
+    mentions: frozenset[str] = frozenset()
+    thread_root: str | None = None
+    replying_to: str | None = None
 
 
 def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
@@ -203,6 +206,9 @@ def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
         size_bytes=size if isinstance(size, int) and size >= 0 else 0,
         url=url if plain else "",
         sealed=sealed if encrypted else None,
+        mentions=_mentions(content),
+        thread_root=_thread_root(content),
+        replying_to=_replying_to(content),
     )
 
 

@@ -38,6 +38,7 @@ from ufo.sdk.audience import (
 from ufo.sdk.http import Request
 from ufo.sdk.o11y import log, warn
 from ufo.sdk.surfaces import (
+    ATTACHED_FILES_CLAUSE,
     AMBIENT_CONTEXT_ELEMENT,
     AMBIENT_HISTORY_MESSAGES,
     NOTHING_DELIVERED,
@@ -96,6 +97,7 @@ from ufo_ext_matrix.events import (
     poll_txn_id,
     question_txn_id,
     room_key,
+    room_file,
     room_message,
     room_names,
     say_txn_id,
@@ -135,6 +137,7 @@ ROSTER_LIMIT = 50
 BACKFILL_PAGES = 5
 CIPHERTEXT_TYPE = "application/octet-stream"
 INBOUND_LIMIT_BYTES = 25 * 1024 * 1024
+INBOUND_DIR = "uploads"
 SPOKEN_MESSAGES = 50
 
 FAILED_LINE = "This turn failed before it could answer."
@@ -840,6 +843,42 @@ class Installation:
             log("matrix.file_sealed_unreadable", installation=self.bot)
             return None
 
+    async def landed(
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        conversation_id: UUID,
+        shared: RoomFile,
+    ) -> tuple[tuple[str, str], ...]:
+        """Where a member's file landed, as the workspace path the turn reads it by and the key the
+        artifact row points at — or nothing at all, for a file that did not land.
+
+        Nothing here raises. A file the room could not deliver is a turn that answers the member's
+        words without it, which is the same turn they would have got had they sent no file; a file
+        that stopped the turn would cost them the words too.
+
+        The write bound is the store's and it refuses rather than truncating, so an oversized file
+        is caught here rather than reaching the sync loop."""
+        body = await self.fetched(client, shared)
+        if body is None:
+            return ()
+
+        async def one() -> AsyncIterator[bytes]:
+            yield body
+
+        try:
+            key = await ctx.store_inbound_file(shared.filename, one())
+        except ValueError as refused:
+            log("matrix.file_unstored", installation=self.bot, reason=str(refused))
+            return ()
+        rel = f"{INBOUND_DIR}/{shared.filename}"
+        try:
+            await ctx.deliver_attachment(conversation_id, key, rel)
+        except ValueError as refused:
+            log("matrix.file_undelivered", installation=self.bot, reason=str(refused))
+            return ()
+        return ((rel, key),)
+
     async def deliver(
         self,
         ctx: SurfaceContext,
@@ -865,6 +904,21 @@ class Installation:
         joined: dict[str, frozenset[str]] = {}
         for room_id, event in await inbound(device, batch, earlier, admitting):
             message = room_message(room_id, event)
+            shared = None if message is not None else room_file(room_id, event)
+            if shared is not None:
+                # A shared file is the message it came as: its caption or its name is what the
+                # member said, and everything downstream — ambient history, membership, the proof
+                # path — reads it as any other line rather than as a second kind of event.
+                message = RoomMessage(
+                    room_id=shared.room_id,
+                    event_id=shared.event_id,
+                    sender=shared.sender,
+                    body=shared.filename,
+                    formatted_body="",
+                    mentions=shared.mentions,
+                    thread_root=shared.thread_root,
+                    replying_to=shared.replying_to,
+                )
             if message is None:
                 answer = poll_answer(room_id, event)
                 if admitting and answer is not None and answer.sender != self.bot:
@@ -907,7 +961,7 @@ class Installation:
                 heard.pop()
                 continue
             entry.admitted = await self._guarded(
-                self.heed(ctx, roster, client, message, prior, joined[room_id])
+                self.heed(ctx, roster, client, message, prior, joined[room_id], shared)
             )
 
     async def _guarded(
@@ -931,6 +985,7 @@ class Installation:
         message: RoomMessage,
         prior: Sequence[Heard],
         joined: frozenset[str],
+        shared: RoomFile | None = None,
     ) -> bool:
         """One member message, as the answer it names to a question the room still holds or as the
         message it is. A reply of labels answers; a reply of words is words, which is how a member
@@ -941,7 +996,9 @@ class Installation:
         answered = self._guarded(
             self.answered(ctx, roster, client, message), "matrix.answer_skipped"
         )
-        return await answered or await self.consider(ctx, roster, message, prior, joined)
+        return await answered or await self.consider(
+            ctx, roster, message, prior, joined, client, shared
+        )
 
     async def _backfill(
         self, client: MatrixClient, batch: Mapping[str, Any], since: str
@@ -1022,6 +1079,8 @@ class Installation:
         message: RoomMessage,
         prior: Sequence[Heard],
         joined: frozenset[str],
+        client: MatrixClient | None = None,
+        shared: RoomFile | None = None,
     ) -> bool:
         """Admit one message or decline it, returning whether it founded or joined a turn. A sender
         who is no member is declined before anything is spent on the line. An admitted message is
@@ -1046,15 +1105,30 @@ class Installation:
             message.room_id, audience, label=self.names.get(message.room_id)
         )
         marker = mint_marker()
+        landed = (
+            await self.landed(ctx, client, conversation_id, shared)
+            if shared is not None and client is not None
+            else ()
+        )
+        paths = tuple(rel for rel, _ in landed)
         admitted = await ctx.admit(
             conversation_id,
-            fence_member_message(marker, room_context(marker, prior), message.body, ""),
+            fence_member_message(
+                marker,
+                room_context(marker, prior),
+                message.body,
+                ATTACHED_FILES_CLAUSE + ", ".join(paths) if paths else "",
+            ),
             idempotency_key=message.event_id,
             context=TurnContext(
                 sender=message.sender, source=permalink(message.room_id, message.event_id)
             ),
             speaker_member_id=member_id,
         )
+        if landed:
+            await ctx.attach_member_files(
+                admitted.turn_id, tuple(key for _, key in landed), member_id=member_id
+            )
         try:
             await write_answering(
                 ctx,

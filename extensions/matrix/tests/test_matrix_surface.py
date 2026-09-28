@@ -42,6 +42,7 @@ from matrix_fakes import (  # noqa: E402
     question,
     reply,
     said,
+    shared_file,
     tap,
     terminal_frame,
     text,
@@ -50,6 +51,7 @@ from ufo.runtime.turns.audience import SHARED_AUDIENCE  # noqa: E402
 from ufo.sdk.audience import foreign_room_audience, room_audience  # noqa: E402
 from ufo.sdk.hub import Activity  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
+    member_message_attachments,
     AMBIENT_HISTORY_MESSAGES,
     NOTHING_DELIVERED,
     SILENCE_SENTINEL,
@@ -1653,3 +1655,50 @@ async def test_a_file_the_repository_does_not_hold_is_dropped_not_raised(workspa
     async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
         got = await installation.fetched(client, _shared(url="mxc://example.org/never"))
     assert got is None
+
+
+@on_loop
+async def test_a_member_file_lands_in_the_workspace_and_is_named_to_the_turn(
+    workspace: Workspace,
+) -> None:
+    """The whole inbound path: a member shares a file, the bytes land under a workspace path, the
+    turn's own text names that path in its attachments element, and the artifact row points at what
+    landed. `member_message_attachments` is what a projection reads a member's files from, so a
+    path that never reaches the fence is a file the turn cannot see."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("chart.png", "image/png", b"\x89PNG")
+    server.syncs["s1"] = batch("s2", {DIRECT: [shared_file("$f1", ALICE, "chart.png", uri)]})
+    assert await installation.step() == 0.0
+
+    body = await workspace.admitted_body("$f1")
+    assert body is not None
+    assert member_message_attachments(body) == ("uploads/chart.png",)
+    assert list(workspace.inbound_files.values()) == [b"\x89PNG"]
+    [(_, key, rel)] = workspace.delivered
+    assert rel == "uploads/chart.png"
+    [(_, keys)] = workspace.member_files
+    assert keys == (key,)
+
+
+@on_loop
+async def test_a_file_the_workspace_refuses_costs_the_file_and_not_the_turn(
+    workspace: Workspace,
+) -> None:
+    """The store's write bound refuses rather than truncating. A member whose attachment is too
+    large still gets a turn on their words — the failure this avoids is the one where a raise
+    reaches the sync loop and their room stops being read at all."""
+    workspace.write_limit_bytes = 2
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("big.png", "image/png", b"\x89PNG")
+    server.syncs["s1"] = batch("s2", {DIRECT: [shared_file("$f2", ALICE, "big.png", uri)]})
+    assert await installation.step() == 0.0
+
+    body = await workspace.admitted_body("$f2")
+    assert body is not None, "the turn must still be admitted"
+    assert member_message_attachments(body) == ()
+    assert workspace.delivered == []
+    assert workspace.member_files == []
