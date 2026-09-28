@@ -448,10 +448,10 @@ surface writes. The rest need `ufo` and skip without it.
 | `test_matrix_registry.py` | The installed entry point through ufo's loader, and the migrations applied |
 
 Two modules drive a real homeserver, and one env var names it for both: they are collected only
-where `MATRIX_INTEGRATION_HOMESERVER` holds a homeserver's base url. The jobs that run the whole
-suite never set it, so what they collect is unchanged and the registry job's no-skip rule holds.
-Both register their own throwaway users, so the named homeserver must allow registration; a private
-Synapse container does.
+where `MATRIX_INTEGRATION_HOMESERVER` holds a homeserver's base url. CI sets it in one job and runs
+both there. Every job that leaves it unset collects what it always did, so the registry job's
+no-skip rule holds. Both register their own throwaway users, so the named
+homeserver must allow registration; a private Synapse container does.
 
 | Module | What it drives |
 | --- | --- |
@@ -482,10 +482,17 @@ MATRIX_INTEGRATION_HOMESERVER=http://localhost:8017 \
   extensions/matrix/tests/test_matrix_crypto_integration.py -v
 ```
 
-The `encryption against a Synapse container` job stands that container up for the crypto module and
-nothing else, and holds itself to having run: a report with a skip in it, or with no test in it,
-fails the job rather than passing as a suite that tested nothing. `rc_login` is raised there too,
-since the `device_lists` test logs a member in a second time for their second device.
+The job named `the gated suites against a Synapse container` stands that container up and runs
+the whole `extensions/matrix/tests` directory against it, which is both gated modules and every
+module that needs no homeserver. It names the directory rather than the modules because the gate
+is what `conftest.py` ignores, and a module named by nobody is collected by nobody.
+
+It holds itself to having run, three ways: a report with a skip in it, one with no test in it, and
+one where a `*_integration.py` module contributed no test each fail the job rather than passing as a
+suite that tested nothing. The third is the one that catches a gated module falling out of
+collection — renamed, ignored by a `conftest.py` edit, or failing to import behind a guard — which
+the other two read as green. `rc_login` is raised in that container too, since the `device_lists`
+test logs a member in a second time for their second device.
 
 ## License
 
