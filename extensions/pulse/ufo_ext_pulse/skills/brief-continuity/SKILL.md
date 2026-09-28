@@ -95,6 +95,7 @@ python "$UFO_HOME/skills/brief-continuity/seen.py" record --series <s> --seen <d
 python "$UFO_HOME/skills/brief-continuity/seen.py" fresh   --series <s> --within-days 14
 python "$UFO_HOME/skills/brief-continuity/seen.py" stale   --series <s> --slug <slug>
 python "$UFO_HOME/skills/brief-continuity/seen.py" history --series <s> --slug <slug>
+python "$UFO_HOME/skills/brief-continuity/seen.py" reconcile --series <s>
 ```
 
 Fourteen days is the window both `fresh` and `stale` default to, and it is the same kind of number
@@ -121,6 +122,25 @@ looks complete.
 Rows written before this was required are not rejected retroactively, and no read path reads `url`
 today — it is recorded for a reconciler that does not exist yet. So a url-less row is inert rather
 than broken, and stays readable by `fresh`, `stale` and `history`.
+
+`reconcile` reads the pool against itself and exits non-zero where rows cannot be told apart. It
+reports; it does not diagnose, and the difference is the point.
+
+**One url under several slugs has two causes and the pool cannot separate them.** Either a story was
+renamed between sightings — the trap below, which the ledger's ineligibility rule cannot see because
+that rule keys on the slug — or the url names a *page* rather than a story, a blog index or a
+repository root, and the slugs are different stories found at one address. Both are ordinary. The
+report names both and chooses neither.
+
+That is also the reason to give a story's own address rather than the page it was found on. A url
+that names an index cannot be reconciled with anything, which is the same loss as omitting it.
+
+One slug over several urls is the quieter direction: two stories filed as one lead, the second
+hidden behind the first's history.
+
+What it stays silent about is not thereby clean — a story syndicated at three addresses is three
+urls and reads as three leads. It never writes: a check that repaired what it found would be the
+expiry this pool rules out.
 
 **Staleness keys on the most recent sighting, not the first.** A lead first seen thirty days ago and
 seen again this morning is live. Asking when it first appeared answers a different question.

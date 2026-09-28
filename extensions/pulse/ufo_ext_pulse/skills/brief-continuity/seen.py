@@ -93,6 +93,42 @@ def fresh(series: str, within_days: int, today: date) -> list[tuple[str, str]]:
     return sorted(live, key=lambda pair: pair[1], reverse=True)
 
 
+def unreconciled(series: str) -> tuple[list[tuple[str, list[str]]], list[tuple[str, list[str]]]]:
+    """Rows the pool cannot tell apart, by url then by slug. It reports; it does not diagnose.
+
+    A slug is a judgement made inside one run, and two runs looking at one story need not reach the
+    same judgement. Nothing in `record` can catch that — the slug is the caller's to choose and only
+    its shape is checked. The url is chosen outside the run, which makes it the better key and not a
+    sound one.
+
+    **One url under several slugs has two causes and this cannot separate them.** Either a story was
+    renamed between sightings, which is the trap the skill already names — or the url names a page
+    rather than a story, a blog index or a repository root, and the slugs are different stories that
+    happened to be found at one address. Both look identical here. Reporting the first alone would
+    be a verdict the data does not carry, so both are named and neither is chosen.
+
+    One slug over several urls is the quieter direction: two stories filed as one lead, the second
+    hidden behind the first's history.
+
+    What it stays silent about is not thereby clean. A story syndicated at three addresses is three
+    urls and reads as three leads, and no comparison of urls will say otherwise."""
+    by_url: dict[str, list[str]] = {}
+    by_slug: dict[str, list[str]] = {}
+    for row in read_rows(series):
+        slug, url = row["slug"], row.get("url", "")
+        if not url:
+            continue
+        by_url.setdefault(url, [])
+        if slug not in by_url[url]:
+            by_url[url].append(slug)
+        by_slug.setdefault(slug, [])
+        if url not in by_slug[slug]:
+            by_slug[slug].append(url)
+    split = sorted((url, slugs) for url, slugs in by_url.items() if len(slugs) > 1)
+    merged = sorted((slug, urls) for slug, urls in by_slug.items() if len(urls) > 1)
+    return split, merged
+
+
 def _title_of(series: str, slug: str) -> str:
     rows = history(series, slug)
     return rows[-1]["title"] if rows else ""
@@ -109,6 +145,9 @@ def main(argv: list[str] | None = None) -> int:
     p_record.add_argument("--title", required=True)
     p_record.add_argument("--url", required=True)
     p_record.add_argument("--source", default="")
+
+    p_reconcile = sub.add_parser("reconcile", help="rows the pool cannot tell apart")
+    p_reconcile.add_argument("--series", required=True)
 
     p_history = sub.add_parser("history", help="every sighting of one lead, oldest first")
     p_history.add_argument("--series", required=True)
@@ -141,6 +180,24 @@ def main(argv: list[str] | None = None) -> int:
         for row in rows:
             source = f"  [{row['source']}]" if row.get("source") else ""
             print(f"{row['seen']}  {row['title']}{source}")
+        return 0
+
+    if args.command == "reconcile":
+        shared_url, shared_slug = unreconciled(args.series)
+        for url, slugs in shared_url:
+            print(f"one url under {len(slugs)} slugs: {url}")
+            for slug in slugs:
+                print(f"    {slug}")
+            print("    either a renamed story, or a url naming a page rather than a story")
+        for slug, urls in shared_slug:
+            print(f"one slug over {len(urls)} urls: {slug}")
+            for url in urls:
+                print(f"    {url}")
+            print("    two stories under one lead, the second hidden behind the first's history")
+        if shared_url or shared_slug:
+            print("these rows cannot be told apart — read them before trusting the history")
+            return 1
+        print("no rows share a url under different slugs, or a slug across different urls")
         return 0
 
     if args.command == "fresh":

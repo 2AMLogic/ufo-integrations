@@ -145,3 +145,76 @@ def test_a_padded_url_is_stored_stripped(seen) -> None:
     two sightings of one story that differ only by surrounding whitespace would not reconcile."""
     seen.record("data-infra", "2026-09-27", "padded", "Padded", "  https://x/1  ", "releases")
     assert seen.history("data-infra", "padded")[0]["url"] == "https://x/1"
+
+
+def test_one_url_under_two_slugs_cannot_be_told_apart(seen) -> None:
+    """The trap `brief-continuity` already names — giving a carried story a new slug — seen from
+    the pool's side. The ledger's ineligibility rule keys on the slug, so a story renamed on its
+    second outing is republished and nothing says so."""
+    seen.record("data-infra", "2026-09-20", "acme-1-0-shipped", "Acme 1.0", "https://acme/1", "rel")
+    seen.record("data-infra", "2026-09-25", "big-week-for-acme", "Big week", "https://acme/1", "rel")
+    split, merged = seen.unreconciled("data-infra")
+    assert split == [("https://acme/1", ["acme-1-0-shipped", "big-week-for-acme"])]
+    assert merged == []
+    assert seen.main(["reconcile", "--series", "data-infra"]) == 1
+
+
+def test_one_slug_over_two_urls_is_two_stories_under_one_lead(seen) -> None:
+    """The other direction, and the quieter one: two stories filed under one slug hide the second
+    behind the first's history, so `history` reads as one lead moving rather than two leads."""
+    seen.record("data-infra", "2026-09-20", "acme-ships", "First", "https://acme/1", "rel")
+    seen.record("data-infra", "2026-09-25", "acme-ships", "Second", "https://acme/2", "rel")
+    split, merged = seen.unreconciled("data-infra")
+    assert split == []
+    assert merged == [("acme-ships", ["https://acme/1", "https://acme/2"])]
+    assert seen.main(["reconcile", "--series", "data-infra"]) == 1
+
+
+def test_a_pool_that_agrees_with_itself_reports_nothing(seen) -> None:
+    """Repeated sightings of one lead at one url are the ordinary case and are not drift — the
+    pool is additive, so a lead seen five times is five rows and one identity."""
+    for day in ("2026-09-20", "2026-09-21", "2026-09-22"):
+        seen.record("data-infra", day, "acme-1-0", "Acme 1.0", "https://acme/1", "rel")
+    assert seen.unreconciled("data-infra") == ([], [])
+    assert seen.main(["reconcile", "--series", "data-infra"]) == 0
+
+
+def test_reconcile_never_writes(seen, tmp_path) -> None:
+    """A check that repairs what it finds is the deletion this pool rules out. It reports."""
+    seen.record("data-infra", "2026-09-20", "acme-1-0-shipped", "Acme", "https://acme/1", "rel")
+    seen.record("data-infra", "2026-09-25", "big-week-for-acme", "Acme", "https://acme/1", "rel")
+    pool = tmp_path / "pulse" / "data-infra.seen.jsonl"
+    before = pool.read_bytes()
+    seen.unreconciled("data-infra")
+    seen.main(["reconcile", "--series", "data-infra"])
+    assert pool.read_bytes() == before
+
+
+def test_an_index_url_reads_the_same_as_a_renamed_story(seen) -> None:
+    """Two genuinely different stories found at one blog index share a url and differ in slug —
+    which is indistinguishable from one story renamed between sightings.
+
+    Both are real. In the first real gather, one of three rows was `https://www.kicad.org/blog/` and
+    another a repository root, so the coarse-url case is the ordinary one rather than the exotic
+    one. A report that called this drift would be confidently wrong about the commoner cause, so it
+    names both and chooses neither."""
+    index = "https://www.kicad.org/blog/"
+    seen.record("data-infra", "2026-09-20", "kicad-8-0-release", "KiCad 8.0", index, "blog")
+    seen.record("data-infra", "2026-09-25", "kicad-9-0-roadmap", "Roadmap", index, "blog")
+    shared_url, shared_slug = seen.unreconciled("data-infra")
+    assert shared_url == [(index, ["kicad-8-0-release", "kicad-9-0-roadmap"])]
+    assert shared_slug == []
+    assert seen.main(["reconcile", "--series", "data-infra"]) == 1
+
+
+def test_the_report_names_both_causes_and_picks_neither(seen, capsys) -> None:
+    """The exit code says these rows cannot be told apart. It does not say which of the two
+    reasons applies, because the pool does not know."""
+    index = "https://www.kicad.org/blog/"
+    seen.record("data-infra", "2026-09-20", "kicad-8-0-release", "KiCad 8.0", index, "blog")
+    seen.record("data-infra", "2026-09-25", "kicad-9-0-roadmap", "Roadmap", index, "blog")
+    seen.main(["reconcile", "--series", "data-infra"])
+    printed = capsys.readouterr().out
+    assert "renamed story" in printed
+    assert "naming a page rather than a story" in printed
+    assert "cannot be told apart" in printed
