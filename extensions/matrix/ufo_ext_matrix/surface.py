@@ -78,6 +78,7 @@ from ufo_ext_matrix.crypto import (
     outbound,
     seal_file,
 )
+from ufo_ext_matrix.delivered import read_delivered, write_delivered
 from ufo_ext_matrix.events import (
     MESSAGE_TYPE,
     NOTICE_MSGTYPE,
@@ -861,6 +862,16 @@ class Installation:
 
         The write bound is the store's and it refuses rather than truncating, so an oversized file
         is caught here rather than reaching the sync loop."""
+        landed = await read_delivered(ctx, shared.event_id)
+        if landed is not None:
+            # The batch is replayed with the same event ids when a crash falls between delivering it
+            # and writing the `/sync` position, so the file half needs the key `admit` already
+            # carries. Answering from the row rather than re-fetching is what keeps the member to one
+            # copy; answering with the *recorded* artifact key is what keeps the turn to one row,
+            # since core's attachment insert conflicts on `(turn_id, blob_key)` and a freshly minted
+            # key would conflict with nothing.
+            return (landed,)
+
         body = await self.fetched(client, shared)
         if body is None:
             return ()
@@ -892,6 +903,10 @@ class Installation:
         except ValueError as refused:
             log("matrix.file_undelivered", installation=self.bot, reason=str(refused))
             return ()
+        # Written after the delivery core accepted, so a row stands for a file on disk rather than
+        # one that was about to be. A crash inside that gap replays as it did before; a crash
+        # anywhere else in the batch no longer costs the member a second copy.
+        await write_delivered(ctx, shared.event_id, rel, key)
         return ((rel, key),)
 
     async def deliver(
