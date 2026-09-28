@@ -194,9 +194,9 @@ def open_file(sealed: Mapping[str, Any], ciphertext: bytes) -> bytes:
 
     Every field is a hostile sender's to choose — the argument itself included, since it arrives as
     an event's `file` and `json.loads` hands back whatever was typed there — so each is read as a
-    shape rather than trusted to be one. Anything malformed leaves as `FileHashMismatch`, which is the one failure a reader
-    handles by dropping the file — an escaping `AttributeError` would turn a dropped attachment into
-    an unhandled exception in whoever is reading the room.
+    shape rather than trusted to be one. Anything malformed leaves as `FileHashMismatch`, which is
+    the one failure a reader handles by dropping the file — an escaping `AttributeError` would turn
+    a dropped attachment into an unhandled exception in whoever is reading the room.
 
     `compare_digest` is used because it is the right default for "is this the value I was supposed
     to get", not because a leak of this digest would matter: the attacker chose the ciphertext, so
