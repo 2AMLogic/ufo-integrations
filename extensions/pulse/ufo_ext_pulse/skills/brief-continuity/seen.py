@@ -56,6 +56,15 @@ def record(series: str, seen: str, slug: str, title: str, url: str, source: str)
         raise ValueError(f"seen must be YYYY-MM-DD, got {seen!r}")
     if not SLUG.match(slug):
         raise ValueError(f"slug must be a lowercase hyphenated slug, got {slug!r}")
+    # The url is the best key a row carries for reconciling two sightings of one story later --
+    # better than title, which legitimately drifts between sightings, and than source, which is too
+    # coarse to tell two stories from one publisher apart. It is not the only external field, and a
+    # row without one is not beyond manual repair; it is simply the one a reconciler cannot do
+    # automatically. So it is required, and required to be more than whitespace: " " and an empty
+    # string are equally unreconcilable, and the blank one at least announces itself.
+    url = url.strip()
+    if not url:
+        raise ValueError("url is required: a sighting with no url cannot be reconciled later")
     path = pool_path(series)
     row = {"seen": seen, "slug": slug, "title": title, "url": url, "source": source}
     append_row(path, row)
@@ -98,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     p_record.add_argument("--seen", required=True)
     p_record.add_argument("--slug", required=True)
     p_record.add_argument("--title", required=True)
-    p_record.add_argument("--url", default="")
+    p_record.add_argument("--url", required=True)
     p_record.add_argument("--source", default="")
 
     p_history = sub.add_parser("history", help="every sighting of one lead, oldest first")

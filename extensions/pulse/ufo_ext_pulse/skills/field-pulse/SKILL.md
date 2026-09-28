@@ -2,7 +2,7 @@
 name: field-pulse
 description: "Load when a member asks to follow an industry, field, market, ecosystem, or research area — a recurring brief on what changed across a domain. Not for watching named competitors, which is competitive-intel, and not for one question about a field."
 metadata:
-  depends: [brief-continuity, coverage-honesty]
+  depends: [field-report, brief-continuity, coverage-honesty]
 ---
 # Field pulse, set up in chat
 
@@ -13,6 +13,11 @@ asking to "keep up with" an area wants the second one.
 
 The turn writes the first brief, then asks once whether it should repeat. The brief is the product and
 it lands in this turn; a recurring row exists only after the member says they want one.
+
+What repeats is the gathering. The recurring row fires daily and records what it finds; every edition
+after this one is `field-report`'s, written when the member asks to read one. A field moves every
+day, so gathering every day earns its cost — and whether an edition is worth reading today is a
+thing the member knows and a schedule does not.
 
 ## Read before asking
 
@@ -39,132 +44,102 @@ One message, one short numbered list: confirm the field sentence, and confirm th
 a yes/no. Cadence is not asked here. "Set it up" and "go ahead" are confirmation of the brief; do not
 ask again.
 
-## Write the first brief
+## Gather the first window
 
 Load `research-assistant` and find what changed across the confirmed sources, bounding every query to
-the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states,
-and record it under this gather's date with `brief-continuity`'s `coverage.py` — an edition covering
-more than one gather writes its footer from those rows, and the row is only writable while the read
-is in front of you.
+the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states.
 
-`brief-continuity` and `coverage-honesty` arrive with this skill and hold the two contracts a series
-lives by: what an edition may repeat, and what it may claim about a source it could not read. They are
-loaded, not optional.
+`field-report`, `brief-continuity` and `coverage-honesty` arrive with this skill: the first writes an
+edition from a pool, and the other two hold the contracts a series lives by — what an edition may
+repeat, and what it may claim about a source it could not read. They are loaded, not optional.
 
-Record every candidate in the sightings pool before ranking, with `brief-continuity`'s `seen.py` —
-everything the gather surfaced, not only what is about to be published. A sighting is a fact at the
-moment the source returned it; whether it clears the bar is a separate judgement made after, and
-recording the two at the same moment is how a pool ends up holding only what an edition already
-carried.
+Record every candidate in the sightings pool, with `brief-continuity`'s `seen.py` — everything the
+gather surfaced, not only what looks publishable. A sighting is a fact at the moment the source
+returned it; whether it clears the bar is a separate judgement made after, and recording the two at
+the same moment is how a pool ends up holding only what an edition already carried. A pool append
+that fails is named in the reply, per `field-report`'s rule on a write that did not land: a gather
+whose rows never reached the workspace is a window no later edition can recover.
 
-The business-relative bar below makes this more valuable rather than less. It rejects more than a
-field-relative one did, and every rejection is a lead rather than nothing: a story that changes
-nothing for this business today is exactly the one that may change something next month, and the
-pool is what lets a later edition tell it apart from a lead that has gone quiet for good.
+`field-report`'s business-relative bar makes the pool more valuable rather than less. That bar
+rejects more than a field-relative one would, and every rejection is a lead rather than nothing: a
+story that changes nothing for this business today is exactly the one that may change something next
+month, and the pool is what lets a later edition tell it apart from a lead that has gone quiet for
+good.
 
-Rank what you found, against the business rather than the field. Importance is whether this changes
-a decision, a plan, a cost, a risk or a dependency for *this* business — not whether someone working
-in the field would find it notable. The business sentence that chose the field is the same sentence
-that ranks inside it; a brief that stops using it after step 1 is a brief about an industry, and the
-reader did not ask for one. Source signals inform the ranking and do not decide it. Cluster the
-sources covering one story and rank the story once, on its own weight rather than the sum of its
-coverage.
+## Write the first brief with the skill that writes every brief
 
-Five to ten stories carry an edition, but that is a ceiling rather than a quota. The count is a
-consequence of the bar: publish what clears it and stop. Reaching for a number is how a brief about
-this business becomes a brief about its field, and the reader stops at the point where ranking
-stopped being visible.
+The pool is filled, so the edition comes from the pool: load `field-report` and write it. The window
+is this turn's gather, there is no ledger to read yet, and the rows it records are the series' first.
+Ranking, the story count, the headline register, the footer and what to say when a write fails are
+that skill's and are not repeated here — one writer of editions is what makes the brief a member
+reads today and the brief they ask for in November the same publication.
 
-An edition where nothing clears the bar is a finished edition, not a failed one. Say plainly that
-the window was quiet and name what was read, and never lower the bar to fill a page — a reader who
-is told "nothing this week" and can believe it is the reader this brief is for. That claim is only
-worth anything with `coverage-honesty`'s footer under it: a quiet window is every source read and
-nothing clearing the bar, and an edition reporting quiet on top of sources it could not read is the
-failure that skill exists to prevent, not a quiet day.
+This is the only turn where a gather and an edition share a fire, and the member asked for it in the
+turn they are sitting in. Every edition after it reads a pool that was filled before they asked.
 
-Each story gets a headline in the reader's plain language — not the source's headline — and two to
-four sentences on why it matters. Say what a thing claims, not what it might mean, and say plainly
-when something is early, small, or unproven. No superlatives, and no word the reader would not use
-about their own work.
-
-Load `research-report` and write `<series>-<date>.md`. Close the brief with the footer
-`coverage-honesty` specifies. Reply with the brief itself, never with a promise of one.
-
-This is the first edition, so there is no ledger to read. Record the edition's stories with
-`brief-continuity` once the brief is written — every later fire depends on this edition having
-recorded what it covered.
-
-**If a write fails, say so in the reply.** Recording the edition, writing the report file and
-appending to the pool and the coverage store all need a workspace a command can write to, and not
-every run has one: a fire with no client attached has no file tools at all. Such a run still
-gathers, ranks and replies perfectly well, so the edition looks finished while the ledger learned
-nothing — and the next edition, reading a ledger missing this one, repeats it. A series quietly
-stops being a series.
-
-So a failed write is part of the brief, not a detail to swallow: name what could not be written and
-that continuity is broken for this edition. An edition that could not record itself is worth less
-than one that says it could not. This is the same rule `coverage-honesty` applies to a source that
-did not answer, pointed at the series' own record instead of its inputs.
+So this turn knows something the pool does not: it watched the reads happen. A source that did not
+answer is named in this edition's footer with which of `coverage-honesty`'s four reasons kept it
+out — unreachable, rate-limited, out of budget, or authorization expired — where a footer built from
+the pool alone can only say a source left no row.
 
 ## Ask once whether it repeats
 
-After the brief, and only after it, ask once with `ask_user`: keep this as a one-time brief, or run it
-on a schedule. Recommend **two or three times a week**, not daily. A field produces news on its own
-clock and a daily fire lands on empty windows, which trains the reader to skip the brief; two or three
-editions a week is the cadence where every edition has something in it. A member who names a cadence
-has answered — apply it and ask nothing.
+After the brief, and only after it, ask once with `ask_user`: keep this as a one-time brief, or gather
+from here on. Say what a yes buys — the sources read every morning, and an edition whenever they ask
+for one. Recommend **daily**. A day the field produced nothing costs one search and lands nothing in
+the conversation, while a day nobody gathered is a hole in every window that crosses it; the reader
+is never made to read an edition they did not ask for, so the cadence is set by the field rather than
+by their patience. A member who names a cadence has answered — apply it and ask nothing.
 
 ## Apply the task, once they asked for a recurring one
 
 A one-time answer ends here: say the brief is written, name the file, offer nothing else.
 
-For a recurring answer, load `task-scheduling` and apply one manifest named `<field>-pulse`. Fire in
-the member's morning, read from the `<context>` header's `time:` line and converted to UTC. Carry no
-`run_now`: the first edition was written in this turn, and an immediate fire would research the same
-window twice and publish it twice.
+For a recurring answer, load `task-scheduling` and apply one manifest named `<field>-gather`. Fire
+early in the member's morning, before they would think to ask for an edition, read from the
+`<context>` header's `time:` line and converted to UTC. Carry no `run_now`: this turn gathered the
+window already, and an immediate fire would record every sighting in it a second time — `seen.py`
+keeps those as two observations, and `history` then shows a story moving when nothing moved.
 
 ```yaml
 kind: scheduled_task
-name: <field>-pulse
+name: <field>-gather
 spec:
-  schedule: "0 13 * * 1,3,5"
-  description: <Field> pulse, Monday/Wednesday/Friday
+  schedule: "0 12 * * *"
+  description: <Field> gather, daily
+  expires_at: <a quarter from today, YYYY-MM-DD>
   prompt: |
-    Write the <field> pulse for <business>. Rank against that business, not the field: a story
-    earns a slot by changing a decision, a plan, a cost, a risk or a dependency for it, and five
-    to ten is a ceiling rather than a quota — publish what clears the bar and stop. Load
-    brief-continuity and read the covered ledger for series <series> before ranking anything — a
-    story the last five editions published is ineligible without a material new development. Load
-    research-assistant and find what changed across <the confirmed sources> since the previous
-    edition, and record every candidate it surfaces in the sightings pool with brief-continuity's
-    seen.py before ranking — everything seen, not only what you publish. Load coverage-honesty and
-    set each source's state as it returns, recording each one under this gather's date with
-    brief-continuity's coverage.py; name every unread source in the footer, and where the edition
-    covers more than one gather say how many of them it went unread on. Load research-report and
-    write <series>-<date>.md. Record the published stories with brief-continuity. If any write
-    fails — the report file, the ledger, the pool or the coverage store — say so in the reply and
-    say that continuity is broken for this edition; a fire with no client attached has no file
-    tools, and an edition that silently recorded nothing is repeated by the next one. Reply with
-    the brief; when nothing clears the bar, say the window was quiet and never lower the bar to
-    fill it.
+    Gather the <field> window for series <series>. Load research-assistant and find what changed
+    across <the confirmed sources> since yesterday, bounding every query to that window. Record
+    every candidate in the sightings pool with brief-continuity's seen.py — everything seen, one
+    row per sighting, each with its source. Rank nothing, write no report file, and record nothing
+    in the covered ledger: the edition is written when the member asks for one. If the pool append
+    fails, say so and say which sources went unrecorded; a fire with no client attached has no file
+    tools, and a window that silently recorded nothing is a window no later edition can recover.
+    The pool rows are this fire's whole product, so send no brief.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a
 source nobody confirmed.
 
-`task-scheduling` bounds tasks that fire daily or more often with an `expires_at`. A two- or
-three-a-week pulse is not one of those, so it carries no expiry.
+`task-scheduling` bounds tasks that fire daily or more often with an `expires_at`, and a daily gather
+is one of those: set it a quarter out. A pulse the member stops reading then stops paying for search
+on its own, and `field-report` is where the lapse surfaces — a window whose pool is silent reports the
+day the pool last took a row, in the conversation the member can re-apply from.
 
 ## Record what lasts
 
-Before applying, `memory_update` one item for the field sentence and one for the confirmed source
-set. Per-edition findings are the reply and the report file, never a memory item — the covered ledger
-is a workspace file for the same reason.
+Before applying, `memory_update` one item for the field sentence, one for the confirmed source set,
+and one for the series name. `field-report` reads all three: the first is what a story is ranked
+against, the second is what lets a footer name a source that left no row, and the third is the address
+of both the pool and the ledger — an edition that derives a second series name opens a second pool
+beside the real one. Per-edition findings are the reply and the report file, never a memory item — the
+covered ledger is a workspace file for the same reason.
 
 ## Close
 
-Four lines at most: what it watches, that the first edition is the one above, when it fires from now
-on, and that every edition lands in this conversation.
+Four lines at most: what it watches, that the first edition is the one above, that it gathers every
+morning from now on, and that an edition comes whenever they ask for one here.
 
 ## Traps
 
@@ -172,27 +147,28 @@ on, and that every edition lands in this conversation.
 - Asking which sources to watch instead of proposing them.
 - Accepting a field too broad to bound, which produces a brief about everything.
 - Asking about cadence before the member has read an edition.
-- Defaulting to daily, so most editions land on an empty window.
-- Carrying `run_now: true`, which publishes this turn's window twice.
-- Skipping the ledger record on the first edition, which leaves the second one no baseline.
-- Letting the schedule's prompt name the sources while the ledger series name is left as a placeholder.
-- Writing a headline in the source's words rather than the reader's.
-- Recording only what you publish, which leaves the pool blind to every lead the bar rejected.
-- Leaving a gather's source states unrecorded, so an edition spanning several of them can report
-  only the last one's failures.
-- Replying with a finished-looking edition after a write failed, which leaves the next edition to
-  repeat it.
-- Padding a thin window to reach a story count, which turns a brief about this business back into a
-  brief about its field.
-- Calling a window quiet over sources that went unread, which is the one claim `coverage-honesty`
-  exists to refuse.
+- Letting the gather's prompt rank, write a report file or record the covered ledger. That is an
+  edition nobody asked for, and its ledger rows make every story in it ineligible for the edition
+  they do ask for.
+- Gathering less often than daily, which leaves a hole in every window that crosses the missing day
+  and nothing in the pool to recover it from.
+- Applying a daily gather with no `expires_at`, which `task-scheduling` bounds, so an abandoned
+  pulse keeps paying for search with nobody reading it.
+- Carrying `run_now: true`, which records this turn's sightings a second time and makes `history`
+  read as a story that moved.
+- Writing the first brief by hand rather than loading `field-report`, which fills a pool nothing
+  reads and leaves the ledger without its first rows.
+- Letting an edition go back to the field for a fresh search instead of reading the pool, which pays
+  twice for the window the gather already covered and makes the member wait for it.
+- Letting the schedule's prompt name the sources while the series name is left as a placeholder.
+- Recording only what looks publishable, which leaves the pool blind to every lead the bar rejected.
 - Deriving a field, or proceeding silently, when neither the opening line nor `memory_search` has
   supplied a business — the turn has nothing to ask a field or rank stories against, and step 1a's
   question is the only correct move.
 - Assuming an edit to this skill reaches an armed row. `task-scheduling`'s manifest stores its
   `prompt` on the scheduled row at apply time, and a fire runs that stored copy, not this file — an
-  armed pulse keeps the rule it was set up under until someone re-applies the manifest. Re-applying
-  `<field>-pulse` upserts it in place and re-points reporting to whichever conversation ran the
+  armed gather keeps the rule it was set up under until someone re-applies the manifest. Re-applying
+  `<field>-gather` upserts it in place and re-points its reporting to whichever conversation ran the
   re-apply, so a member who wants the new rule re-applies from the pulse's own conversation, not from
   wherever the skill was edited. Same family as #70's running `serve` process keeping the skills it
   booted with — a durable copy an edit does not reach, different surface.

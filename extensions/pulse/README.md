@@ -1,6 +1,6 @@
 # ufo-ext-pulse
 
-A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): three skills that make a
+A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): four skills that make a
 series of briefs behave like a series.
 
 `competitive-intel` watches a list of companies. A field pulse watches a domain, so a run may find a
@@ -9,8 +9,8 @@ the reason this extension exists.
 
 ## What it adds
 
-A recurring brief has two failure modes that a single well-written report does not have, and neither
-is fixed by writing the report better.
+A recurring brief has three failure modes that a single well-written report does not have, and none
+of them is fixed by writing the report better.
 
 **It repeats itself.** The reader has read the last edition, so this one has to answer "what changed
 since then" rather than "what is true about this field." `task-scheduling` tells a run to keep an
@@ -27,19 +27,28 @@ source three states rather than two, names each unread source in the footer, and
 an edition at all when most sources went unread — because a brief built from the half that answered
 looks like a normal edition, so nobody goes back for the other half.
 
-`field-pulse` sets a pulse up in chat, writes the first edition in that turn, and schedules the rest.
-It carries the other two as `metadata.depends`, so a pulse run cannot load the workflow without the
-contracts.
+**It pays for research it publishes and publishes research nobody asked for.** A field moves every
+day, so research is worth doing every day; an edition is worth reading when the member decides to
+read one, which no schedule knows. A single fire that gathers and publishes has to pick one clock for
+both, and either answer is wrong: at a reader's cadence it searches on two days in seven, and at the
+field's cadence it delivers seven editions a week to someone who wanted two. So the recurring row
+gathers and records, and `field-report` writes an edition when it is asked for — from the pool, with
+no search in the request path, which is also what makes it fast enough to answer in the conversation.
+
+`field-pulse` sets a pulse up in chat, writes the first edition in that turn, and arms the daily
+gather. It carries the other three as `metadata.depends`, so a pulse run cannot load the workflow
+without the writer or the contracts.
 
 | Skill | Holds |
 | --- | --- |
-| `field-pulse` | Setting one up, writing an edition, the recurring row |
-| `brief-continuity` | The covered ledger; what an edition may repeat |
+| `field-pulse` | Setting one up, the first edition, the daily gather |
+| `field-report` | An edition on demand, from the pool, with no fresh search |
+| `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares three skills and nothing else — no tool, no schedule kind, no store.
+The extension declares four skills and nothing else — no tool, no schedule kind, no store.
 Gathering is `research`'s, the recurring row is `scheduled_tasks`', the feed entry is
-`report_digest`'s, and the ledger is a workspace file the member can read.
+`report_digest`'s, and the ledger and the pool are workspace files the member can read.
 
 ## Install
 
@@ -121,22 +130,27 @@ any pulse already running; with nothing in the index that search finds nothing, 
 field nobody has asked about looks like. The constraint is upstream's, on any deploy with memory
 active, rather than this extension's.
 
-## The ledger
+## The two stores
 
-One JSON Lines file per series at `pulse/<series>.covered.jsonl` in the conversation workspace, one
-row per story per edition, append-only. The path is workspace-relative and resolves against the
-working directory a sandbox command starts in, so the file lands where the member can open it and
-where a carrier that runs commands can write. A turn reaching the surface without one writes no
-ledger at all — see Traps.
+One JSON Lines file per series per store, in the conversation workspace, append-only:
+`pulse/<series>.covered.jsonl` holds one row per story per edition, and `pulse/<series>.seen.jsonl`
+holds one row per sighting a gather recorded. They answer different questions — what the series has
+published, and what it has seen — and a lead seen four times and never published is not a repeat.
+An edition reads both: the ledger decides what it may carry, the pool is everything it has to carry.
+
+Both paths are workspace-relative and resolve against the working directory a sandbox command starts
+in, so the files land where the member can open them and where a carrier that runs commands can
+write. A turn reaching the surface without one writes neither — see Traps.
 
 ```bash
-python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series data-infra --editions 5
 python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra --slug acme-1-0
+python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series data-infra --within-days 14
 ```
 
-`check` exits non-zero when the slug is covered in the span. A story carried again under the
-material-new-development exception keeps its original slug, so the rows sharing a slug are that
-story's history across the series.
+`check` exits non-zero when the slug is covered in the span, and `fresh` lists the leads whose most
+recent sighting is inside the window. A story carried again under the material-new-development
+exception keeps its original slug, so the rows sharing a slug are that story's history across the
+series in either store.
 
 ## Traps
 
@@ -171,12 +185,13 @@ story's history across the series.
   never created, so the next edition reads an empty ledger and repeats the last one. Drive a pulse
   through the `ufo` client or a `--remote` sandbox; a brief that looks right is not evidence the
   series does.
-- **An armed pulse keeps the rule it was set up under.** `task-scheduling` stores `field-pulse`'s
+- **An armed gather keeps the rule it was set up under.** `task-scheduling` stores `field-pulse`'s
   manifest prompt on the scheduled row at apply time; editing the skill changes only what the next
-  setup writes, not a row already armed. Re-applying `<field>-pulse` upserts it in place and
-  re-points reporting to whichever conversation ran the re-apply, so adopting an edit means
-  re-applying from the pulse's own conversation. Same family as #70's running `serve` process
-  keeping the skills it booted with.
+  setup writes, not a row already armed. Re-applying `<field>-gather` upserts it in place and
+  re-points its reporting to whichever conversation ran the re-apply, so adopting an edit means
+  re-applying from the pulse's own conversation. An edit to `field-report` has no armed row to
+  reach, and reaches the next edition the deploy's own `serve` process has booted for. Same family
+  as #70's running `serve` process keeping the skills it booted with.
 - **A running `serve` answers from the skills it booted with.** `ufoctl serve` resolves the active
   set at boot and materializes each skill into `$UFO_HOME/skills/<name>/`; every turn reads that
   copy. Editing the source reaches none of it, an editable install included, where the source the

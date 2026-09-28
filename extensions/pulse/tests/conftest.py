@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "ufo_ext_pulse" / "skills"
-SKILL_NAMES = ("field-pulse", "brief-continuity", "coverage-honesty")
+SKILL_NAMES = ("field-pulse", "field-report", "brief-continuity", "coverage-honesty")
 
 
 @pytest.fixture

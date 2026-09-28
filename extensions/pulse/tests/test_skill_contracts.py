@@ -37,15 +37,61 @@ def test_body_is_present(name: str) -> None:
     assert body.strip()
 
 
-def test_field_pulse_pulls_both_contracts() -> None:
-    """The contracts are wired, not remembered: a pulse run cannot load the workflow without them."""
+def test_field_pulse_pulls_the_writer_and_both_contracts() -> None:
+    """Wired, not remembered. A setup turn cannot reach its first edition without the skill that
+    writes every edition, and neither skill can be loaded without the two contracts."""
     depends = frontmatter("field-pulse")["metadata"]["depends"]
+    assert set(depends) == {"field-report", "brief-continuity", "coverage-honesty"}
+
+
+def test_field_report_pulls_both_contracts() -> None:
+    depends = frontmatter("field-report")["metadata"]["depends"]
     assert set(depends) == {"brief-continuity", "coverage-honesty"}
 
 
 def test_field_pulse_routes_away_from_competitive_intel() -> None:
     """The two skills answer nearby asks, so the description has to say which one this is not."""
     assert "competitive-intel" in frontmatter("field-pulse")["description"]
+
+
+def test_field_report_routes_away_from_setting_a_pulse_up() -> None:
+    """Setting a pulse up and reading an edition of one are the nearby asks here, and routing to the
+    wrong one either re-asks a member for sources they confirmed or skips the ask entirely."""
+    assert "field-pulse" in frontmatter("field-report")["description"]
+
+
+def test_the_report_reads_the_pool_by_script() -> None:
+    """The report's whole claim -- that it publishes without searching -- rests on it reading the
+    pool a gather filled, so the file has to invoke the pool script rather than describe it."""
+    assert "seen.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+
+
+def scheduled_manifest() -> dict:
+    """The one YAML block in field-pulse: the task a setup turn applies."""
+    body = (SKILLS_ROOT / "field-pulse" / "SKILL.md").read_text()
+    block = body.split("```yaml", 1)[1].split("```", 1)[0]
+    return yaml.safe_load(block)
+
+
+def test_the_scheduled_task_gathers_and_nothing_else() -> None:
+    """The split is only real if the armed row cannot publish. A fire that ranked, wrote a file or
+    recorded the ledger would be the fused run again, and its ledger rows would make every story in
+    it ineligible for the edition the member did ask for."""
+    manifest = scheduled_manifest()
+    assert manifest["name"].endswith("-gather")
+    prompt = manifest["spec"]["prompt"]
+    assert "seen.py" in prompt
+    assert "research-report" not in prompt
+    assert "covered.py" not in prompt
+    assert "run_now" not in manifest["spec"]
+
+
+def test_the_daily_gather_is_bounded() -> None:
+    """`task-scheduling` bounds a task that fires daily or more often with an `expires_at`, and an
+    unbounded one keeps paying for search after the member has stopped reading it."""
+    spec = scheduled_manifest()["spec"]
+    assert spec["schedule"].split() == ["0", "12", "*", "*", "*"]
+    assert "expires_at" in spec
 
 
 def test_continuity_ships_its_ledger_script() -> None:
