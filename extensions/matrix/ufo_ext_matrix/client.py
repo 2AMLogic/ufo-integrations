@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ufo_ext_matrix.events import BACKFILL_FILTER, MESSAGE_TYPE, SYNC_FILTER
+from ufo_ext_matrix.events import BACKFILL_FILTER, MESSAGE_TYPE, SYNC_FILTER, media_parts
 
 CLIENT_PATH = "/_matrix/client/v3"
 MEDIA_PATH = "/_matrix/media/v3"
@@ -152,6 +152,23 @@ class MatrixClient:
         if not isinstance(content_uri, str):
             raise MatrixError("upload", 200, "M_BAD_JSON", None)
         return content_uri
+
+    async def download(self, uri: str) -> bytes:
+        """The bytes an `mxc://` names. The counterpart to `upload`, and like it the one call that
+        does not go through the session's base URL, since the media repository is its own API.
+
+        The uri is an event's claim about where a file lives, so its two parts are taken and quoted
+        into this homeserver's path: one that names a path of its own is refused rather than
+        followed."""
+        parts = media_parts(uri)
+        if parts is None:
+            raise MatrixError("download", 400, "M_INVALID_PARAM", None)
+        server, media_id = parts
+        path = f"{self._root}{MEDIA_PATH}/download/{quote(server, safe='')}/{quote(media_id, safe='')}"
+        response = await self._http.get(path)
+        if not response.is_success:
+            self._answer(response, "download")
+        return response.content
 
     async def encryption(self, room_id: str) -> Mapping[str, Any] | None:
         """The room's `m.room.encryption` state, or None for a room that is not encrypted."""

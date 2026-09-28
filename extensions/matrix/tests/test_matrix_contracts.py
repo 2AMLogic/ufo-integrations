@@ -21,6 +21,7 @@ from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
+    media_parts,
     answer_txn_id,
     file_txn_id,
     gaps,
@@ -938,3 +939,28 @@ def test_every_part_fits_one_event_however_it_expands(written: str) -> None:
     for part in parts(written):
         event = json.dumps(message_content(part, TEXT_MSGTYPE, reply_relation("$a", "$b")))
         assert len(event.encode()) + ENVELOPE_BYTES < EVENT_LIMIT_BYTES, len(event)
+
+
+def test_an_mxc_uri_names_a_server_and_one_media_id() -> None:
+    """A file's location arrives inside an event, so the uri is whoever sent it speaking, not a
+    value this surface chose."""
+    assert media_parts("mxc://example.org/AbC123") == ("example.org", "AbC123")
+
+
+@pytest.mark.parametrize(
+    "uri",
+    (
+        "https://example.org/AbC123",
+        "mxc://example.org",
+        "mxc://example.org/",
+        "mxc:///AbC123",
+        "mxc://example.org/nested/id",
+        "mxc://example.org/../../secret",
+        "mxc://example.org/id?query",
+        "mxc://example.org/id#fragment",
+    ),
+)
+def test_a_uri_carrying_a_path_of_its_own_is_not_a_media_id(uri: str) -> None:
+    """Refused rather than followed: the media id is one segment, so a uri that walks out of the
+    media repository addresses nothing instead of a path beside it."""
+    assert media_parts(uri) is None

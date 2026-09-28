@@ -149,6 +149,8 @@ class Homeserver:
             return self.failure
         if request.url.path == f"{MEDIA_PATH}/upload":
             return self.uploaded_media(request)
+        if request.url.path.startswith(f"{MEDIA_PATH}/download/"):
+            return self.downloaded_media(request)
         path = request.url.path.removeprefix("/_matrix/client/v3")
         match request.method, path.split("/")[1:]:
             case "GET", ["sync"]:
@@ -205,6 +207,15 @@ class Homeserver:
             return httpx.Response(429, json={"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": 1500})
         self.uploaded.append((filename, request.content))
         return httpx.Response(200, json={"content_uri": f"mxc://example.org/{filename}"})
+
+    def downloaded_media(self, request: httpx.Request) -> httpx.Response:
+        """What `upload` stored, addressed the way an `mxc://` addresses it: one media id, under
+        the server that answered the upload."""
+        media_id = request.url.path.rsplit("/", 1)[-1]
+        for filename, content in self.uploaded:
+            if filename == media_id:
+                return httpx.Response(200, content=content)
+        return httpx.Response(404, json={"errcode": "M_NOT_FOUND"})
 
     def sent_under(self, prefix: str) -> list[dict[str, Any]]:
         """Every message sent under a transaction id starting `prefix`, in the order it was sent."""

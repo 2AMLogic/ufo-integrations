@@ -60,6 +60,7 @@ from ufo.sdk.surfaces import (  # noqa: E402
     Writeback,
 )
 from ufo_ext_matrix.answering import Answering, read_answering  # noqa: E402
+from ufo_ext_matrix.client import MatrixClient, MatrixError  # noqa: E402
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking  # noqa: E402
 from ufo_ext_matrix.events import (  # noqa: E402
     POLL_START_TYPE,
@@ -1563,3 +1564,36 @@ async def test_the_ambient_history_is_the_rooms_last_lines_and_who_said_them(
     assert len(history) == AMBIENT_HISTORY_MESSAGES
     assert history[-1].text == f"line {len(said) - 2}"
     assert [line.speaker for line in history if line.own] == []
+
+
+@on_loop
+async def test_a_file_uploaded_comes_back_by_its_mxc(workspace: Workspace) -> None:
+    """`download` is `upload`'s counterpart: the bytes the media repository took are the bytes it
+    answers with, addressed by the `mxc://` the upload returned."""
+    server = Homeserver()
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("ledger.md", "text/markdown", b"# what the turn covered")
+        assert await client.download(uri) == b"# what the turn covered"
+
+
+@on_loop
+async def test_a_download_of_nothing_raises_rather_than_returning_empty(workspace: Workspace) -> None:
+    """A media id the repository does not hold is an error, not zero bytes — an empty file and an
+    absent one read identically to a caller that only checks the length."""
+    server = Homeserver()
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        with pytest.raises(MatrixError):
+            await client.download("mxc://example.org/never-uploaded")
+
+
+@on_loop
+async def test_a_uri_that_is_not_an_mxc_never_reaches_the_homeserver(workspace: Workspace) -> None:
+    """The uri is an event's claim about where a file lives. One that names a path of its own is
+    refused before a request is made, so the homeserver is never asked to resolve it."""
+    server = Homeserver()
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        before = len(server.requests)
+        for uri in ("https://example.org/x", "mxc://example.org/../secret", "mxc://example.org"):
+            with pytest.raises(MatrixError):
+                await client.download(uri)
+        assert len(server.requests) == before

@@ -304,3 +304,22 @@ def next_batch(batch: Mapping[str, Any]) -> str:
 def _joined(batch: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
     joined = batch.get("rooms", {}).get("join", {})
     return joined if isinstance(joined, Mapping) else {}
+
+
+MXC_SCHEME = "mxc://"
+
+
+def media_parts(uri: str) -> tuple[str, str] | None:
+    """The server and media id an `mxc://` names, or None for anything that is not one.
+
+    A file's location arrives inside an event, so it is a claim by whoever sent it rather than a
+    value this surface chose. Taking the two parts and rejecting the rest means a uri carrying a
+    path of its own addresses a media repository and never a path beside it."""
+    if not uri.startswith(MXC_SCHEME):
+        return None
+    server, slash, media_id = uri[len(MXC_SCHEME) :].partition("/")
+    if not server or not slash or not media_id:
+        return None
+    if "/" in media_id or "?" in uri or "#" in uri:
+        return None
+    return server, media_id
