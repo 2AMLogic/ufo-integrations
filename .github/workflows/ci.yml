@@ -48,23 +48,32 @@ jobs:
             exit 1
           fi
           echo "HEAD is $(git rev-parse HEAD): $HEAD_SHA merged into $(git rev-parse HEAD^1)"
+      # A revision id belongs to whichever pull requests declare one, and only they can renumber it,
+      # so a pull request that declares no migration is not held to the union: rule 1 of
+      # ci-principles.md counts a misattributed failure as the dearer of the two costs. Every party to
+      # a collision declares one of its files, so each of them still turns red.
+      #
       # Two pull requests writing the same path are the case git already reports: the second merge
-      # conflicts. This lays each path down in turn, so the last writer of one path wins here.
-      - name: Lay every open pull request's migrations over this merge
+      # conflicts. Each path is laid down in turn, so the last writer of one path wins here.
+      - name: One chain across the union of the open pull requests
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          migrations='^extensions/[^/]+/ufo_ext_[^/]+/migrations/.+\.py$'
+          mine=$(git diff --name-only HEAD^1 HEAD -- extensions | grep -E "$migrations") || {
+            echo "this pull request declares no migration, so it holds no revision id to renumber"
+            exit 0
+          }
+          echo "this pull request declares: $(echo "$mine" | tr '\n' ' ')"
           for pull in $(gh pr list --state open --json number --jq '.[].number'); do
             ref="refs/ci/pull-$pull"
             git fetch --no-tags --depth=1 origin "refs/pull/$pull/head:$ref"
-            files=$(git ls-tree -r --name-only "$ref" -- extensions \
-              | grep -E '^extensions/[^/]+/ufo_ext_[^/]+/migrations/.+\.py$') || continue
+            files=$(git ls-tree -r --name-only "$ref" -- extensions | grep -E "$migrations") || continue
             echo "pull request #$pull: $(echo "$files" | tr '\n' ' ')"
             echo "$files" | tr '\n' '\0' | xargs -0 git checkout "$ref" --
           done
           git status --short
-      - run: |
           uv run --python 3.12 --with pytest --with pyyaml \
             pytest extensions/test_migration_lineage.py -v
 

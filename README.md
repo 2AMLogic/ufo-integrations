@@ -70,6 +70,8 @@ revision id is an identity two branches assign independently, and a clash is inv
 one: each branch is a sound chain alone, and the filenames differ, so the merge reports no conflict.
 That union exists nowhere else, so the job turns a pull request red for a revision another open pull
 request already claims, and the answer is to renumber against that claim rather than against `main`.
+It holds a pull request that declares a migration of its own, which is every party to a collision and
+nobody who can do nothing about one.
 
 ## License
 
