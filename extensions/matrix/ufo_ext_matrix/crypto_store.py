@@ -7,7 +7,11 @@ Every value is sealed with AES-256-GCM under a key derived from the `matrix_stor
 the row's own address as associated data, so a value copied into another row does not open. A row's
 name is an HMAC of what it names, so the table does not list the rooms, people, or sessions the bot
 holds keys for. Only the bot's own user and device id are written in the clear: they are what a
-store is for, and a token bound to another device finds no rows and starts its own."""
+store is for, and a token bound to another device finds no rows and starts its own.
+
+The sealing itself is `cryptography`, which the `matrix-e2ee` extra installs. The table and its
+addresses are declared without it, so this module imports wherever the extension does; a `Sealer`
+is what the extra is needed for, and it raises `ExtraMissing` rather than be built without one."""
 
 import hashlib
 import hmac
@@ -19,13 +23,20 @@ from dataclasses import dataclass
 from typing import Any
 
 import sqlalchemy as sa
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from ufo_ext_matrix.e2ee import ExtraMissing
 from ufo_ext_matrix.since import Transactional
+
+try:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+    SEALING = True
+except ImportError:
+    SEALING = False
 
 MIN_SECRET_CHARS = 32
 NONCE_BYTES = 12
@@ -68,6 +79,8 @@ class Sealer:
     vodozemac objects before they are sealed."""
 
     def __init__(self, secret: str) -> None:
+        if not SEALING:
+            raise ExtraMissing()
         if len(secret) < MIN_SECRET_CHARS:
             raise ValueError(f"the store key is shorter than {MIN_SECRET_CHARS} characters")
         material = secret.encode()

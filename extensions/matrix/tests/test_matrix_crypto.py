@@ -10,6 +10,8 @@ from uuid import uuid4
 import pytest
 
 pytest.importorskip("ufo", reason="install ufo from git to run the crypto tests")
+pytest.importorskip("vodozemac", reason="install the matrix-e2ee extra to run the crypto tests")
+pytest.importorskip("cryptography", reason="install the matrix-e2ee extra to run the crypto tests")
 
 import sqlalchemy as sa  # noqa: E402
 import vodozemac as vz  # noqa: E402

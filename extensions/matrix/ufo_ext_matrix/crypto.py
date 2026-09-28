@@ -3,7 +3,7 @@
 The device is the one the bot's access token is bound to, as `/account/whoami` names it, so a
 restart keeps the device its peers already know. Its account and sessions live in the crypto store,
 sealed under the `matrix_store_key` slot; with that slot empty the bot has no device keys, hears
-nothing in an encrypted room, and refuses to post into one.
+nothing in an encrypted room, and refuses to post into one rather than posting in the clear.
 
 Inbound, a `/sync` batch's to-device events are read first — room keys arrive there, Olm-encrypted
 to this device — then each `m.room.encrypted` timeline event is decrypted into the plain event it
@@ -14,7 +14,13 @@ has not arrived is parked, its key is asked for, and it is heard once the key la
 Outbound, a message into an encrypted room is Megolm-encrypted, and the session's key is first
 shared over Olm with every device of every joined member that has not had it. Devices are trusted on
 first use: the keys a device id first shows are pinned, and a device that later shows other keys is
-neither sent keys nor believed."""
+neither sent keys nor believed.
+
+Olm and Megolm are `vodozemac`, which the `matrix-e2ee` extra installs. This module imports without
+it — every name it needs from the library is reached inside a call, and annotations are deferred
+— so the surface loads and an unencrypted room is served whether the extra is there or not."""
+
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -25,13 +31,21 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-import vodozemac as vz
-
 from ufo.sdk.o11y import log, warn
 from ufo.sdk.surfaces import CredentialSlotUnset, SurfaceContext
 from ufo_ext_matrix.client import MatrixClient, MatrixError
-from ufo_ext_matrix.crypto_store import CryptoStore, Rows, Sealer, StoreLocked
+from ufo_ext_matrix.crypto_store import SEALING, CryptoStore, Rows, Sealer, StoreLocked
+from ufo_ext_matrix.e2ee import EXTRA, INSTALL, CryptoUnavailable, ExtraMissing
 from ufo_ext_matrix.events import ENCRYPTED_TYPE, MESSAGE_TYPE, timeline
+
+try:
+    import vodozemac as vz
+
+    VODOZEMAC = True
+except ImportError:
+    VODOZEMAC = False
+
+INSTALLED = VODOZEMAC and SEALING
 
 STORE_KEY_SLOT = "matrix_store_key"
 OLM = "m.olm.v1.curve25519-aes-sha2"
@@ -52,11 +66,6 @@ OLM_SESSIONS = "olm"
 INBOUND = "inbound"
 OUTBOUND = "outbound"
 PENDING = "pending"
-
-
-class CryptoUnavailable(Exception):
-    """A message is bound for an encrypted room and the bot has no device keys to encrypt it
-    with."""
 
 
 class KeyMissing(Exception):
@@ -647,9 +656,11 @@ class Device:
 
 
 async def device_for(ctx: SurfaceContext, client: MatrixClient) -> Device | None:
-    """The bot's device for this workspace, or None where it has none: an empty store-key slot, a
-    token bound to no device, a slot holding a key the store was not sealed with, or a homeserver
-    that refuses the device's keys."""
+    """The bot's device for this workspace, or None where it has none: the `matrix-e2ee` extra
+    absent, an empty store-key slot, a token bound to no device, a slot holding a key the store was
+    not sealed with, or a homeserver that refuses the device's keys."""
+    if not INSTALLED:
+        return None
     try:
         secret = await ctx.credential(STORE_KEY_SLOT)
     except CredentialSlotUnset:
@@ -659,10 +670,12 @@ async def device_for(ctx: SurfaceContext, client: MatrixClient) -> Device | None
         warn("matrix.crypto_no_device")
         return None
     try:
-        store = CryptoStore(ctx, Sealer(secret), user_id, device_id)
-        return await Device.open(store, client)
+        sealer = Sealer(secret)
     except ValueError:
         warn("matrix.crypto_store_key_short")
+        return None
+    try:
+        return await Device.open(CryptoStore(ctx, sealer, user_id, device_id), client)
     except StoreLocked:
         warn("matrix.crypto_store_locked", device_id=device_id)
     except MatrixError as error:
@@ -683,6 +696,8 @@ async def inbound(
     Without a device the timeline is heard as it came, and an encrypted event founds nothing."""
     events = list(timeline(batch, earlier))
     if device is None:
+        if not INSTALLED and any(e.get("type") == ENCRYPTED_TYPE for _, e in events):
+            warn("matrix.crypto_extra_missing", extra=EXTRA, install=INSTALL)
         return events
     await device.receive(batch)
     heard = await device.retry()
@@ -714,6 +729,8 @@ async def outbound(
         return MESSAGE_TYPE, content
     if settings.get("algorithm") != MEGOLM:
         raise CryptoUnavailable(f"the room is encrypted with {settings.get('algorithm')}")
+    if not INSTALLED:
+        raise ExtraMissing()
     device = await device_for(ctx, client)
     if device is None:
         raise CryptoUnavailable("the room is encrypted and the bot has no device keys")

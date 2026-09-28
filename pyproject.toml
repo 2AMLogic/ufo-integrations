@@ -5,7 +5,12 @@ description = "2AM Logic's extensions for ufo: a recurring field brief, and a Ma
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = ["httpx>=0.27", "vodozemac>=0.10", "cryptography>=43"]
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+# Olm and Megolm for encrypted Matrix rooms. Native modules, and this distribution also ships the
+# pulse skill pack, so an install that wants neither downloads neither.
+matrix-e2ee = ["vodozemac>=0.10", "cryptography>=49"]
 
 [project.entry-points."ufo.extension"]
 pulse = "ufo_ext_pulse.manifest:manifest"
