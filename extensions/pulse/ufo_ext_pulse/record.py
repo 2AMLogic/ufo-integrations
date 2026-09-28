@@ -7,8 +7,9 @@ conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own m
 directory; any other conversation gets `workspace_root/<conversation_id>`. So the axis is whether a
 conversation is bound to a terminal, not whether a human was watching: several terminal-bound
 conversations share one tree, and an unbound one has a tree of its own. One series accumulated one
-ledger per tree, each complete-looking and none aware of the others. On the demo deploy the `agent-runtimes` series had two `covered.jsonl` files of
-15 rows each whose 2026-09-28 editions shared **no story at all** — six rows in each, zero overlap.
+ledger per tree, each complete-looking and none aware of the others. On the demo deploy the
+`agent-runtimes` series had two `covered.jsonl` files of 15 rows each whose 2026-09-28 editions
+shared **no story at all** — six rows in each, zero overlap.
 The no-repeat rule was being enforced against whichever half the running carrier could see.
 
 A row keyed by `(workspace_id, series, ...)` is reachable identically from every turn in the
