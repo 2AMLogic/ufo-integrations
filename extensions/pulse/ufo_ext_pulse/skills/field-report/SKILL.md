@@ -1,0 +1,160 @@
+---
+name: field-report
+description: "Load when a member asks for an edition of a pulse already gathering — this week's brief, the latest report, whatever has come in since. Not for setting a pulse up or choosing its sources, which is field-pulse, and not for a field nothing has gathered."
+metadata:
+  depends: [brief-continuity, coverage-honesty]
+---
+# Field report, written from the pool
+
+Gathering and publishing run on different clocks. A field produces news on its own schedule, so a
+gather fires daily; an edition is read when the member decides to read one, so it is written when
+they ask. One fire doing both pays for a search on every edition and publishes editions nobody
+asked for.
+
+This skill writes the edition, from what the gathers already recorded. Nothing is searched in this
+turn, which is what lets the brief arrive in the conversation rather than minutes after it.
+
+## Nothing is searched in this turn
+
+`research-assistant` has no part in this turn. The stories were found, and their sources paid for,
+by gathers that ran before the member asked; a search here buys the same window a second time and
+turns an answer into a wait.
+
+A row too thin to write two sentences from is a lead, not a story. It stays in the pool, and the
+next gather either moves it or it goes quiet — going back to the field to thicken it is the same
+search under another name.
+
+## The window, and saying which one it was
+
+| Bound | Value |
+| --- | --- |
+| Opens | The most recent edition in the covered ledger |
+| Closes | Today |
+| Reaches back at most | Fourteen days, the span `seen.py` calls a lead live |
+| Overridden by | A window the member named in the ask |
+
+With no edition in the ledger yet, the pool's own fourteen days are the window. Both bounds are
+read rather than assumed:
+
+```bash
+python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
+python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series <series> --within-days 14
+```
+
+Run both from the workspace root, which is where a command starts: the pool and the ledger are
+workspace-relative, so a run that changes directory first reads two empty files and publishes an
+edition with nothing behind it.
+
+The reply states the window as a span, and says how much of it the pool holds rows from.
+
+    Window 2026-09-22 to 2026-09-28; the pool holds sightings from six of those seven days.
+
+A reader who is not told the span cannot tell an edition covering a week from one covering a night,
+and both are legitimate editions of the same series.
+
+## Rank against the business, not the field
+
+The opening line states the business, and its business sentence is what a story is ranked against —
+read it and never ask what the business does. `memory_search` for the series returns what the setup
+turn recorded: the field sentence, the confirmed source set, and the series name.
+
+`brief-continuity` and `coverage-honesty` arrive with this skill and hold the two contracts a series
+lives by: what an edition may repeat, and what it may claim about a source it could not read. Read
+the covered ledger on `brief-continuity`'s terms before ranking anything — eligibility decides
+whether a lead is worth thinking about, so a run that ranks and then filters spends the window on
+stories it throws away.
+
+Importance is whether this changes a decision, a plan, a cost, a risk or a dependency for *this*
+business — not whether someone working in the field would find it notable. Source signals inform the
+ranking and do not decide it. Cluster the pool rows covering one story and rank the story once, on
+its own weight rather than the sum of its coverage; rows sharing a slug are one lead's history, and
+the movement between them is often the story itself.
+
+Five to ten stories carry an edition, but that is a ceiling rather than a quota. The count is a
+consequence of the bar: publish what clears it and stop. Reaching for a number is how a brief about
+this business becomes a brief about its field, and the reader stops at the point where ranking
+stopped being visible.
+
+Each story gets a headline in the reader's plain language — not the source's headline — and two to
+four sentences on why it matters. Say what a thing claims, not what it might mean, and say plainly
+when something is early, small, or unproven. No superlatives, and no word the reader would not use
+about their own work.
+
+## Write the edition
+
+Load `research-report` and write `<series>-<date>.md`, closed with the footer below. Reply with the
+brief itself, never with a promise of one.
+
+Record the published stories with `brief-continuity` once the edition is out. Every later edition's
+eligibility read is against these rows, and a lead the pool keeps but no edition carried stays a
+lead — the two stores answer different questions and a row in the wrong one loses the answer.
+
+**If a write fails, say so in the brief.** Writing the report file and recording the ledger both need
+a workspace a command can write to, and not every run has one: a turn with no client attached has no
+file tools at all. Such a run reads, ranks and replies perfectly well, so the edition looks finished
+while the ledger learned nothing — and the next edition, reading a ledger missing this one, publishes
+it again. A series quietly stops being a series.
+
+So a failed write is part of the brief, not a detail to swallow: name what could not be written and
+that continuity is broken for this edition. An edition that could not record itself is worth more
+when it says so. This is the same rule `coverage-honesty` applies to a source that did not answer,
+pointed at the series' own record instead of its inputs.
+
+## The footer counts rows, and names where there were none
+
+The pool records sightings, not reads. A source with rows in the window was read at least once; a
+source with none may have been read and empty, or never reached, and the pool does not say which. So
+the footer gives the counts it holds and names the rest as sources this edition has no evidence
+from — `coverage-honesty`'s third state, arrived at from the pool's silence rather than from a
+failed read.
+
+    Sightings 2026-09-22 to 2026-09-28: releases (14), papers (5), forums (2).
+    No evidence: the filings index left no row in this window.
+
+The confirmed source set is what makes the second line possible. A source left out of the footer
+because the pool never mentioned it reads as a source nobody thought about, which is the claim
+`coverage-honesty` refuses. Its threshold reads the same way here: a window most of the confirmed
+sources left no row in is a window this edition has not covered, and it publishes the footer's lines
+rather than a brief built from the part that answered.
+
+An edition where nothing in the pool clears the bar is a finished edition, not a failed one. Say
+that nothing in the window cleared the bar, name the window and the sources that left rows, and
+never lower the bar to fill a page. A reader who is told "nothing this week" and can believe it is
+the reader this brief is for.
+
+## A silent pool is a gather that stopped
+
+A window whose pool holds no rows at all is not a quiet field. Publish no edition: say which span is
+silent, and when the pool last took a row. A daily gather carries an `expires_at`, so a pulse nobody
+re-applies stops paying for search on its own, and this line is where that shows — in the
+conversation, which is the one place the member can re-apply it from.
+
+## Close
+
+The edition, the window line, the footer, and the file's name. Nothing after them: the member asked
+to read a brief.
+
+## Traps
+
+- Loading `research-assistant`, which buys a window the gather already paid for and makes the member
+  wait for it.
+- Going back to the field to thicken a thin row, rather than leaving it in the pool for the next
+  gather to move.
+- Ranking the pool before reading the covered ledger, then discarding the winners.
+- Publishing an edition without saying which span it covers, so a week and a night read the same.
+- Writing a source's silence in the pool as "nothing new", when a read-and-empty source and an
+  unreached one leave the same absence of rows.
+- Reporting a quiet field over a window whose gathers did not run.
+- Running the scripts from a subdirectory, which reads an empty pool and an empty ledger and
+  publishes an edition with nothing behind it.
+- Deriving the series name instead of reading the one the setup recorded, which opens a second pool
+  and a second ledger beside the real ones.
+- Padding a thin window to reach a story count, which turns a brief about this business back into a
+  brief about its field.
+- Writing a headline in the source's words rather than the reader's.
+- Recording ledger rows while drafting, so a story cut in the last pass is recorded as published and
+  is never carried at all.
+- Writing this edition's stories into the pool rather than the ledger, which records an edition as
+  merely seen and leaves the next one free to publish it again.
+- Replying with a finished-looking edition after a write failed, which leaves the next edition to
+  publish it a second time.
