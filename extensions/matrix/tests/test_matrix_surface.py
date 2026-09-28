@@ -1008,7 +1008,7 @@ async def test_shared_files_follow_the_reply_as_what_they_are(workspace: Workspa
     picture = server.sent[file_txn_id(turn, chart.id)]
     assert picture["msgtype"] == "m.image"
     assert picture["body"] == "Last week" and picture["filename"] == "chart.png"
-    assert picture["url"] == "mxc://example.org/chart.png"
+    assert picture["url"] == "mxc://example.org/chartpng"
     assert picture["m.relates_to"] == reply_relation(str(reply_ref), None)
     assert server.sent[file_txn_id(turn, notes.id)]["msgtype"] == "m.file"
     assert FILES_LINE in server.sent[txn_id(turn)]["body"]
@@ -1593,7 +1593,15 @@ async def test_a_uri_that_is_not_an_mxc_never_reaches_the_homeserver(workspace: 
     server = Homeserver()
     async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
         before = len(server.requests)
-        for uri in ("https://example.org/x", "mxc://example.org/../secret", "mxc://example.org"):
+        for uri in (
+            "https://example.org/x",
+            "mxc://example.org/../secret",
+            "mxc://example.org",
+            "mxc://../id",
+            "mxc://./id",
+            "mxc://../config",
+            "mxc://example.org/..",
+        ):
             with pytest.raises(MatrixError):
                 await client.download(uri)
         assert len(server.requests) == before

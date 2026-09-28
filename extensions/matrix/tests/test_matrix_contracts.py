@@ -340,8 +340,12 @@ def test_no_transition_language(path: Path) -> None:
 
 
 def test_the_wire_carve_outs_do_not_launder_prose() -> None:
-    """A carve-out that grows quietly is a ban that stopped holding, so its edges are asserted
-    rather than described — the same lesson as the seam guard's reach."""
+    """A carve-out that grows quietly is a ban that stopped holding, so **both** its edges are
+    asserted rather than described.
+
+    The right edge is the one that is easy to leave unpinned: a path version needs a slash before
+    and a slash or quote after, and dropping that lookahead — or widening it to accept whitespace —
+    turns `the /v1 rewrite` into prose the ban no longer reads."""
     passes = (
         'sealed = {"v": "v2"}',
         'ALGORITHM = "m.megolm.v1.aes-sha2"',
@@ -354,6 +358,8 @@ def test_the_wire_carve_outs_do_not_launder_prose() -> None:
         "kept for v1 readers",
         "a TODO here",
         'x"v1"legacy',
+        "the /v1 rewrite",
+        "dropped in /v1",
     )
     for source in passes:
         assert TRANSITION_WORDS.search(searchable(source)) is None, source
@@ -973,11 +979,20 @@ def test_an_mxc_uri_names_a_server_and_one_media_id() -> None:
         "mxc:///AbC123",
         "mxc://example.org/nested/id",
         "mxc://example.org/../../secret",
+        "mxc://example.org/..",
+        "mxc://example.org/.",
+        "mxc://../id",
+        "mxc://./id",
+        "mxc://../config",
+        "mxc://example.org/a%2fb",
         "mxc://example.org/id?query",
         "mxc://example.org/id#fragment",
     ),
 )
 def test_a_uri_carrying_a_path_of_its_own_is_not_a_media_id(uri: str) -> None:
-    """Refused rather than followed: the media id is one segment, so a uri that walks out of the
-    media repository addresses nothing instead of a path beside it."""
+    """Refused rather than followed.
+
+    A single-segment `..` contains no character a ban would name, and httpx normalises dot segments
+    after the fact — so both parts are matched against what they may be rather than searched for
+    what they may not."""
     assert media_parts(uri) is None

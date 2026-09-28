@@ -12,6 +12,7 @@ import asyncio
 import functools
 import inspect
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -48,6 +49,13 @@ from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
 
 BOT = "@ufo:example.org"
 HOMESERVER = "https://matrix.example.org"
+def media_id(filename: str) -> str:
+    """The id a media repository answers an upload with. A real one is opaque and carries none of
+    the filename's punctuation, so the fake mints one the media id grammar accepts rather than
+    handing back the filename and making every uri it produces unparseable."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", filename) or "media"
+
+
 TOKEN = "syt_secret_bot_token_value"
 ROOM = "!ops:example.org"
 DIRECT = "!direct:example.org"
@@ -206,14 +214,14 @@ class Homeserver:
         if filename in self.limited_uploads:
             return httpx.Response(429, json={"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": 1500})
         self.uploaded.append((filename, request.content))
-        return httpx.Response(200, json={"content_uri": f"mxc://example.org/{filename}"})
+        return httpx.Response(200, json={"content_uri": f"mxc://example.org/{media_id(filename)}"})
 
     def downloaded_media(self, request: httpx.Request) -> httpx.Response:
         """What `upload` stored, addressed the way an `mxc://` addresses it: one media id, under
         the server that answered the upload."""
-        media_id = request.url.path.rsplit("/", 1)[-1]
+        asked = request.url.path.rsplit("/", 1)[-1]
         for filename, content in self.uploaded:
-            if filename == media_id:
+            if media_id(filename) == asked:
                 return httpx.Response(200, content=content)
         return httpx.Response(404, json={"errcode": "M_NOT_FOUND"})
 
