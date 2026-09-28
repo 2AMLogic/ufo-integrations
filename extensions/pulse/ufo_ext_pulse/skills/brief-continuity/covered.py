@@ -18,33 +18,25 @@ story, which stays true after the story develops.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
 
-SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _jsonl_pool import SLUG, append_row, dated_path  # noqa: E402
+from _jsonl_pool import read_rows as _read_rows  # noqa: E402
+
 EDITION = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 LEDGER_DIR = "pulse"
 DEFAULT_EDITIONS = 5
 
 
 def ledger_path(series: str) -> Path:
-    if not SLUG.match(series):
-        raise ValueError(f"series must be a lowercase hyphenated slug, got {series!r}")
-    return Path(LEDGER_DIR) / f"{series}.covered.jsonl"
+    return dated_path(LEDGER_DIR, series, "covered.jsonl")
 
 
 def read_rows(series: str) -> list[dict]:
-    path = ledger_path(series)
-    if not path.exists():
-        return []
-    rows = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
+    return _read_rows(ledger_path(series))
 
 
 def recent_rows(series: str, editions: int) -> list[dict]:
@@ -64,10 +56,8 @@ def record(series: str, edition: str, slug: str, title: str, url: str) -> Path:
     if not SLUG.match(slug):
         raise ValueError(f"slug must be a lowercase hyphenated slug, got {slug!r}")
     path = ledger_path(series)
-    path.parent.mkdir(parents=True, exist_ok=True)
     row = {"edition": edition, "slug": slug, "title": title, "url": url}
-    with path.open("a") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
+    append_row(path, row)
     return path
 
 
