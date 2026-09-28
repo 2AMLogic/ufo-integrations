@@ -47,7 +47,10 @@ ask again.
 ## Gather the first window
 
 Load `research-assistant` and find what changed across the confirmed sources, bounding every query to
-the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states.
+the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states,
+and record it under this gather's date with `brief-continuity`'s `coverage.py` — an edition covering
+more than one gather writes its footer from those rows, and the row is only writable while the read
+is in front of you.
 
 `field-report`, `brief-continuity` and `coverage-honesty` arrive with this skill: the first writes an
 edition from a pool, and the other two hold the contracts a series lives by — what an edition may
@@ -56,9 +59,10 @@ repeat, and what it may claim about a source it could not read. They are loaded,
 Record every candidate in the sightings pool, with `brief-continuity`'s `seen.py` — everything the
 gather surfaced, not only what looks publishable. A sighting is a fact at the moment the source
 returned it; whether it clears the bar is a separate judgement made after, and recording the two at
-the same moment is how a pool ends up holding only what an edition already carried. A pool append
-that fails is named in the reply, per `field-report`'s rule on a write that did not land: a gather
-whose rows never reached the workspace is a window no later edition can recover.
+the same moment is how a pool ends up holding only what an edition already carried. A pool append or
+a coverage row that fails is named in the reply, per `field-report`'s rule on a write that did not
+land: a gather whose rows never reached the workspace is a window no later edition can recover, and
+one whose states never reached it is a window every later edition has to read from silence.
 
 `field-report`'s business-relative bar makes the pool more valuable rather than less. That bar
 rejects more than a field-relative one would, and every rejection is a lead rather than nothing: a
@@ -79,8 +83,9 @@ turn they are sitting in. Every edition after it reads a pool that was filled be
 
 So this turn knows something the pool does not: it watched the reads happen. A source that did not
 answer is named in this edition's footer with which of `coverage-honesty`'s four reasons kept it
-out — unreachable, rate-limited, out of budget, or authorization expired — where a footer built from
-the pool alone can only say a source left no row.
+out — unreachable, rate-limited, out of budget, or authorization expired — and the coverage row
+written as the read returned is what carries that reason to every edition after this one, where the
+pool alone can only say a source left no row.
 
 ## Ask once whether it repeats
 
@@ -112,11 +117,15 @@ spec:
     Gather the <field> window for series <series>. Load research-assistant and find what changed
     across <the confirmed sources> since yesterday, bounding every query to that window. Record
     every candidate in the sightings pool with brief-continuity's seen.py — everything seen, one
-    row per sighting, each with its source. Rank nothing, write no report file, and record nothing
-    in the covered ledger: the edition is written when the member asks for one. If the pool append
-    fails, say so and say which sources went unrecorded; a fire with no client attached has no file
-    tools, and a window that silently recorded nothing is a window no later edition can recover.
-    The pool rows are this fire's whole product, so send no brief.
+    row per sighting, each with its source. Load coverage-honesty and set each source's state as
+    its read returns, recording each one under today's date with brief-continuity's coverage.py:
+    the edition that covers this window counts those rows, and a state nobody recorded here is a
+    day it cannot account for. Rank nothing, write no report file, and record nothing in the
+    covered ledger: the edition is written when the member asks for one. If a pool append or a
+    coverage row fails, say so and say which sources went unrecorded; a fire with no client
+    attached has no file tools, and a window that silently recorded nothing is a window no later
+    edition can recover. The pool and coverage rows are this fire's whole product, so send no
+    brief.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a
@@ -162,6 +171,8 @@ morning from now on, and that an edition comes whenever they ask for one here.
   twice for the window the gather already covered and makes the member wait for it.
 - Letting the schedule's prompt name the sources while the series name is left as a placeholder.
 - Recording only what looks publishable, which leaves the pool blind to every lead the bar rejected.
+- Leaving a gather's source states unrecorded, so an edition spanning several of them can report
+  only the last one's failures.
 - Deriving a field, or proceeding silently, when neither the opening line nor `memory_search` has
   supplied a business — the turn has nothing to ask a field or rank stories against, and step 1a's
   question is the only correct move.
