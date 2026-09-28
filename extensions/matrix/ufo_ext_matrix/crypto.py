@@ -63,6 +63,7 @@ except ImportError:
 
 INSTALLED = VODOZEMAC and SEALING
 
+UNOBSERVED = object()
 STORE_KEY_SLOT = "matrix_store_key"
 FILE_ALGORITHM = "A256CTR"
 FILE_VERSION = "v2"
@@ -1238,11 +1239,19 @@ async def outbound(
     room_id: str,
     event_type: str,
     content: Mapping[str, Any],
+    settings: Any = UNOBSERVED,
 ) -> tuple[str, Mapping[str, Any]]:
     """The event type and content an event goes out as: itself in a plain room, Megolm ciphertext
     in an encrypted one. The type the room would have seen is sealed inside the ciphertext, so a
-    poll and a message reach an encrypted room as the same `m.room.encrypted` event."""
-    settings = await client.encryption(room_id)
+    poll and a message reach an encrypted room as the same `m.room.encrypted` event.
+
+    A caller that has already read the room's state passes it rather than letting this read it
+    again. A file and the message naming it are two events, and two reads of a mutable remote value
+    can disagree: a room that turns encryption on between them yields a sealed message pointing at
+    bytes that were uploaded in the clear, which is the failure sealing the bytes exists to
+    prevent."""
+    if settings is UNOBSERVED:
+        settings = await client.encryption(room_id)
     if settings is None:
         return event_type, content
     if settings.get("algorithm") != MEGOLM:

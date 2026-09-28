@@ -673,7 +673,14 @@ async def test_every_delivery_handler_encrypts_what_it_sends(workspace: Workspac
         assert any(expected in body for body in said_bodies), expected
     [picture] = [body for body in bodies if body["msgtype"] == "m.image"]
     assert picture["filename"] == "chart.png"
-    assert picture["url"].startswith("mxc://")
+    assert "url" not in picture
+    assert picture["file"]["url"].startswith("mxc://")
+    assert picture["file"]["key"]["alg"] == crypto.FILE_ALGORITHM
+    assert picture["info"]["mimetype"] == "image/png"
+
+    [(_, stored)] = server.uploaded
+    assert stored != b"\x89PNG"
+    assert crypto.open_file(picture["file"], stored) == b"\x89PNG"
 
 
 def test_a_short_store_key_is_refused() -> None:
@@ -815,3 +822,45 @@ def test_a_file_naming_another_algorithm_is_refused() -> None:
     other = {**sealed, "key": {**sealed["key"], "alg": "A128CTR"}}
     with pytest.raises(crypto.FileHashMismatch):
         crypto.open_file(other, ciphertext)
+
+
+@on_loop
+async def test_a_shared_file_costs_one_reading_of_the_rooms_encryption(
+    workspace: Workspace,
+) -> None:
+    """The bytes and the message naming them are decided by one observation, not two.
+
+    Reading a mutable remote value twice can disagree. A room that turned encryption on between the
+    upload and the send would seal the message over bytes already in the clear — a timeline that
+    looks encrypted above a media repository that is not, which is the failure sealing the bytes
+    exists to prevent."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    await primed(server, workspace)
+    surface = MatrixSurface(transport=server.transport, environ={})
+    chart = SharedArtifact(
+        id=uuid4(),
+        blob_key="blob-chart",
+        filename="chart.png",
+        media_type="image/png",
+        size_bytes=4,
+        subject=None,
+        role="file",
+    )
+    workspace.blob.objects = {chart.blob_key: b"\x89PNG"}
+    wb = Writeback(
+        turn_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_id=uuid4(),
+        queue_key=DIRECT,
+        terminal=TerminalFrame(status="done", text="Here."),
+        artifacts=(chart,),
+    )
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    before = _encryption_reads(server)
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert _encryption_reads(server) - before == 1
+
+
+def _encryption_reads(server: E2EHomeserver) -> int:
+    return sum("m.room.encryption" in str(request.url) for request in server.requests)

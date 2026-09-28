@@ -277,10 +277,10 @@ workspace's to know.
   as ever; an encrypted one logs `matrix.crypto_extra_missing` naming the extra, and a reply into one
   is refused with the same sentence. The store key does not substitute for the extra, nor the extra
   for the store key.
-- **A shared file's bytes are not sealed, only its message.** In an encrypted room the event
-  carrying a file is Megolm ciphertext, so the filename, the subject and the `mxc://` stay off the
-  server's timeline — but the object the `mxc://` points at is stored as it was given. Only room
-  members learn that `mxc://`, which is a weaker guarantee than the room's own.
+- **A file a room reads is not read back.** In an encrypted room the bytes are sealed before they
+  are uploaded, so the media repository holds ciphertext and the key travels inside the Megolm
+  payload — the timeline names no url that opens it. Inbound is the other half: a file arriving in a
+  room is not read, sealed or otherwise, so a member sharing one with the bot shares it with nobody.
 - **An unconfigured deploy boots, and answers nothing.** `requires` is empty because matrix consumes
   no seam another extension serves — a credential slot is not one of the four seams `requires` can
   name. The deploy-refuses-to-boot instinct is `deploy_keys`, already carried here for

@@ -65,7 +65,14 @@ from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.answering import Answering, read_answering, write_answering
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking
 from ufo_ext_matrix.client import MatrixClient, MatrixError
-from ufo_ext_matrix.crypto import CryptoUnavailable, device_for, inbound, outbound
+from ufo_ext_matrix.crypto import (
+    UNOBSERVED,
+    CryptoUnavailable,
+    device_for,
+    inbound,
+    outbound,
+    seal_file,
+)
 from ufo_ext_matrix.events import (
     MESSAGE_TYPE,
     NOTICE_MSGTYPE,
@@ -95,6 +102,7 @@ from ufo_ext_matrix.events import (
 from ufo_ext_matrix.feedback import attend
 from ufo_ext_matrix.linking import Linking, _said, code_in, proof_txn, unlinked
 from ufo_ext_matrix.messages import (
+    encrypted_file_content,
     edit_content,
     file_content,
     message_content,
@@ -122,6 +130,7 @@ BACKOFF_SECONDS = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 AMBIENT_CONTEXT_LINES = 10
 ROSTER_LIMIT = 50
 BACKFILL_PAGES = 5
+CIPHERTEXT_TYPE = "application/octet-stream"
 SPOKEN_MESSAGES = 50
 
 FAILED_LINE = "This turn failed before it could answer."
@@ -502,25 +511,48 @@ class MatrixSurface:
         carries the `mxc://` the repository answered. A repeated upload leaves an unreferenced
         object behind, which the media repository is welcome to.
 
-        In an encrypted room that message is Megolm ciphertext, so the filename, the subject and the
-        `mxc://` are not on the server's timeline in the clear — the bytes behind the `mxc://` are
-        not themselves sealed, which is what an `EncryptedFile` would add."""
+        In an encrypted room the bytes are sealed before they are uploaded and the key travels
+        inside the Megolm payload, so the media repository holds ciphertext and the timeline names
+        no url that opens it.
+
+        The room's state is read once here and handed to `send`. The file and the message naming it
+        are two events, and reading a mutable remote value twice can disagree — a room that turns
+        encryption on between them would seal the message over bytes already uploaded in the clear,
+        which is the failure sealing the bytes exists to prevent."""
+        room_id = writeback.queue_key
+        settings = await client.encryption(room_id)
         data = await ctx.blob.get(artifact.blob_key)
-        url = await client.upload(artifact.filename, artifact.media_type, data)
-        await self.send(
-            ctx,
-            client,
-            writeback.queue_key,
-            file_txn_id(writeback.turn_id, artifact.id),
-            file_content(
-                msgtype_for(artifact.media_type),
+        msgtype = msgtype_for(artifact.media_type)
+        if settings is None:
+            url = await client.upload(artifact.filename, artifact.media_type, data)
+            content = file_content(
+                msgtype,
                 artifact.filename,
                 artifact.subject,
                 artifact.media_type,
                 artifact.size_bytes,
                 url,
                 relation,
-            ),
+            )
+        else:
+            ciphertext, sealed = seal_file(data)
+            url = await client.upload(artifact.filename, CIPHERTEXT_TYPE, ciphertext)
+            content = encrypted_file_content(
+                msgtype,
+                artifact.filename,
+                artifact.subject,
+                artifact.media_type,
+                artifact.size_bytes,
+                {**sealed, "url": url},
+                relation,
+            )
+        await self.send(
+            ctx,
+            client,
+            room_id,
+            file_txn_id(writeback.turn_id, artifact.id),
+            content,
+            settings=settings,
         )
 
     async def speak(self, ctx: SurfaceContext, reply: MidTurnReply) -> str:
@@ -550,13 +582,17 @@ class MatrixSurface:
         txn: str,
         content: Mapping[str, Any],
         event_type: str = MESSAGE_TYPE,
+        settings: Any = UNOBSERVED,
     ) -> str:
         """One event into the room: itself in a plain room, Megolm ciphertext in an encrypted one.
         Every event this surface sends leaves through here, so no delivery path puts a room's own
         words on the wire in the clear because it did not think to ask whether the room is
         encrypted. A room the bot has no device keys for raises `CryptoUnavailable` rather than
-        falling back to cleartext."""
-        sealed, event = await outbound(ctx, client, room_id, event_type, content)
+        falling back to cleartext.
+
+        `settings` carries a room state a caller has already read, so a file and the message naming
+        it are decided by one observation rather than two."""
+        sealed, event = await outbound(ctx, client, room_id, event_type, content, settings)
         return await client.send_event(room_id, sealed, txn, event)
 
     async def say(
