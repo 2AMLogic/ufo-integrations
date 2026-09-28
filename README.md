@@ -42,21 +42,24 @@ RuntimeError: no model provider key set; the sandbox would have no egress route
 ```
 
 even though the model itself runs fine through the `openrouter` extension, since those calls are
-host-side and never exercise the derived sandbox-egress rules. Until this is fixed upstream in
-`ufo-core`, an OpenRouter-only deploy can pass the boot probe by pointing the Anthropic key env at
-the OpenRouter key in `ufo.toml`:
+host-side and never exercise the derived sandbox-egress rules.
+
+Such a deploy satisfies the probe by naming the OpenRouter key where the probe reads the Anthropic
+one, in `ufo.toml`:
 
 ```toml
 [models]
 anthropic_api_key_env = "OPENROUTER_API_KEY"   # probe-only; never spent
 ```
 
-This is a workaround for the boot probe, not a recommended permanent pattern, and not something a
-deploy with a real Anthropic or OpenAI key needs — it only applies to the OpenRouter-only case.
-The resulting Anthropic egress allow-rule is inert: nothing is ever spent against Anthropic,
-because OpenRouter calls never route through the sandbox egress proxy. Remove this note once
-[2AMLogic/ufo-integrations#34](https://github.com/2AMLogic/ufo-integrations/issues/34) is
-resolved upstream.
+The allow-rule that produces is inert. Nothing is spent against Anthropic, because OpenRouter calls
+never route through the sandbox egress proxy — so the setting answers the probe and changes nothing
+else. A deploy holding a real Anthropic or OpenAI key needs none of it; the probe is already
+satisfied.
+
+The constraint and this workaround are recorded in
+[#34](https://github.com/2AMLogic/ufo-integrations/issues/34). No upstream fix is tracked yet:
+`ufo-core` still derives sandbox model egress from the Anthropic and OpenAI key envs alone.
 
 ## Tests
 
