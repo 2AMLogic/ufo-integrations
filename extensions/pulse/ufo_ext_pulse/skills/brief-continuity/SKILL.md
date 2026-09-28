@@ -1,6 +1,6 @@
 ---
 name: brief-continuity
-description: "Load when a recurring brief, digest, or watch must not repeat what an earlier edition of the same series already published, or when a member says a report keeps telling them what they already know. Not for a first brief with no prior edition."
+description: "Load when a recurring brief, digest, or watch must not repeat what an earlier edition of the same series already published, when a member says a report keeps telling them what they already know, or to track leads already seen. Not for a first brief with no prior edition."
 ---
 # Brief continuity
 
@@ -97,6 +97,10 @@ python "$UFO_HOME/skills/brief-continuity/seen.py" stale   --series <s> --slug <
 python "$UFO_HOME/skills/brief-continuity/seen.py" history --series <s> --slug <slug>
 ```
 
+Fourteen days is the window both `fresh` and `stale` default to, and it is the same kind of number
+as the five-edition span above: two weeks is roughly how long a lead stays worth chasing before its
+silence is the story. Pass `--within-days` where a field moves faster or slower.
+
 The pool is append-only and nothing is ever removed. Age is a reason not to pursue a lead, never a
 reason to forget it: `stale` exits non-zero for a lead that has gone quiet, and the lead stays in
 the pool with its whole history, so when it moves again that history is still attached. A pool that
@@ -114,6 +118,12 @@ carried it.
 Every read is a pure read. `stale`, `fresh` and `history` never write, mark or delete a row; a
 staleness check that wrote anything would be the expiry this design rules out, wearing a different
 name.
+
+`record` is deliberately not idempotent. A sighting is an observation, not a fact about a story, so
+seeing one story twice in a day is two observations and both are recorded. `fresh` and `stale` read
+the most recent sighting and are unaffected; `history` is where the repetition shows, which is the
+place it is worth seeing — a lead a source keeps re-running is behaving differently from one that
+appeared once.
 
 ## Traps
 

@@ -52,6 +52,13 @@ def test_continuity_ships_its_ledger_script() -> None:
     assert (SKILLS_ROOT / "brief-continuity" / "covered.py").is_file()
 
 
+def test_continuity_ships_its_pool_script() -> None:
+    """SKILL.md invokes seen.py by path, exactly as it does covered.py. The argument for a script
+    over a prose rule -- that staleness is a lookup rather than a recollection -- rests entirely on
+    the script being there to look up."""
+    assert (SKILLS_ROOT / "brief-continuity" / "seen.py").is_file()
+
+
 @pytest.mark.parametrize("name", SKILL_NAMES)
 def test_every_skill_closes_with_traps(name: str) -> None:
     """House shape: the failure modes are listed where a reader looks for them."""

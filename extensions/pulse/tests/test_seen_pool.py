@@ -5,6 +5,7 @@ whether a lead is stale — never changes it, because the moment staleness write
 become the expiry the design rules out.
 """
 
+from datetime import date
 from pathlib import Path
 
 
@@ -87,7 +88,7 @@ def test_reading_never_writes(seen, tmp_path) -> None:
     seen.main(["stale", "--series", "data-infra", "--slug", "live-news", "--today", "2026-09-28"])
     seen.main(["history", "--series", "data-infra", "--slug", "old-news"])
     seen.last_seen("data-infra")
-    seen.fresh("data-infra", 14, __import__("datetime").date(2026, 9, 28))
+    seen.fresh("data-infra", 14, date(2026, 9, 28))
 
     assert path.read_bytes() == before
 
@@ -95,7 +96,7 @@ def test_reading_never_writes(seen, tmp_path) -> None:
 def test_fresh_lists_only_leads_inside_the_window(seen) -> None:
     seen.record("data-infra", "2026-08-01", "old-news", "August", "", "forums")
     seen.record("data-infra", "2026-09-27", "live-news", "Recent", "", "releases")
-    live = seen.fresh("data-infra", 14, __import__("datetime").date(2026, 9, 28))
+    live = seen.fresh("data-infra", 14, date(2026, 9, 28))
     assert [slug for slug, _ in live] == ["live-news"]
 
 

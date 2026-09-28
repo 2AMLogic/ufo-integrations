@@ -40,3 +40,9 @@ def test_the_runtime_sees_the_dependency_wiring() -> None:
 
 def test_the_runtime_carries_the_ledger_script_as_a_skill_file() -> None:
     assert "covered.py" in dict(parse_skill(SKILLS_ROOT / "brief-continuity").files)
+
+
+def test_the_runtime_carries_the_pool_script_as_a_skill_file() -> None:
+    """A skill load has to materialise seen.py where SKILL.md says to run it, or every pool
+    invocation in that file is a path to nothing."""
+    assert "seen.py" in dict(parse_skill(SKILLS_ROOT / "brief-continuity").files)
