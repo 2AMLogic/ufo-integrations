@@ -181,11 +181,16 @@ sharing — is `crypto.py`, and the store is `crypto_store.py`. Sealing uses `cr
 
 ```bash
 pip install "ufo-integrations[matrix-e2ee] @ git+https://github.com/2AMLogic/ufo-integrations"
-ufoctl ext install matrix
 ```
 
 Drop `[matrix-e2ee]` for a deploy whose rooms are unencrypted, and the native crypto libraries stay
 out of the environment.
+
+Installing the distribution registers the `ufo.extension` entry point. Activating this surface is a
+separate act: a deploy runs the extensions its active set names, and `ufoctl init` narrows that set
+to the assistant pack's, which does not bundle `matrix`. A deploy reaches this surface by naming
+`matrix` in an active set of its own — [the root README](../../README.md#install) states the
+narrowing, and [`pulse`](../pulse/README.md#install) carries the pack files such a set is built from.
 
 | Setting | Where | Holds |
 | --- | --- | --- |
@@ -230,6 +235,10 @@ workspace's to know.
   the homeserver's timeout rather than sending a last stop.
 - **An unlisted bot is bound but deaf.** The listener runs only the MXIDs `UFO_MATRIX_BOTS` names;
   binding one the deploy does not list admits nothing until it does.
+- **`ufoctl ext install matrix` pins from a catalog this deploy may not run.** It reads an extension
+  store, and `ufoctl init` writes no `[ext].store` into `ufo.toml`, so the command answers
+  `extension store not enabled` and pins nothing. A deploy without a store names `matrix` in its own
+  active set instead.
 - **An empty store key is a bot with no device keys.** Without `matrix_store_key` the bot hears
   nothing it can read in an encrypted room, and a reply into one is refused rather than sent in
   the clear.
