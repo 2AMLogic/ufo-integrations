@@ -4,8 +4,9 @@ and how one reply becomes several events.
 `events.py` reads what a room said; this writes what the bot says back. A reply carries the words in
 `body` and the same words as HTML in `formatted_body`, so a homeserver holds each reply twice over —
 more where escaping expands a character into an entity. An event may weigh `EVENT_LIMIT_BYTES` in
-all, envelope included, so a reply is written in parts of at most `PART_BUDGET_BYTES` of Markdown:
-a sixteenth of the event budget, which leaves the widest expansion of those bytes room to fit.
+all, envelope included, so a reply is written in parts of at most `PART_BUDGET_BYTES` of Markdown —
+a fence opener of its own length excepted, which one part keeps intact — a sixteenth of the event
+budget, which leaves the widest expansion of those bytes room to fit.
 
 Nothing here imports `ufo` or an HTTP client, so the contract tests hold these rules on a checkout
 with neither installed."""
@@ -101,9 +102,10 @@ def file_content(
 
 def parts(markdown: str, budget: int = PART_BUDGET_BYTES) -> tuple[str, ...]:
     """One reply as the messages it is sent in: whole paragraphs, in the order they were written,
-    each at most `budget` bytes. A paragraph of its own length is cut at a line boundary, and a
-    fenced block cut that way is closed and opened again, so no part leaves a fence standing
-    open and every part renders on its own."""
+    each at most `budget` bytes — except a fenced block whose opener alone reaches the budget,
+    which stays intact on one part, itself still far under the event limit. A paragraph of its own
+    length is cut at a line boundary, and a fenced block cut that way is closed and opened again,
+    so no part leaves a fence standing open and every part renders on its own."""
     written: list[str] = []
     for block in _blocks(markdown):
         written.extend(_bounded(block, budget))
@@ -248,7 +250,8 @@ def _blocks(markdown: str) -> list[str]:
 
 def _bounded(block: str, budget: int) -> list[str]:
     """One paragraph as the pieces it fits the budget in. A fenced block is reopened with the same
-    info string in each piece after the first, so each piece is a fence a client can close."""
+    info string in each piece after the first, so each piece is a fence a client can close. The
+    line budget clamps at one byte, so an opener of its own length cannot wedge the cutting."""
     if len(block.encode()) <= budget:
         return [block]
     lines = block.splitlines()
@@ -259,9 +262,10 @@ def _bounded(block: str, budget: int) -> list[str]:
         lines = lines[1:-1] if closed else lines[1:]
     pieces: list[str] = []
     held: list[str] = []
+    line_budget = max(1, budget - len(fence.encode()) - len(FENCE.encode()) - 1)
     for line in lines:
-        for piece in _cut(line, budget - len(fence.encode()) - len(FENCE.encode()) - 2):
-            if held and len("\n".join([*held, piece]).encode()) + len(fence.encode()) > budget:
+        for piece in _cut(line, line_budget):
+            if held and _piece_bytes([*held, piece], fence) > budget:
                 pieces.append(_refenced(held, fence))
                 held = []
             held.append(piece)
@@ -270,22 +274,39 @@ def _bounded(block: str, budget: int) -> list[str]:
     return pieces
 
 
+def _piece_bytes(held: Sequence[str], fence: str) -> int:
+    """The bytes one piece takes as it is sent: its opener, its lines, and the fence that closes
+    it again — the accounting `_bounded` flushes against, so a part never exceeds the budget by
+    an uncounted newline."""
+    body = len("\n".join(held).encode())
+    if fence:
+        return len(fence.encode()) + body + len(FENCE) + 1
+    return body
+
+
 def _refenced(lines: Sequence[str], fence: str) -> str:
     body = "\n".join(lines)
     return f"{fence}{body}\n{FENCE}" if fence else body
 
 
 def _cut(line: str, budget: int) -> list[str]:
-    """One line as the runs of it that fit, cut between characters where no word boundary does."""
+    """One line as the runs of it that fit, cut at a space where one does. The invariant: this
+    always returns, and every piece it yields but the last is non-empty — a character wider than
+    the budget moves to a piece of its own rather than wedging the loop, and a non-positive
+    budget takes one character a call. Indentation is kept: a continuation keeps the whitespace
+    it was written with."""
     pieces: list[str] = []
     rest = line
     while len(rest.encode()) > budget:
         head = rest.encode()[:budget].decode(errors="ignore")
         space = head.rfind(" ")
         head = head[:space] if space > 0 else head
+        if not head:
+            head = rest[0]
         pieces.append(head)
-        rest = rest[len(head) :].lstrip()
-    pieces.append(rest)
+        rest = rest[len(head) :]
+    if rest or not pieces:
+        pieces.append(rest)
     return pieces
 
 

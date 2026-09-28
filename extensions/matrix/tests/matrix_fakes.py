@@ -19,7 +19,12 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from ufo.runtime.turns.audience import narrow_audience
+from ufo.runtime.turns.audience import (
+    SHARED_AUDIENCE,
+    audience_member,
+    narrow_audience,
+    parse_audience,
+)
 from ufo.sdk.audience import Audience
 from ufo.sdk.surfaces import Admitted, AmbientMessage, CredentialSlotUnset, SharedArtifact
 from ufo_ext_matrix.answering import ANSWERING_TABLE
@@ -79,6 +84,7 @@ class Homeserver:
     history: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     uploaded: list[tuple[str, bytes]] = field(default_factory=list)
     refused_uploads: set[str] = field(default_factory=set)
+    limited_uploads: set[str] = field(default_factory=set)
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -127,6 +133,8 @@ class Homeserver:
         filename = request.url.params.get("filename", "")
         if filename in self.refused_uploads:
             return httpx.Response(413, json={"errcode": "M_TOO_LARGE"})
+        if filename in self.limited_uploads:
+            return httpx.Response(429, json={"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": 1500})
         self.uploaded.append((filename, request.content))
         return httpx.Response(200, json={"content_uri": f"mxc://example.org/{filename}"})
 
@@ -201,7 +209,19 @@ class Workspace:
         return f"https://ufo.example.org/surface/web{fragment}"
 
     async def report_url(self, conversation_id: UUID, artifact: SharedArtifact) -> str | None:
+        """The portal link core's rule allows: a deploy without a portal offers none, and a room
+        the portal shows nobody — anything but the shared audience or a member's own — offers none
+        either, exactly the gate `SurfaceContext.report_url` applies."""
         if not self.portal:
+            return None
+        audience = next(
+            (audience for held, audience in self.conversations.values() if held == conversation_id),
+            None,
+        )
+        if audience is None:
+            return None
+        parsed = parse_audience(audience)
+        if parsed != SHARED_AUDIENCE and audience_member(parsed) is None:
             return None
         return self.home_url(f"#/c/{conversation_id}?report={artifact.id}")
 

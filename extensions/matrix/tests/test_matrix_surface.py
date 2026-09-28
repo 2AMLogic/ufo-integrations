@@ -34,6 +34,7 @@ from matrix_fakes import (  # noqa: E402
     on_loop,
     text,
 )
+from ufo.runtime.turns.audience import SHARED_AUDIENCE  # noqa: E402
 from ufo.sdk.audience import foreign_room_audience, room_audience  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
     NOTHING_DELIVERED,
@@ -869,6 +870,9 @@ async def test_the_detailed_report_is_a_link_and_is_never_uploaded(workspace: Wo
     wb = writeback(
         TerminalFrame(status="done", text="Short answer."), artifacts=(report("the write-up"),)
     )
+    # Only the shared audience — or a member's own — earns a portal link, so a room conversation
+    # seeded with one reads the way core's audience gate lets it read.
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
     reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
     await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
     body = server.sent[txn_id(wb.turn_id)]["body"]
@@ -886,8 +890,26 @@ async def test_a_report_the_turn_named_nothing_reads_as_the_surfaces_own_words(
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
     wb = writeback(TerminalFrame(status="done", text="Short answer."), artifacts=(report(),))
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
     await surface.post(workspace, wb)  # type: ignore[arg-type]
     assert f"[{REPORT_LINK_TEXT}](" in server.sent[txn_id(wb.turn_id)]["body"]
+
+
+@on_loop
+async def test_a_details_report_the_portal_shows_nobody_points_at_the_workspace(
+    workspace: Workspace,
+) -> None:
+    """A room audience is neither the shared one nor a member's own, so core's gate offers no
+    link: the write-up then reads as the workspace pointer rather than vanishing — a turn whose
+    words were silence must never post an empty event."""
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text=SILENCE_SENTINEL), artifacts=(report(),))
+    workspace.conversations[ROOM] = (wb.conversation_id, room_audience("matrix", room_key(ROOM)))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    body = server.sent[txn_id(wb.turn_id)]["body"]
+    assert f"[{REPORT_LINK_TEXT}](" not in body
+    assert body == f"{FILES_LINE}: https://ufo.example.org/surface/web"
 
 
 @on_loop
@@ -896,8 +918,11 @@ async def test_a_deploy_with_no_portal_offers_no_report_link(workspace: Workspac
     workspace.portal = False
     surface = MatrixSurface(transport=server.transport, environ={})
     wb = writeback(TerminalFrame(status="done", text="Short answer."), artifacts=(report("here"),))
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
     await surface.post(workspace, wb)  # type: ignore[arg-type]
-    assert server.sent[txn_id(wb.turn_id)]["body"] == "Short answer."
+    assert server.sent[txn_id(wb.turn_id)]["body"] == (
+        f"Short answer.\n\n{FILES_LINE}: https://ufo.example.org/surface/web"
+    )
 
 
 @on_loop
@@ -936,6 +961,46 @@ async def test_one_refused_upload_leaves_its_siblings_delivered(workspace: Works
     assert file_txn_id(wb.turn_id, small.id) in server.sent
     assert file_txn_id(wb.turn_id, huge.id) not in server.sent
     assert file_txn_id(wb.turn_id, gone.id) not in server.sent
+
+
+@on_loop
+async def test_a_rate_limited_upload_raises_so_the_file_is_not_discarded(
+    workspace: Workspace,
+) -> None:
+    """A refusal the homeserver will take back is not a file gone for good: it raises the delivery
+    error core retries on, carrying the wait the homeserver asked for."""
+    server = Homeserver(limited_uploads={"slow.png"})
+    slow = shared("slow.png", "image/png")
+    workspace.blob.objects = {slow.blob_key: b"png"}
+    wb = writeback(TerminalFrame(status="done", text="One file."), artifacts=(slow,))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    with pytest.raises(SurfaceDeliveryError) as raised:
+        await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert raised.value.retry_after_seconds == 2
+    assert server.uploaded == []
+    assert list(server.sent) == [txn_id(wb.turn_id)]
+
+
+@on_loop
+async def test_a_failed_answering_record_does_not_unadmit_the_message(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The turn stands when its answering row fails to write: the line is not fed back as room
+    context for a turn it founded, and the stream moves on."""
+
+    async def unrecorded(ctx: object, turn_id: object, answering: object) -> None:
+        raise ValueError("answering table unavailable")
+
+    monkeypatch.setattr("ufo_ext_matrix.surface.write_answering", unrecorded)
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    with caplog.at_level(logging.DEBUG):
+        await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$m1"]
+    assert "matrix.answering_unrecorded" in caplog.text
+    assert await read_since(workspace, BOT) == "s2"
 
 
 @on_loop

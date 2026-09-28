@@ -36,6 +36,7 @@ from ufo_ext_matrix.messages import (
     EVENT_LIMIT_BYTES,
     FENCE,
     PART_BUDGET_BYTES,
+    _cut,
     file_content,
     html_body,
     message_content,
@@ -464,10 +465,50 @@ def test_no_part_leaves_a_fence_open() -> None:
     assert "line_599 = 599" in written[-1]
 
 
+def test_cut_guarantees_progress_on_any_budget() -> None:
+    """The invariant #8 builds on: `_cut` always returns, and every piece but the last is
+    non-empty — a non-positive budget takes one character a call, and a character wider than the
+    budget moves to a piece of its own rather than wedging the loop."""
+    assert _cut("abc", 0) == ["a", "b", "c"]
+    assert _cut("éé", 1) == ["é", "é"]
+    assert all(piece for piece in _cut("x" * 10, 3)[:-1])
+
+
+@pytest.mark.parametrize(
+    "opener_length",
+    [PART_BUDGET_BYTES - len(FENCE) - 5, PART_BUDGET_BYTES + 100],
+    ids=["opener-at-the-budget", "opener-past-the-budget"],
+)
+def test_a_fence_with_an_opener_at_or_past_the_budget_still_returns(opener_length: int) -> None:
+    """The case that wedged `parts`: a fence opener as long as the budget drives the per-line
+    budget to nothing. It returns, every part is a fence a client can close, and no part is empty."""
+    written = parts(f"{FENCE}{'x' * opener_length}\ncode\n{FENCE}")
+    assert written
+    assert all(part for part in written)
+    assert "\n".join(written).count(FENCE) % 2 == 0
+
+
+def test_a_split_fence_keeps_its_indentation() -> None:
+    """A fenced block cut across parts keeps the whitespace its lines were written with — the
+    continuation of a cut line is not stripped to fit."""
+    code = "\n".join(f"    line_{n} = {n}" for n in range(300))
+    written = parts(f"Here it is.\n\n{FENCE}python\n{code}\n{FENCE}")
+    assert len(written) > 1
+    assert any("    line_1 = 1" in part for part in written)
+    assert "    line_299 = 299" in written[-1]
+
+
 @pytest.mark.parametrize(
     "written",
-    ['"' * 20000, "&" * 20000, '> "\n\n' * 4000, "- &\n" * 4000, "word" * 5000],
-    ids=["quotes", "ampersands", "quoted-lines", "list-items", "one-long-word"],
+    [
+        '"' * 20000,
+        "&" * 20000,
+        '> "\n\n' * 4000,
+        "- &\n" * 4000,
+        "word" * 5000,
+        "\U0001f600" * 3000,
+    ],
+    ids=["quotes", "ampersands", "quoted-lines", "list-items", "one-long-word", "multibyte"],
 )
 def test_every_part_fits_one_event_however_it_expands(written: str) -> None:
     for part in parts(written):

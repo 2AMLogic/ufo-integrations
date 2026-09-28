@@ -126,12 +126,19 @@ def installations(configured: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(named))
 
 
-def reply_text(writeback: Writeback, workspace_url: str | None, reports: Sequence[str] = ()) -> str:
+def reply_text(
+    writeback: Writeback,
+    workspace_url: str | None,
+    reports: Sequence[str] = (),
+    *,
+    unlinked: bool = False,
+) -> str:
     """The one message a terminal turn becomes. A failed turn says so in the surface's own words; a
     cancelled turn posts the reason core gave — an archived conversation, a revoked seat — or, with
     none, says it was stopped; a detailed write-up is a link under the words the turn wrote it
-    under; a question is written out with its options, since a room has no buttons; and what a room
-    cannot carry — a connect or credential handoff, a shared file — points at the workspace."""
+    under, or points at the workspace where the deploy offers no link; a question is written out
+    with its options, since a room has no buttons; and what a room cannot carry — a connect or
+    credential handoff, a shared file — points at the workspace."""
     terminal = writeback.terminal
     text = terminal.text.strip()
     if terminal.status == "failed":
@@ -150,7 +157,7 @@ def reply_text(writeback: Writeback, workspace_url: str | None, reports: Sequenc
     where = f": {workspace_url}" if workspace_url else "."
     if terminal.connect_request is not None or terminal.credential_request is not None:
         said.append(ELSEWHERE_LINE + where)
-    if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts):
+    if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts) or unlinked:
         said.append(FILES_LINE + where)
     return "\n\n".join(said)
 
@@ -320,7 +327,9 @@ class MatrixSurface:
         files under, whatever else the reply became."""
         if writeback_says_nothing(writeback):
             return NOTHING_DELIVERED
-        body = reply_text(writeback, ctx.home_url(), await report_links(ctx, writeback))
+        links = await report_links(ctx, writeback)
+        details = sum(1 for artifact in writeback.artifacts if artifact.role == DETAILS_ROLE)
+        body = reply_text(writeback, ctx.home_url(), links, unlinked=details > len(links))
         homeserver, token = await self.slots(ctx)
         answering = await read_answering(ctx, writeback.turn_id)
         async with delivering():
@@ -331,9 +340,11 @@ class MatrixSurface:
 
     async def attach(self, ctx: SurfaceContext, writeback: Writeback, reply_ref: str) -> None:
         """The turn's shared files, each its own message under the reply core recorded. Every file
-        is best effort: one the homeserver refuses is logged and the rest go on, since a room that
-        carries three of four files says more than one that carries none. Delivery repeats after a
-        crash, and a file already sent is sent under the transaction id it was sent under before."""
+        is best effort: a refusal the homeserver will not take back is logged and the rest go on,
+        since a room that carries three of four files says more than one that carries none — but a
+        failure a retry can fix, a rate limit or a lost database among them, raises, so the file is
+        not discarded to a transient outage. Delivery repeats after a crash, and a file already
+        sent is sent under the transaction id it was sent under before."""
         files = shared_files(writeback)
         if not files:
             return
@@ -345,12 +356,30 @@ class MatrixSurface:
             for artifact in files:
                 try:
                     await self.hand_over(ctx, client, writeback, artifact, relation)
+                except MatrixError as error:
+                    if error.retry_after_ms is not None or error.status >= 500:
+                        retry = error.retry_after_ms
+                        raise SurfaceDeliveryError(
+                            str(error),
+                            retry_after_seconds=(
+                                None if retry is None else math.ceil(retry / 1000)
+                            ),
+                        ) from None
+                    warn(
+                        "matrix.file_undelivered",
+                        media_type=artifact.media_type,
+                        error_class=type(error).__name__,
+                        status=error.status,
+                    )
+                except sa.exc.SQLAlchemyError:
+                    raise
+                except httpx.HTTPError as error:
+                    raise SurfaceDeliveryError(f"send failed: {type(error).__name__}") from None
                 except Exception as error:
                     warn(
                         "matrix.file_undelivered",
                         media_type=artifact.media_type,
                         error_class=type(error).__name__,
-                        status=getattr(error, "status", None),
                     )
 
     async def hand_over(
@@ -693,13 +722,20 @@ class Installation:
             ),
             speaker_member_id=member_id,
         )
-        await write_answering(
-            ctx,
-            admitted.turn_id,
-            Answering(
-                room_id=message.room_id,
-                event_id=message.event_id,
-                thread_root=message.thread_root,
-            ),
-        )
+        try:
+            await write_answering(
+                ctx,
+                admitted.turn_id,
+                Answering(
+                    room_id=message.room_id,
+                    event_id=message.event_id,
+                    thread_root=message.thread_root,
+                ),
+            )
+        except sa.exc.SQLAlchemyError:
+            raise
+        except Exception as error:
+            # The turn stands without the record: the reply then relates to nothing, and the line
+            # is not fed back as room context for a turn it founded.
+            warn("matrix.answering_unrecorded", error_class=type(error).__name__)
         return True

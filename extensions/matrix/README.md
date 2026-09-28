@@ -134,7 +134,8 @@ workspace's to know.
 - **An orphaned upload is the cost of at-least-once.** Recovery repeats `attach`, so bytes can reach
   the media repository twice; the second `mxc://` is unreferenced and the repository keeps it.
 - **A write-up needs a portal.** The detailed report is a link into the deploy's portal, and a deploy
-  without one, or a room the portal shows nobody, posts the reply with no link at all.
+  without one, or a room the portal shows nobody, points at the workspace instead — the reply never
+  carries an empty body for a write-up the room cannot link.
 - **Only a member brings the bot into a room.** An invitation from anyone who resolves to no member —
   a stranger on the bot's own homeserver included — is left standing, unless a member's claim on
   that MXID is live.
