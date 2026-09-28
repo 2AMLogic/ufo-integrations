@@ -1,12 +1,14 @@
-"""Shared locations. The skills are data on disk, so the contract tests read them directly and need
-no `ufo` in the environment; only `test_registry.py` needs the runtime."""
+"""Shared locations. The skills are data on disk and so is the extension's own source, so the
+contract tests read both directly and need no `ufo` in the environment; only `test_registry.py`
+needs the runtime."""
 
 import importlib.util
 from pathlib import Path
 
 import pytest
 
-SKILLS_ROOT = Path(__file__).resolve().parents[1] / "ufo_ext_pulse" / "skills"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "ufo_ext_pulse"
+SKILLS_ROOT = PACKAGE_ROOT / "skills"
 SKILL_NAMES = (
     "pulse-handoff",
     "field-pulse",
