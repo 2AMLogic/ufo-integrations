@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "matrix_0002"
-down_revision: str | None = "matrix_0001"
+revision: str = "matrix_0003"
+down_revision: str | None = "matrix_0002"
 branch_labels: tuple[str, ...] | None = None
 depends_on: str | None = None
 

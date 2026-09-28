@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from ufo_ext_matrix.addressed import Bot, addresses
+from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
@@ -113,12 +114,44 @@ def imported_modules(path: Path) -> list[str]:
 )
 def test_imports_only_the_sdk(path: Path) -> None:
     """Upstream gates extensions on `ufo.sdk`; a reach past it breaks on the next release."""
+    allowed = sys.stdlib_module_names | THIRD_PARTY | E2EE_THIRD_PARTY | {"ufo_ext_matrix"}
     for name in imported_modules(path):
         top = name.split(".")[0]
         if top == "ufo":
             assert name == "ufo.sdk" or name.startswith("ufo.sdk."), name
         else:
-            assert top in sys.stdlib_module_names | THIRD_PARTY | {"ufo_ext_matrix"}, name
+            assert top in allowed, name
+
+
+def guarded_modules(tree: ast.AST) -> set[str]:
+    """The top-level names imported inside a `try` that handles `ImportError`."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not any(
+            isinstance(h.type, ast.Name) and h.type.id == "ImportError" for h in node.handlers
+        ):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Import):
+                found |= {alias.name.split(".")[0] for alias in inner.names}
+            elif isinstance(inner, ast.ImportFrom) and inner.module:
+                found.add(inner.module.split(".")[0])
+    return found
+
+
+@pytest.mark.parametrize(
+    "path", sorted(PACKAGE.rglob("*.py")), ids=lambda p: str(p.relative_to(PACKAGE))
+)
+def test_the_e2ee_libraries_are_imported_under_a_guard(path: Path) -> None:
+    """`vodozemac` and `cryptography` ship in the `matrix-e2ee` extra, so a module that reads one
+    reads it inside a `try`/`except ImportError` and the package imports without either."""
+    guarded = guarded_modules(ast.parse(path.read_text()))
+    for name in imported_modules(path):
+        top = name.split(".")[0]
+        if top in E2EE_THIRD_PARTY:
+            assert top in guarded, f"{path.name} imports {top} outside an ImportError guard"
 
 
 @pytest.mark.parametrize("module", PURE)
@@ -134,8 +167,50 @@ def test_the_contract_modules_import_nothing_installed(module: str) -> None:
 def test_the_package_declares_its_entry_point_and_client() -> None:
     project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
     assert project["entry-points"]["ufo.extension"]["matrix"] == "ufo_ext_matrix.manifest:manifest"
-    for client in ("httpx", "vodozemac", "cryptography"):
-        assert any(dep.startswith(client) for dep in project["dependencies"]), client
+    assert any(dep.startswith("httpx") for dep in project["dependencies"])
+
+
+def test_the_e2ee_libraries_are_an_extra_and_not_baseline() -> None:
+    """One distribution ships `pulse` beside this surface, so an install for the skill pack alone
+    pulls no native crypto: the two libraries are the `matrix-e2ee` extra's and nothing else's."""
+    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    extra = project["optional-dependencies"][EXTRA]
+    assert {dep.split(">")[0] for dep in extra} == set(E2EE_THIRD_PARTY)
+    for dep in extra:
+        assert not any(base.startswith(dep.split(">")[0]) for base in project["dependencies"]), dep
+
+
+def revisions() -> list[tuple[str, str | None]]:
+    """Each migration's `revision` and `down_revision`, in filename order, read as source so the
+    check needs no alembic. A pair per file, never a mapping: two files claiming one revision is
+    the defect this exists to catch, and a mapping would swallow it."""
+    found = []
+    for path in sorted(MIGRATIONS.glob("matrix_*.py")):
+        declared = {
+            node.target.id: node.value
+            for node in ast.walk(ast.parse(path.read_text()))
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+        }
+        revision, down = declared["revision"], declared["down_revision"]
+        assert isinstance(revision, ast.Constant), path.name
+        assert path.name.startswith(f"{revision.value}_"), path.name
+        found.append((revision.value, down.value if isinstance(down, ast.Constant) else None))
+    return found
+
+
+def test_the_migrations_are_one_chain_from_one_base() -> None:
+    """A revision two migrations claim, or a parent no migration declares, forks the lineage and
+    breaks `ufoctl migrate`. Each such migration is green on its own branch, so the lineage is a
+    fact about the checkout and not about any one of them, and only a check here sees it."""
+    chain = revisions()
+    declared = [revision for revision, _ in chain]
+    parents = [down for _, down in chain if down is not None]
+    assert len(declared) == len(set(declared)), f"a revision is claimed twice: {declared}"
+    assert len(parents) == len(set(parents)), f"a parent is claimed twice: {parents}"
+    assert [down for _, down in chain if down is None] == [None], "more than one base"
+    for revision, down in chain:
+        assert down is None or down in declared, f"{revision} chains onto absent {down}"
+    assert len(set(declared) - set(parents)) == 1, "more than one head"
 
 
 def test_deploy_keys_are_bare_names_core_prefixes() -> None:
