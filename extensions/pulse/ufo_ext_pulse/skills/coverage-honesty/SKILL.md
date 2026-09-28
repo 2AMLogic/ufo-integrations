@@ -34,6 +34,23 @@ act directly, so it says what to do:
 
     Not read: the analytics account's authorization expired — reconnect it.
 
+## A report covering several gathers says how many of them
+
+A report of one gather writes the lines above, and they describe that gather's states. A report
+covering three gathers has three sets of states under it, and one flat "not read: the filings index"
+over them is the ambiguity this skill exists to remove: unread on Monday and read on Tuesday and
+Wednesday is a different claim from unread all week, and a reader deciding whether the field is
+quiet acts on them differently.
+
+    Not read: the filings index rate-limited 2 of the 3 gathers.
+
+A source unread on every gather says so — "the filings index was unreachable throughout" — and a
+source read every gather keeps the read line's counts and needs nothing else. Aggregate from the
+state each gather recorded, never from the last gather's: the most recent day's failure is one day's
+evidence, and the report covers all of them. A series keeps those per-gather states in
+`brief-continuity`'s coverage store, which is what makes the count a lookup rather than a
+recollection.
+
 ## A quiet window is a finding; an unread window is not
 
 When every source was read and the window is genuinely quiet, say so in one line and stop. Do not
@@ -63,6 +80,7 @@ edition, so nobody goes back for the half that did not.
 | --- | --- |
 | The quiet line | 12 words |
 | One not-read line | 15 words, naming the source and which of the four |
+| One not-read line over several gathers | 18 words, adding how many of the window's gathers |
 | The read line | one count per source, nothing else |
 
 Counts are what the run observed, never an estimate, and a source read with zero items is written as
@@ -77,3 +95,5 @@ zero rather than left out. A source omitted from the footer reads as a source no
 - Recording ledger rows for a window that was not covered, which makes the missed stories permanently ineligible.
 - Reporting expired authorization without saying to reconnect, so the member reads a fact they cannot act on.
 - Deciding a source's state at write-up from an empty list instead of at the read.
+- Flattening several gathers into one footer, so unread once and unread throughout read alike.
+- Aggregating a window from the last gather's states, which files one day's failure under every day.

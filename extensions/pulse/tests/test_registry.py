@@ -51,3 +51,11 @@ def test_the_runtime_carries_the_pool_script_as_a_skill_file() -> None:
     """A skill load has to materialise seen.py where SKILL.md says to run it, or every pool
     invocation in that file is a path to nothing."""
     assert "seen.py" in dict(parse_skill(SKILLS_ROOT / "brief-continuity").files)
+
+
+def test_the_runtime_carries_the_coverage_script_as_a_skill_file() -> None:
+    """Both halves of the coverage store travel with the skill: the script the gather runs and the
+    shared mechanics it imports at the path the load materialises them at."""
+    files = dict(parse_skill(SKILLS_ROOT / "brief-continuity").files)
+    assert "coverage.py" in files
+    assert "_jsonl_pool.py" in files

@@ -161,6 +161,34 @@ the most recent sighting and are unaffected; `history` is where the repetition s
 place it is worth seeing — a lead a source keeps re-running is behaving differently from one that
 appeared once.
 
+## Coverage state is a third store, one row per source per gather
+
+`pulse/<series>.coverage.jsonl`, written by `coverage.py`, records what each source returned on each
+gather: read with items, read and empty, or not read for one of `coverage-honesty`'s four reasons.
+The ledger's subject is a story and the pool's is a lead; this one's is a source, which is why it
+carries no slug for a story and answers what neither of the others can.
+
+```bash
+python "$UFO_HOME/skills/brief-continuity/coverage.py" record \
+  --series <s> --gathered <date> --source <source-slug> --state read --items 11
+python "$UFO_HOME/skills/brief-continuity/coverage.py" record \
+  --series <s> --gathered <date> --source <source-slug> --state not-read --reason rate-limited
+python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
+  --series <s> --since <date> --until <date>
+```
+
+`window` states every source across the gathers between those dates: read on all three, not read on
+two of three, not read throughout. An edition covering one gather has one set of states to report and
+an edition covering three has three, and `coverage-honesty` is what the footer follows in either case.
+
+The source slug is that source's durable address across gathers, exactly as a story slug is across
+editions. The footer names the source in the reader's words and the store keys it by the slug, which
+is what lets three days of one source aggregate as one source rather than as three.
+
+A retry inside one gather appends its own row, and the later row is that gather's answer: a source
+that rate-limited the first attempt and answered the second was read that day. Nothing is rewritten,
+and every read here is a pure read, exactly as in the pool.
+
 ## Traps
 
 - Ranking before reading the ledger, then discarding the winners.
@@ -177,3 +205,5 @@ appeared once.
   stories into one and looks correct while doing it. A placeholder like `n/a` or `-` passes the
   check for the same reason and identifies even less.
 - Deleting or rewriting a pool row to express staleness, rather than letting `stale` answer it.
+- Keying a source by the words one footer used, so one source across three gathers aggregates as three.
+- Rewriting a gather's coverage row when a retry succeeds, instead of appending the retry beside it.

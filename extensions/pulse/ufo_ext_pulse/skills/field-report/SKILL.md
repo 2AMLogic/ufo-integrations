@@ -100,22 +100,38 @@ that continuity is broken for this edition. An edition that could not record its
 when it says so. This is the same rule `coverage-honesty` applies to a source that did not answer,
 pointed at the series' own record instead of its inputs.
 
-## The footer counts rows, and names where there were none
+## The footer reads the gathers' own states, and names where there were none
 
-The pool records sightings, not reads. A source with rows in the window was read at least once; a
-source with none may have been read and empty, or never reached, and the pool does not say which. So
-the footer gives the counts it holds and names the rest as sources this edition has no evidence
-from — `coverage-honesty`'s third state, arrived at from the pool's silence rather than from a
-failed read.
+Each gather set every source's state as its read returned, so the footer is a lookup rather than an
+inference. Read them over the same span the window line states:
 
-    Sightings 2026-09-22 to 2026-09-28: releases (14), papers (5), forums (2).
-    No evidence: the filings index left no row in this window.
+```bash
+python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
+  --series <series> --since <the window opens> --until <today>
+```
 
-The confirmed source set is what makes the second line possible. A source left out of the footer
-because the pool never mentioned it reads as a source nobody thought about, which is the claim
+`window` states each source across the gathers it covers: read on all of them, read on two of three,
+not read throughout, and which of `coverage-honesty`'s four reasons kept it out. An edition covering
+one gather takes that skill's single-run lines; one covering several says how many of them each
+state held, which is the count it requires and the ambiguity it refuses.
+
+    Read: releases on all 6 gathers (14 items), papers on 4 of 6 gathers (5 items).
+    Not read: the filings index rate-limited 5 of the 6 gathers.
+
+A gather can leave no coverage row at all — a fire with no client attached has no file tools, and a
+window can reach back past the gathers a series has states from. There the pool is the only witness,
+and it records sightings rather than reads: a source with rows was read at least once, and a source
+with none may have been read and empty or never reached. Say which store answered, because the two
+support different claims — a recorded state names the failure, and the pool's silence supports only
+`coverage-honesty`'s third state, that this edition has no evidence from that source.
+
+    No evidence: the filings index left no row on 2026-09-22, which recorded no states.
+
+The confirmed source set is what makes that line possible. A source left out of the footer because
+neither store mentioned it reads as a source nobody thought about, which is the claim
 `coverage-honesty` refuses. Its threshold reads the same way here: a window most of the confirmed
-sources left no row in is a window this edition has not covered, and it publishes the footer's lines
-rather than a brief built from the part that answered.
+sources went unread or unrecorded across is a window this edition has not covered, and it publishes
+the footer's lines rather than a brief built from the part that answered.
 
 An edition where nothing in the pool clears the bar is a finished edition, not a failed one. Say
 that nothing in the window cleared the bar, name the window and the sources that left rows, and
@@ -144,6 +160,8 @@ to read a brief.
 - Publishing an edition without saying which span it covers, so a week and a night read the same.
 - Writing a source's silence in the pool as "nothing new", when a read-and-empty source and an
   unreached one leave the same absence of rows.
+- Reading the footer out of the pool's silence over gathers that recorded their states, which turns
+  a named failure back into an absence and loses the count of days it lasted.
 - Reporting a quiet field over a window whose gathers did not run.
 - Running the scripts from a subdirectory, which reads an empty pool and an empty ledger and
   publishes an edition with nothing behind it.

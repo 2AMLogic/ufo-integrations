@@ -66,6 +66,13 @@ def test_the_report_reads_the_pool_by_script() -> None:
     assert "seen.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
 
 
+def test_the_report_reads_the_coverage_store_by_script() -> None:
+    """The report is the only skill that writes an edition, so it is the only one that writes a
+    footer over several gathers. That footer is a count of recorded states, and a file that
+    described the store rather than invoking it would be back to inferring from the pool."""
+    assert "coverage.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+
+
 def scheduled_manifest() -> dict:
     """The one YAML block in field-pulse: the task a setup turn applies."""
     body = (SKILLS_ROOT / "field-pulse" / "SKILL.md").read_text()
@@ -86,6 +93,13 @@ def test_the_scheduled_task_gathers_and_nothing_else() -> None:
     assert "run_now" not in manifest["spec"]
 
 
+def test_the_scheduled_gather_records_each_source_state() -> None:
+    """A state is only writable while the read is in front of the run, and the gather is the run
+    that holds it. An armed row that recorded sightings and not states leaves every edition over
+    its window to read a failure out of the pool's silence, which is the ambiguity the store ends."""
+    assert "coverage.py" in scheduled_manifest()["spec"]["prompt"]
+
+
 def test_the_daily_gather_is_bounded() -> None:
     """`task-scheduling` bounds a task that fires daily or more often with an `expires_at`, and an
     unbounded one keeps paying for search after the member has stopped reading it."""
@@ -103,6 +117,12 @@ def test_continuity_ships_its_pool_script() -> None:
     over a prose rule -- that staleness is a lookup rather than a recollection -- rests entirely on
     the script being there to look up."""
     assert (SKILLS_ROOT / "brief-continuity" / "seen.py").is_file()
+
+
+def test_continuity_ships_its_coverage_script() -> None:
+    """The multi-day footer `coverage-honesty` specifies is an aggregation over gathers, so the
+    store holding each gather's source states has to ship where SKILL.md says to run it."""
+    assert (SKILLS_ROOT / "brief-continuity" / "coverage.py").is_file()
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)
