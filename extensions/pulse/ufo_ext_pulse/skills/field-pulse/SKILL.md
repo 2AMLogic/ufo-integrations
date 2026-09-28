@@ -19,6 +19,12 @@ it lands in this turn; a recurring row exists only after the member says they wa
 1. The opening line states the business, and its business sentence is the enrichment's summary of the
    company — read it and never ask what the business does. `memory_search` for the field and for any
    pulse already running; finding nothing is silent, not a sentence.
+   1a. When the opening line carries no business sentence at all, `memory_search` is where the business
+   comes from instead — a workspace with no enrichment can still have a field recorded from an earlier
+   turn. Only when that search also comes back empty is the business genuinely unknown, and that is the
+   one case worth a question: in one message, ask which business or field to track, in the same short
+   numbered-list style as "Ask only what blocks the brief" below. This is not the asking step 1 rules
+   out — it is what is left once both sources have been tried and neither answered.
 2. Name the field back in one sentence before proposing anything. "Open-source data infrastructure"
    and "the data industry" produce different briefs, and the narrower one is almost always what they
    meant. A field too broad to bound is the one thing worth asking about.
@@ -156,6 +162,9 @@ on, and that every edition lands in this conversation.
   brief about its field.
 - Calling a window quiet over sources that went unread, which is the one claim `coverage-honesty`
   exists to refuse.
+- Deriving a field, or proceeding silently, when neither the opening line nor `memory_search` has
+  supplied a business — the turn has nothing to ask a field or rank stories against, and step 1a's
+  question is the only correct move.
 - Assuming an edit to this skill reaches an armed row. `task-scheduling`'s manifest stores its
   `prompt` on the scheduled row at apply time, and a fire runs that stored copy, not this file — an
   armed pulse keeps the rule it was set up under until someone re-applies the manifest. Re-applying
