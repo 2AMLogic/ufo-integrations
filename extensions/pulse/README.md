@@ -76,9 +76,8 @@ build-backend = "hatchling.build"
 """The extensions this deploy brings up together: ufo-core's assistant set, plus pulse and the
 research extension a pulse gathers through."""
 
-from ufo_pack_assistant import EXTENSIONS as ASSISTANT
-
 from ufo.sdk.manifest import Pack
+from ufo_pack_assistant import EXTENSIONS as ASSISTANT
 
 NAME = "deploy"
 VERSION = "0.1.0"
@@ -95,16 +94,25 @@ next `ufoctl serve` comes up with pulse active.
 
 ## Keys
 
-`ufoctl init` reports each unset deploy key as an informational line and proceeds, so a deploy
-reaches `ufoctl serve` with none of them set. They belong in the `.env` beside `ufo.toml`, under
-their `UFO_`-prefixed names — a bare `ANTHROPIC_API_KEY` there is refused by name, because every
-tool reading `.env` picks that one up.
+Each resolves `UFO_<NAME>` from the environment first and the bare `<NAME>` second, so all three
+belong in the `.env` beside `ufo.toml` under their `UFO_`-prefixed names — a bare
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY` there is refused by name, because every tool reading `.env`
+picks those up. `ufoctl init` echoes one informational line per unset key an active extension
+declares as a deploy key, `UFO_OPENAI_API_KEY` among them, and proceeds either way. The model
+provider's key and the search slot are not deploy keys, so a deploy reaches `ufoctl serve` with all
+three unset and a line about one.
 
 | Key | Holds | Unset |
 | --- | --- | --- |
-| `UFO_ANTHROPIC_API_KEY` | The model provider's key | `ufoctl serve` refuses to boot: `no model provider key set; the sandbox would have no egress route` |
+| `UFO_ANTHROPIC_API_KEY` | A model provider's key; `UFO_OPENAI_API_KEY` serves in its place | With neither resolving, `ufoctl serve` refuses to boot: `no model provider key set; the sandbox would have no egress route` |
 | `UFO_OPENAI_API_KEY` | Embeddings, whichever provider serves the model | Index derivation raises on every turn, so recall finds nothing |
-| `perplexity_api_key` | The search backend, as a workspace credential slot filled in chat | Boot refuses a deploy with pulse active, which is what `requires = ("search_providers",)` is for |
+| `perplexity_api_key` | The search backend, as a workspace credential slot filled in chat, or a deploy-wide `UFO_PERPLEXITY_API_KEY` under it | The deploy boots, and the first gather raises `CredentialSlotUnset` inside the job |
+
+A missing backend and an unfilled slot fail in different places, and the first of the two is what
+`requires = ("search_providers",)` is for: boot refuses when `[research] search_provider` is unset,
+when no active extension registers the backend it names, or when the credential store itself is
+unkeyed — never because a declared slot is empty. The slot is read per request, so an unfilled one
+boots clean and fails loud in the turn.
 
 The embed backend is OpenAI's whichever provider serves the model, and it reads its key per embed
 call rather than at boot, so a deploy configured entirely with Anthropic boots clean and then raises
@@ -136,13 +144,19 @@ story's history across the series.
   boot refuses. The deploy's own pack above is the way through. A lockfile pinning `pulse` reaches
   it only with `[pack] name` unset, because the pack narrows the active set after the lockfile has
   filled it.
-- **`ufoctl init` writes the pack line again.** Re-running it restores `[pack] name = "assistant"`
-  over the deploy's own pack, and the next serve comes up without pulse.
+- **`ufoctl init` writes `ufo.toml` only when it is absent.** The pack line is a hand edit made
+  once: a re-run leaves `[pack] name = "deploy"` exactly where it was and stops at
+  `already initialized` before it reaches anything else. Nothing restores `assistant` over the
+  deploy's own pack, and nothing reports the line is wrong either.
 - **The assistant set does not hold `research` either.** It ships with ufo-core, so no install
   brings it in, and a pack naming `pulse` without it leaves a pulse turn nothing to gather through.
-- **A lockfile pins digests.** Where a deploy pins its extension set rather than running everything
-  discovered, reinstalling a distribution changes that digest and boot fails loud until the pin is
-  rewritten.
+- **`research` owns a migration branch.** `ufoctl init` applies core's schema plus the active set's
+  branches, and under `assistant` that set excludes `research`, so a deploy that changed
+  `[pack] name` after init runs `ufoctl migrate` again before the next `ufoctl serve`.
+- **A lockfile pins content, not installs.** Where a deploy pins its extension set rather than
+  running everything discovered, the pin is a hash over the installed package's files:
+  reinstalling the same content keeps it, and reinstalling changed content fails boot loud until
+  the pin is rewritten.
 - **Recall is empty rather than unavailable.** With no `UFO_OPENAI_API_KEY` nothing reaches the
   index, and the silence a pulse turn's opening `memory_search` returns is the same silence a new
   field returns.
