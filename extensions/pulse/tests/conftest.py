@@ -12,8 +12,11 @@ SKILL_NAMES = ("field-pulse", "brief-continuity", "coverage-honesty")
 
 @pytest.fixture
 def covered(tmp_path, monkeypatch):
-    """The ledger module, loaded from the path a skill load puts it at, over a temporary UFO_HOME."""
-    monkeypatch.setenv("UFO_HOME", str(tmp_path))
+    """The ledger module, loaded from the path a skill load puts it at, over a temporary workspace.
+
+    The working directory is the workspace, the way a sandbox command runs, because that is what the
+    relative ledger path resolves against."""
+    monkeypatch.chdir(tmp_path)
     spec = importlib.util.spec_from_file_location(
         "covered", SKILLS_ROOT / "brief-continuity" / "covered.py"
     )

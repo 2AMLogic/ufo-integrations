@@ -9,10 +9,12 @@ is not "what is true about this field" but "what changed since the edition befor
 questions select different stories, and a run that answers the first one publishes last week's brief
 again with today's date on it.
 
-The covered ledger is what makes the difference decidable. It is a workspace file, one row per story
-the series has published, written by the run that published it and read by the run after. Keep it in
-the workspace, never in memory: `task-scheduling` puts an already-covered ledger in workspace files
-because a per-run snapshot written as a memory fact is injected into unrelated later turns.
+The covered ledger is what makes the difference decidable. It is a workspace file —
+`pulse/<series>.covered.jsonl` — one row per story the series has published, written by the run that
+published it and read by the run after. The workspace is where it belongs twice over: the member can
+open it there, and it is the one tree every carrier lets a command write. Never in memory:
+`task-scheduling` puts an already-covered ledger in workspace files because a per-run snapshot
+written as a memory fact is injected into unrelated later turns.
 
 ## Read the ledger before ranking, not after
 
@@ -22,6 +24,9 @@ ranks and then filters spends the whole window's effort on stories it then throw
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
 ```
+
+Run it from the workspace root, which is where a command starts: the ledger path is relative, so a
+run that changes directory first reads an empty ledger and carries the last edition again.
 
 The last five editions are the baseline. Older coverage has left the reader's head and may be
 carried again as new; five editions is the span a returning reader holds.
@@ -86,5 +91,6 @@ carries the rest.
 - Recapping the original before the new fact, under the exception.
 - Giving a carried story a new slug, which hides that the series has covered it before.
 - Writing rows while drafting, so a cut story is recorded as published.
+- Running the script from a subdirectory, which starts a second ledger the next edition cannot find.
 - Saving the ledger as a memory fact, which pushes single-run snapshots into unrelated turns.
 - Reading more than five editions back and calling a genuinely old story ineligible forever.
