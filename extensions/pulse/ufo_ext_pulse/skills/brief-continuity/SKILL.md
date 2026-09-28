@@ -83,6 +83,38 @@ makes the second entry findable as a second entry.
 A cluster of sources covering one story is one row. The row carries the primary link; the edition
 carries the rest.
 
+## The sightings pool is a second store, not a second ledger
+
+`pulse/<series>.seen.jsonl`, written by `seen.py`, records what a gather has **seen**. The covered
+ledger records what an edition **published**. They answer different questions and must not be
+merged: a lead seen four times and never published is not a repeat, and a story published once is
+not a lead.
+
+```bash
+python "$UFO_HOME/skills/brief-continuity/seen.py" record --series <s> --seen <date> --slug <slug> --title <t>
+python "$UFO_HOME/skills/brief-continuity/seen.py" fresh   --series <s> --within-days 14
+python "$UFO_HOME/skills/brief-continuity/seen.py" stale   --series <s> --slug <slug>
+python "$UFO_HOME/skills/brief-continuity/seen.py" history --series <s> --slug <slug>
+```
+
+The pool is append-only and nothing is ever removed. Age is a reason not to pursue a lead, never a
+reason to forget it: `stale` exits non-zero for a lead that has gone quiet, and the lead stays in
+the pool with its whole history, so when it moves again that history is still attached. A pool that
+expired it would have discarded it at exactly the moment it became interesting.
+
+**Staleness keys on the most recent sighting, not the first.** A lead first seen thirty days ago and
+seen again this morning is live. Asking when it first appeared answers a different question.
+
+Rows sharing a slug are that lead's history, exactly as they are in the ledger. Two sightings of one
+story in different states are two rows rather than an overwrite, and the difference between them is
+the evidence the material-new-development exception wants — better evidence than the ledger alone
+gives, because it records how a story moved between editions rather than only that an edition
+carried it.
+
+Every read is a pure read. `stale`, `fresh` and `history` never write, mark or delete a row; a
+staleness check that wrote anything would be the expiry this design rules out, wearing a different
+name.
+
 ## Traps
 
 - Ranking before reading the ledger, then discarding the winners.
@@ -94,3 +126,5 @@ carries the rest.
 - Running the script from a subdirectory, which starts a second ledger the next edition cannot find.
 - Saving the ledger as a memory fact, which pushes single-run snapshots into unrelated turns.
 - Reading more than five editions back and calling a genuinely old story ineligible forever.
+- Recording a sighting in the covered ledger, which marks an unpublished lead as already covered.
+- Deleting or rewriting a pool row to express staleness, rather than letting `stale` answer it.

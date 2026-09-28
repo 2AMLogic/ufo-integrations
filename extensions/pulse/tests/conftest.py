@@ -23,3 +23,17 @@ def covered(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def seen(tmp_path, monkeypatch):
+    """The sightings pool, loaded and run the same way as `covered`: over a temporary workspace, with
+    the working directory as the workspace, because that is what the relative pool path resolves
+    against."""
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "seen", SKILLS_ROOT / "brief-continuity" / "seen.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
