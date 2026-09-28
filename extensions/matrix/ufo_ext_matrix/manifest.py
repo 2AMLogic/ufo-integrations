@@ -17,10 +17,13 @@ surface, so it is offered on that one surface row — `action:surface:matrix_con
 tool a turn holds everywhere, and `matrix-setup` is the skill that carries the order of the steps and
 the four silences a misconfigured bot answers with.
 
-That is why `requires` is empty while a sibling extension names a seam it cannot run without. A
-deploy fills these slots through `matrix_connect`, and a deploy that refuses to boot without them
-offers no chat to fill them in. The slots are read per request and answer in the turn; `requires` is
-for a seam no member can supply.
+That is why `requires` is empty while a sibling extension names a seam it cannot run without.
+`requires` names one of four seams another extension serves — `cdp_providers`, `context_boundaries`,
+`memory_search`, `search_providers` — and matrix consumes none of them; a credential slot is not a
+seam and cannot be spelled as one. The "would a deploy refuse to boot without this" instinct still
+has an answer, and it is `deploy_keys`, which matrix already carries for `MATRIX_BOTS`. The three
+credential slots are a different thing again: per-workspace values, read per request, filled by
+`matrix_connect` in chat.
 
 In an encrypted room the bot's device decrypts what it is sent and encrypts what it posts; its keys
 live in the extension's own table, sealed under the `matrix_store_key` slot. An edit and a redaction
