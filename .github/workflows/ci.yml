@@ -16,6 +16,58 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv run --python 3.12 --with pytest --with pyyaml pytest extensions -v
 
+  lineage:
+    name: one lineage across every open pull request
+    # A revision id is an identity two branches assign independently, and the clash lives in their
+    # union: each branch is a sound chain alone, and the filenames differ, so the merge reports no
+    # conflict. GitHub builds one merge with the base per pull request, never a merge of two of them,
+    # so this job assembles that union itself. Rule 5 of .loom/docs/ci-principles.md scopes it to the
+    # event that motivates it: a pull request is where a claim can be renumbered, and `main`'s own
+    # lineage is already checked by the job above.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Depth 2 ungrafts the merge commit's parents, which the next step reads.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - uses: astral-sh/setup-uv@v6
+      - name: This ref is the pull request merged into its base
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          merged=$(git rev-parse HEAD^2) || {
+            echo "::error::checked out a branch tree, not the merge with the base"
+            exit 1
+          }
+          if [ "$merged" != "$HEAD_SHA" ]; then
+            echo "::error::HEAD^2 is $merged, not this pull request's head $HEAD_SHA"
+            exit 1
+          fi
+          echo "HEAD is $(git rev-parse HEAD): $HEAD_SHA merged into $(git rev-parse HEAD^1)"
+      # Two pull requests writing the same path are the case git already reports: the second merge
+      # conflicts. This lays each path down in turn, so the last writer of one path wins here.
+      - name: Lay every open pull request's migrations over this merge
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for pull in $(gh pr list --state open --json number --jq '.[].number'); do
+            ref="refs/ci/pull-$pull"
+            git fetch --no-tags --depth=1 origin "refs/pull/$pull/head:$ref"
+            files=$(git ls-tree -r --name-only "$ref" -- extensions \
+              | grep -E '^extensions/[^/]+/ufo_ext_[^/]+/migrations/.+\.py$') || continue
+            echo "pull request #$pull: $(echo "$files" | tr '\n' ' ')"
+            echo "$files" | tr '\n' '\0' | xargs -0 git checkout "$ref" --
+          done
+          git status --short
+      - run: |
+          uv run --python 3.12 --with pytest --with pyyaml \
+            pytest extensions/test_migration_lineage.py -v
+
   registry:
     name: against ufo from git
     runs-on: ubuntu-latest

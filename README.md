@@ -65,6 +65,12 @@ runs both, the second against `ufo` at `main` on every change and nightly, which
 SDK change upstream. That job installs `pytest-xdist` beside `ufo`, whose test plugin requires it, and
 fails if any test skips rather than runs.
 
+A third job reads the migration lineage over the union of `main` and every open pull request. A
+revision id is an identity two branches assign independently, and a clash is invisible from either
+one: each branch is a sound chain alone, and the filenames differ, so the merge reports no conflict.
+That union exists nowhere else, so the job turns a pull request red for a revision another open pull
+request already claims, and the answer is to renumber against that claim rather than against `main`.
+
 ## License
 
 Apache-2.0, matching ufo-core.
