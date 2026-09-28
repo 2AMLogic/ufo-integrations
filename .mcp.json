@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "squad": {
+      "command": "node",
+      "args": [
+        "../squad/dist/index.js"
+      ],
+      "env": {
+        "SQUAD_DIR": ".squad"
+      }
+    }
+  }
+}
