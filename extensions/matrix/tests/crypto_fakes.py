@@ -4,10 +4,13 @@
 to-device queues delivered on `/sync`, and rooms with `m.room.encryption` state. `Peer` is one
 member's device over its own vodozemac account — it publishes keys, opens Olm sessions with the
 bot's claimed one-time keys, shares Megolm room keys, and reads what the bot sends back — so every
-message in these tests is real Olm and Megolm ciphertext, and nothing is mocked below the wire."""
+message in these tests is real Olm and Megolm ciphertext, and nothing is mocked below the wire.
+`Verifier` is that client's half of a SAS exchange, spelling the spec's commitment and MAC out for
+itself so the bot's half is checked against the protocol rather than against its own arithmetic."""
 
 import base64
 import copy
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,6 +25,18 @@ STORE_KEY = "a-store-key-of-at-least-thirty-two-characters"
 OLM = "m.olm.v1.curve25519-aes-sha2"
 MEGOLM = "m.megolm.v1.aes-sha2"
 
+VERIFICATION = "m.key.verification"
+REQUEST = f"{VERIFICATION}.request"
+READY = f"{VERIFICATION}.ready"
+START = f"{VERIFICATION}.start"
+ACCEPT = f"{VERIFICATION}.accept"
+KEY = f"{VERIFICATION}.key"
+MAC = f"{VERIFICATION}.mac"
+DONE = f"{VERIFICATION}.done"
+CANCEL = f"{VERIFICATION}.cancel"
+SAS = "m.sas.v1"
+SAS_MAC = "hkdf-hmac-sha256.v2"
+
 
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
@@ -33,6 +48,12 @@ def unpadded(raw: bytes) -> str:
 
 def padded(text: str) -> bytes:
     return base64.b64decode(text + "=" * (-len(text) % 4))
+
+
+def mac_info(sender: str, device_id: str, peer: str, peer_device: str, transaction: str) -> str:
+    """The MAC info string of one direction of an exchange: the sender's user and device, the
+    receiver's, then the transaction id."""
+    return f"MATRIX_KEY_VERIFICATION_MAC{sender}{device_id}{peer}{peer_device}{transaction}"
 
 
 @dataclass
@@ -208,6 +229,11 @@ class Peer:
             self.user, "m.room.encrypted", {BOT: {self.server.device_id: encrypted}}
         )
 
+    def in_the_clear(self, event_type: str, content: dict[str, Any]) -> None:
+        """One to-device event with no Olm around it, as a client that opens a verification in the
+        clear sends."""
+        self.server.deliver(self.user, event_type, {BOT: {self.server.device_id: content}})
+
     def session(self, room_id: str) -> vz.GroupSession:
         """The device's Megolm session for the room, and a copy of it from index 0 to forward."""
         if room_id not in self.outbound:
@@ -325,3 +351,116 @@ class Peer:
         session = self.inbound[content["session_id"]]
         decrypted = session.decrypt(vz.MegolmMessage.from_base64(content["ciphertext"]))
         return json.loads(decrypted.plaintext)
+
+
+@dataclass
+class Verifier:
+    """A member's client verifying the bot's device over SAS, driving its own half of the exchange.
+
+    `answer` reads whatever the bot sent this device and replies as a client does: a `.ready` is
+    started from, an `.accept` is answered with this end's key, and a `.key` is checked against the
+    commitment before the MAC goes out. With `honest` false the MAC covers a key this device does
+    not hold — a relayed exchange, or a client naming a key that is not its own — and the bot must
+    end there rather than record anything verified.
+
+    `verified` is the verification the member asked for: the bot's own MAC, checked against the
+    device keys the homeserver published for the bot."""
+
+    peer: Peer
+    transaction: str = "t-verify"
+    honest: bool = True
+    sas: vz.Sas = field(default_factory=vz.Sas)
+    start: dict[str, Any] = field(default_factory=dict)
+    commitment: str | None = None
+    strings: list[str] = field(default_factory=list)
+    established: Any = None
+    verified: bool = False
+    done: bool = False
+    cancelled: str | None = None
+
+    @property
+    def bot_device(self) -> str:
+        return self.peer.server.device_id
+
+    def request(self, *, clear: bool = False) -> None:
+        send = self.peer.in_the_clear if clear else self.peer.to_bot
+        send(
+            REQUEST,
+            {
+                "transaction_id": self.transaction,
+                "from_device": self.peer.device_id,
+                "methods": [SAS],
+                "timestamp": 0,
+            },
+        )
+
+    def begin(self, *, clear: bool = False) -> None:
+        self.start = {
+            "transaction_id": self.transaction,
+            "from_device": self.peer.device_id,
+            "method": SAS,
+            "key_agreement_protocols": ["curve25519-hkdf-sha256"],
+            "hashes": ["sha256"],
+            "message_authentication_codes": [SAS_MAC],
+            "short_authentication_string": ["emoji", "decimal"],
+        }
+        send = self.peer.in_the_clear if clear else self.peer.to_bot
+        send(START, self.start)
+
+    def answer(self) -> list[str]:
+        """Read this device's to-device events, reply to each, and name what arrived."""
+        seen = []
+        for payload in self.peer.read_inbox():
+            kind, content = payload["type"], payload["content"]
+            seen.append(kind)
+            if content.get("transaction_id") != self.transaction:
+                continue
+            if kind == READY:
+                self.begin()
+            elif kind == ACCEPT:
+                self.commitment = content["commitment"]
+                self.strings = content["short_authentication_string"]
+                self.peer.to_bot(
+                    KEY,
+                    {
+                        "transaction_id": self.transaction,
+                        "key": self.sas.public_key.to_base64(),
+                    },
+                )
+            elif kind == KEY:
+                self.agree(content["key"])
+            elif kind == MAC:
+                self.check(content)
+            elif kind == DONE:
+                self.done = True
+                self.peer.to_bot(DONE, {"transaction_id": self.transaction})
+            elif kind == CANCEL:
+                self.cancelled = content["code"]
+        return seen
+
+    def agree(self, public: str) -> None:
+        """Check the commitment the bot made before it saw this end's key, agree the secret, and
+        send the MAC the member's confirmation turns into."""
+        digest = hashlib.sha256(public.encode() + canonical(self.start)).digest()
+        assert unpadded(digest) == self.commitment
+        self.established = self.sas.diffie_hellman(vz.Curve25519PublicKey.from_base64(public))
+        info = mac_info(self.peer.user, self.peer.device_id, BOT, self.bot_device, self.transaction)
+        key_id = f"ed25519:{self.peer.device_id}"
+        held = self.peer.ed if self.honest else vz.Account().ed25519_key.to_base64()
+        self.peer.to_bot(
+            MAC,
+            {
+                "transaction_id": self.transaction,
+                "keys": self.established.calculate_mac(key_id, info + "KEY_IDS"),
+                "mac": {key_id: self.established.calculate_mac(held, info + key_id)},
+            },
+        )
+
+    def check(self, content: dict[str, Any]) -> None:
+        """The bot's MAC against the device keys the homeserver published for it."""
+        _, ed = self.peer.server.bot_keys()
+        info = mac_info(BOT, self.bot_device, self.peer.user, self.peer.device_id, self.transaction)
+        key_id = f"ed25519:{self.bot_device}"
+        self.established.verify_mac(key_id, info + "KEY_IDS", content["keys"])
+        self.established.verify_mac(ed, info + key_id, content["mac"][key_id])
+        self.verified = True
