@@ -2,6 +2,8 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+pytest-report.xml
+old-report.xml
 # >>> loom-managed (do not edit) >>>
 # Loom runtime state (don't commit these)
 .loom-in-use

@@ -51,8 +51,10 @@ and both are legitimate editions of the same series.
 ## Rank against the business, not the field
 
 The opening line states the business, and its business sentence is what a story is ranked against —
-read it and never ask what the business does. `memory_search` for the series returns what the setup
-turn recorded: the field sentence, the confirmed source set, and the series name.
+read it and never ask what the business does. A turn that has no opening line is the setup turn
+`pulse-handoff` spawned, and there the business is the one in its payload. `memory_search` for the
+series returns what that setup recorded: the field sentence, the confirmed source set, and the
+series name.
 
 `brief-continuity` and `coverage-honesty` arrive with this skill and hold the two contracts a series
 lives by: what an edition may repeat, and what it may claim about a source it could not read. Read
@@ -99,8 +101,9 @@ pointed at the series' own record instead of its inputs.
 
 ## The footer reads the gathers' own states, and names where there were none
 
-Each gather set every source's state as its read returned, so the footer is a lookup rather than an
-inference. Read them over the same span the window line states:
+Each gather recorded every source's state with `pulse_record_coverage` as its read returned, so the
+footer is a lookup rather than an inference. The states are on the record; this reads the projected
+copy of them, over the same span the window line states:
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
@@ -115,13 +118,14 @@ state held, which is the count it requires and the ambiguity it refuses.
     Read: releases on all 6 gathers (14 items), papers on 4 of 6 gathers (5 items).
     Not read: the filings index rate-limited 5 of the 6 gathers.
 
-A gather can leave no coverage row at all — that store is still a workspace file, so a gather whose
-rows went to a different tree leaves none visible here, and a window can reach back past the gathers
-a series has states from. There the pool is the only witness,
-and it records sightings rather than reads: a source with rows was read at least once, and a source
-with none may have been read and empty or never reached. Say which store answered, because the two
-support different claims — a recorded state names the failure, and the pool's silence supports only
-`coverage-honesty`'s third state, that this edition has no evidence from that source.
+A window can reach back past the gathers a series has states from, and a gather that recorded none
+left none. The file is a projection of the record rendered whole and a few minutes behind it, and it
+lands in the conversation the series last recorded from — so a turn in a conversation that has never
+recorded for this series may find no file where the record holds rows. There the pool is the only
+witness, and it records sightings rather than reads: a source with rows was read at least once, and
+a source with none may have been read and empty or never reached. Say which store answered, because
+the two support different claims — a recorded state names the failure, and the pool's silence
+supports only `coverage-honesty`'s third state, that this edition has no evidence from that source.
 
     No evidence: the filings index left no row on 2026-09-22, which recorded no states.
 

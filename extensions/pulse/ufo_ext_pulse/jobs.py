@@ -51,7 +51,7 @@ SCHEDULE = "0 */5 * * * *"
 
 
 async def project(ext: ExtensionContext) -> None:
-    """Write both workspace files for every series in the bound workspace whose record has moved."""
+    """Write every workspace file for each series in the bound workspace whose record has moved."""
     for series, conversation_id, through in await record.due_series(ext):
         if ext.files is None:
             # The job runner wires this seam; a context without it is a deploy wired differently,
@@ -61,9 +61,13 @@ async def project(ext: ExtensionContext) -> None:
         try:
             seen = record.seen_lines(await record.read_sightings(ext, series))
             covered = record.covered_lines(await record.read_covered(ext, series))
+            coverage = record.coverage_lines(await record.read_coverage(ext, series))
             await ext.files.write(conversation_id, record.seen_projection(series), seen.encode())
             await ext.files.write(
                 conversation_id, record.covered_projection(series), covered.encode()
+            )
+            await ext.files.write(
+                conversation_id, record.coverage_projection(series), coverage.encode()
             )
         except JobFault:
             raise

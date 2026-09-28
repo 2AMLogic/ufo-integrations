@@ -1,7 +1,7 @@
 # ufo-ext-pulse
 
-A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): four skills that make a
-series of briefs behave like a series.
+A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): an agent that runs one, and
+five skills that make a series of briefs behave like a series.
 
 `competitive-intel` watches a list of companies. A field pulse watches a domain, so a run may find a
 name nobody had heard of last month. That difference is why this is a separate skill, but it is not
@@ -35,21 +35,22 @@ field's cadence it delivers seven editions a week to someone who wanted two. So 
 gathers and records, and `field-report` writes an edition when it is asked for — from the pool, with
 no search in the request path, which is also what makes it fast enough to answer in the conversation.
 
-`field-pulse` sets a pulse up in chat, writes the first edition in that turn, and arms the daily
-gather. It carries the other three as `metadata.depends`, so a pulse run cannot load the workflow
-without the writer or the contracts.
+`field-pulse` runs the setup as `pulse`, writes the first edition in that turn, and arms the daily
+gather. It carries three of the others as `metadata.depends`, so a pulse run cannot load the
+workflow without the writer or the contracts.
 
 | Skill | Holds |
 | --- | --- |
+| `pulse-handoff` | Recognising the ask, and handing the field to the `pulse` agent |
 | `field-pulse` | Setting one up, the first edition, the daily gather |
 | `field-report` | An edition on demand, from the pool, with no fresh search |
-| `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
+| `brief-continuity` | The covered ledger, the sightings pool and the coverage state; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares four skills, three tools, one job, and the migration behind them. The tools
-exist for one reason: **a brief's carriers do not share a working directory.** The ledger and the
-pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
-turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
+The extension declares five skills, one agent, four tools, one job, and the migrations behind them.
+The tools exist for one reason: **a brief's carriers do not share a working directory.** The ledger,
+the pool and the coverage state were workspace-relative paths, and such a path resolves against the
+directory the turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
 machine in that directory; any other conversation gets `workspace_root/<conversation_id>`. So the
 split is by *terminal binding*, not by whether a human was watching. The demo deploy's own census
 is eight `client:` conversations sharing one tree, **two** `local:` ones with a tree each, and one
@@ -75,11 +76,53 @@ still `report_digest`'s.
 | --- | --- |
 | `pulse_record_sightings` | Records every lead one gather surfaced, in one call |
 | `pulse_record_edition` | Records the stories one edition carried |
+| `pulse_record_coverage` | Records what each source returned on one gather, in one call |
 | `pulse_recall` | Reads back the live leads and the recent editions, or one lead's history |
 
 | Job | Does |
 | --- | --- |
 | `pulse_project` | Writes the workspace-file copy of a series whose record has moved |
+
+## Who a pulse runs as
+
+A scheduled task is owned by the agent whose turn applied it: `scheduled_tasks` writes `agent_id`
+from the creating turn, and its manifest `spec` names no agent. So the daily gather is armed as
+whoever set the pulse up. Set up from a chat turn, it searches every morning as the assistant —
+under the assistant's prompt, model and tool scope — for the quarter the row lasts, and nothing
+anywhere says the series has an owner it was never meant to have.
+
+So the extension ships an agent. `pulse` is an `AgentProvision` on the manifest's `agents` point,
+which core's activation pass turns into an ordinary `agent` row the first time a workspace comes up
+with pulse active; from that moment the row is the workspace's own configuration and this extension
+stops writing it. There is no onboarding step to skip and nothing is created inside a member's turn.
+
+| Field | Value | Why |
+| --- | --- | --- |
+| `model` | `auto` | The only model a public extension can name; a pinned id the deploy does not serve fails every turn of the row |
+| `reasoning` | `high` | Ranking a field's week against one business is the judgement no script holds |
+| `internet_access_allowed` | `false` | A gather reaches its sources through `research`'s tools and the backend's own credential egress |
+| `visibility` | `workspace` | A spawn of an ownerless row is an admin's alone unless it is workspace-visible, and handing a field over is not an admin operation |
+| `tools` | The member-facing set | An allowlist is intersected with the live registry at turn load, so a tool name this extension guessed wrong is a gather that cannot search |
+
+The member never leaves their own conversation. `pulse-handoff` loads where they made the ask and
+spawns the agent, and an agent spawn talks back to the conversation that made it — so one sentence
+to an assistant is still the whole entry point, and the questions the setup asks arrive as ordinary
+messages there.
+
+A spawned turn's inbound is the bare payload its contract promises, with no `<context>` header in
+front of it, so the two things the setup would have read off that header travel in the payload
+instead — and the row's declared input schema is what refuses a handoff that dropped one.
+
+| Key | Holds | Missing |
+| --- | --- | --- |
+| `request` | The member's words, verbatim | The spawn is refused |
+| `business` | The business a story is ranked against | `field-pulse` asks for one |
+| `local_time` | The handing turn's own `time:` line | The spawn is refused |
+
+**One agent serves every series.** A series is separated by its name — the record is keyed by
+workspace and series, the row is named `<field>-gather`, and each handoff opens a conversation of
+its own — so a second agent row would duplicate a prompt that names no field while separating
+nothing that is not separated already.
 
 ## Install
 
@@ -161,25 +204,33 @@ any pulse already running; with nothing in the index that search finds nothing, 
 field nobody has asked about looks like. The constraint is upstream's, on any deploy with memory
 active, rather than this extension's.
 
-## The two stores
+## The three stores
 
-`pulse_ext_covered` holds one row per story per edition, and `pulse_ext_sighting` one row per
-sighting a gather recorded. They answer different questions — what the series has published, and
-what it has seen — and a lead seen four times and never published is not a repeat. An edition reads
-both: the ledger decides what it may carry, the pool is everything it has to carry.
+`pulse_ext_covered` holds one row per story per edition, `pulse_ext_sighting` one row per sighting a
+gather recorded, and `pulse_ext_coverage` one row per source per gather. They answer different
+questions — what the series has published, what it has seen, and what it could read — and a lead
+seen four times and never published is not a repeat, while a source nobody reached is not a source
+with nothing in it. An edition reads all three: the ledger decides what it may carry, the pool is
+everything it has to carry, and the coverage state is what its footer may claim.
 
-Both keys are natural rather than surrogate: a sighting is one series, one day, one lead, one
-address, and a covered row is one series, one edition, one story. So a retried fire, a crash replay,
-or a gather that surfaces one lead twice writes one row. That also makes **importing an old file
-safe to repeat**, which is how a deploy already carrying divergent ledgers merges them — see below.
+Every key is natural rather than surrogate: a sighting is one series, one day, one lead, one
+address, a covered row is one series, one edition, one story, and a coverage row is one series, one
+gather, one source. So a retried fire, a crash replay, or a gather that surfaces one lead twice
+writes one row. That also makes **importing an old file safe to repeat**, which is how a deploy
+already carrying divergent ledgers merges them — see below.
 
-A third table, `pulse_ext_series`, is bookkeeping rather than record: which conversation a series
+A coverage row is the one key two writes can legitimately disagree under: a source that rate-limited
+the first attempt and answered the second was read that gather, so the later write is its answer.
+The file appended both rows and resolved them on read; the table resolves them on write, and the
+window aggregates to the same states from either.
+
+A fourth table, `pulse_ext_series`, is bookkeeping rather than record: which conversation a series
 lives in, and how far the workspace-file copy has caught up.
 
 **The files are still here, as a projection.** `pulse_project` renders the whole series from the
-tables to `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl`, in the same JSON Lines
-shape the scripts always appended, so the scripts below still read them and the member can still
-open them.
+tables to `pulse/<series>.seen.jsonl`, `pulse/<series>.covered.jsonl` and
+`pulse/<series>.coverage.jsonl`, in the same JSON Lines shape the scripts always appended, so the
+scripts below still read them and the member can still open them.
 
 It is a **job** and not part of the write. Not because a tool cannot write a file — it can, through
 `ctx.sandbox.write_file`, as `research` and `connectors` do. `ExtensionContext.files` is the seam for
@@ -214,24 +265,25 @@ either order, and an interrupted import can simply be repeated.
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra --slug acme-1-0
 python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series data-infra --within-days 14
+python "$UFO_HOME/skills/brief-continuity/coverage.py" window --series data-infra
 ```
 
-**Both scripts are read-only.** Neither has a `record` subcommand, because a row written into a
-projected file is erased by the next render rather than kept — and that is not theoretical. A live
-fire on 2026-09-28, told by the skill to call `pulse_record_edition`, made seven tool calls of which
-five were `bash` and none were `pulse_*`: it ran `python seen.py record --series agent-runtimes …`
-and put its two published stories in the file. Both were pending erasure, which would have left the
+**All three scripts are read-only.** None has a `record` subcommand, because a row written into a
+projected file is erased by the next render rather than kept — and that is not theoretical: a live
+fire on 2026-09-28, told by the skill to call `pulse_record_edition` and holding the tool, appended
+its two published stories to the file instead. Both were pending erasure, which would have left the
 edition reading as never published and the next one free to carry it again. Prose did not move the
 model off the script, so the script no longer offers the move.
 
 This removes the route that was taken, not every route. `bash`, `write` and `edit` are ungated core
-builtins, so a shell can still append to the file — and the next render will erase that too. What
-makes the file safe is that it is derived, not that it is guarded.
+builtins, so a shell can still append to a projected file — and the next render will erase that too.
+What makes these files safe is that they are derived, not that they are guarded.
 
-`check` exits non-zero when the slug is covered in the span, and `fresh` lists the leads whose most
-recent sighting is inside the window. A story carried again under the material-new-development
-exception keeps its original slug, so the rows sharing a slug are that story's history across the
-series in either store.
+`check` exits non-zero when the slug is covered in the span, `fresh` lists the leads whose most
+recent sighting is inside the window, and `window` states each source across the gathers a report
+covers, which is what a multi-gather footer is written from. A story carried again under the
+material-new-development exception keeps its original slug, so the rows sharing a slug are that
+story's history across the series in either of the story stores.
 
 ## Traps
 
@@ -254,10 +306,27 @@ series in either store.
   reinstalling the same content keeps it, and reinstalling changed content fails boot loud until
   the pin is rewritten.
 - **Recall is empty rather than unavailable.** With no `UFO_OPENAI_API_KEY` nothing reaches the
-  index, and the silence a pulse turn's opening `memory_search` returns is the same silence a new
-  field returns. This is a missing key, not a business the member never stated — `field-pulse`'s
-  step 1a only asks when the opening line *also* carries no business sentence; an unavailable index
-  next to a populated opening line is this trap, not that one.
+  index, and the silence a `memory_search` returns is the same silence a new field returns. This is
+  a missing key, not a business the member never stated — `pulse-handoff` reads the opening line
+  first and searches memory only where that line carries no business sentence, and `field-pulse`'s
+  step 1a asks only once the payload arrived with none. An unavailable index next to a populated
+  opening line is this trap, and the handoff hands the business over regardless.
+- **An agent named `pulse` that a member made keeps the name.** Activation identifies a shipped row
+  by the extension and the declared name rather than by the row's own, so a name already in use
+  sends the shipped agent to a free variant — nothing is overwritten and nothing is stuck. But
+  `pulse-handoff` names its target as `agent:pulse`, which resolves by name, so the handoff would
+  reach the member's agent and the setup would run under a prompt nobody wrote it for. A workspace
+  wanting an agent of its own by that name renames one of the two.
+- **The activation pass creates the row and stops owning it.** The workspace's copy is the live
+  configuration from that moment: a later version of this extension carrying a different prompt,
+  model or input schema reaches new workspaces only, and carries forward nothing but the purpose and
+  the setup it declares. A deploy adopting a changed row edits it, and `select provisioned_version
+  from agent` says which declaration the one it holds came from.
+- **The projection follows the last write.** A setup runs in the agent's own conversation, so the
+  first `pulse/<series>.*.jsonl` set lands in that conversation's tree rather than in a terminal's
+  working directory. An edition written where the member asked re-binds the series and the next
+  projection lands with them. The record is unaffected either way — the rows are keyed by workspace
+  and series — so this decides where the readable copy is, never what it says.
 - **A workspace-relative path is not one place.** `bash`, `read` and `write` are core builtins
   (`host/tools/builtins.py`), present for every turn including a scheduled fire, and
   `ToolContext.sandbox` is non-optional — so a fire *can* run a script, and does. What differs is

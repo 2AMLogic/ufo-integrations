@@ -2,7 +2,7 @@
 
 The two extensions pin and activate independently (`extensions/test_distribution_pins.py`), and a
 pulse test importing matrix's fakes would make that independence true of the distribution and false
-of the suite. So this is pulse's own: the two tables over an in-memory database, a context that
+of the suite. So this is pulse's own: the record's tables over an in-memory database, a context that
 reaches them, and a carrier that can be present, absent, or broken — the three states the projection
 has to tell apart.
 """
@@ -21,7 +21,12 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from ufo_ext_pulse.record import COVERED_TABLE, SERIES_TABLE, SIGHTING_TABLE
+from ufo_ext_pulse.record import (
+    COVERAGE_TABLE,
+    COVERED_TABLE,
+    SERIES_TABLE,
+    SIGHTING_TABLE,
+)
 
 
 async def store_engine() -> AsyncEngine:
@@ -32,7 +37,7 @@ async def store_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SIGHTING_TABLE, COVERED_TABLE, SERIES_TABLE):
+    for table in (SIGHTING_TABLE, COVERED_TABLE, COVERAGE_TABLE, SERIES_TABLE):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)

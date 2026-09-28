@@ -1,8 +1,14 @@
 """Coverage state: what each source returned on each gather, and what a window of them adds up to.
 
-One JSON Lines file per series at `pulse/<series>.coverage.jsonl` in the conversation workspace,
-append-only, one row per source per gather. `record` appends one source's state as its read returns;
-`window` aggregates every source's states across the gathers a report covers.
+One JSON Lines file per series at `pulse/<series>.coverage.jsonl` in the conversation workspace, one
+row per source per gather, rendered whole from the record by the projection job. `window` aggregates
+every source's states across the gathers a report covers, which is what a multi-gather footer is
+written from; `record` is the definition of the row shape that projection must match.
+
+**A row is recorded with `pulse_record_coverage`, not here.** The tool writes the record, which every
+turn in the workspace reaches identically; this file is a copy of it. A row appended here is erased
+by the next projection rather than kept, so there is deliberately no `record` subcommand and nothing
+reachable from a shell can write to the store.
 
 `coverage-honesty` gives a source three states in one run, and a footer written from one gather says
 which of them it was. A report covering three gathers holds three sets of those states, and a flat
@@ -20,13 +26,15 @@ editions. The footer names the source in the reader's words; the store keys it b
 what lets three days of one source aggregate as one source.
 
 Nothing is ever removed, for the same reason the pool removes nothing: a gather's states are an
-observation of that day, and that stays true afterwards. A retry inside one gather appends its own
-row rather than repairing the earlier one, and the read resolves the two — the later row is that
-gather's answer, because a source that rate-limited the first attempt and answered the second was
-read that day.
+observation of that day, and that stays true afterwards. A retry inside one gather is that gather's
+answer — a source that rate-limited the first attempt and answered the second was read that day —
+and the read takes the later row wherever two of them sit side by side, which is what an imported
+file holds and what the record resolves on write.
 
 The path is workspace-relative, the way the ledger's and the pool's are: only a command's argv is
-rewritten to the carrier's workspace directory, never a path inside a script.
+rewritten to the carrier's workspace directory, never a path inside a script. That is why the file
+is a copy and never the store — `pulse/<series>.coverage.jsonl` is one tree's copy, and the tables
+are the series.
 """
 
 from __future__ import annotations
@@ -41,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _jsonl_pool import SLUG, append_row, dated_path  # noqa: E402
 from _jsonl_pool import read_rows as _read_rows  # noqa: E402
 
-GATHERED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+GATHERED = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 COVERAGE_DIR = "pulse"
 READ = "read"
 READ_EMPTY = "read-empty"
@@ -61,14 +69,20 @@ def read_rows(series: str) -> list[dict]:
 def record(
     series: str, gathered: str, source: str, state: str, items: int = 0, reason: str = ""
 ) -> Path:
-    """Append one source's state on one gather, refused unless the row is one of the three states.
+    """The shape of one coverage line, refused unless the row is one of the three states.
+
+**This function is not how a row is recorded.** `pulse_record_coverage` writes the record; this file
+is a projection rendered whole from it, so a row appended here is erased by the next projection
+rather than kept. It survives as the definition of the row shape the projection must match —
+`tests/test_projection_shape.py` asserts the two are byte-identical — and as the reader an old file
+is imported through, and there is deliberately no `record` subcommand.
 
     A read with no items is `read-empty`, which is an answer, and a not-read row names which of the
     four failures it was — the two distinctions the footer is written from.
     """
-    if not GATHERED.match(gathered):
+    if not GATHERED.fullmatch(gathered):
         raise ValueError(f"gathered must be YYYY-MM-DD, got {gathered!r}")
-    if not SLUG.match(source):
+    if not SLUG.fullmatch(source):
         raise ValueError(f"source must be a lowercase hyphenated slug, got {source!r}")
     if state not in STATES:
         raise ValueError(f"state must be one of {', '.join(STATES)}, got {state!r}")
@@ -193,25 +207,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_record = sub.add_parser("record", help="append one source's state on one gather")
-    p_record.add_argument("--series", required=True)
-    p_record.add_argument("--gathered", required=True)
-    p_record.add_argument("--source", required=True)
-    p_record.add_argument("--state", required=True, choices=STATES)
-    p_record.add_argument("--items", type=int, default=0)
-    p_record.add_argument("--reason", default="", choices=("", *REASONS))
-
+    # No `record` subcommand: the record is written with `pulse_record_coverage`, and a row a shell
+    # appended to the projected file is erased by the next render of it.
     p_window = sub.add_parser("window", help="every source's states across the gathers covered")
     p_window.add_argument("--series", required=True)
     p_window.add_argument("--since", default="")
     p_window.add_argument("--until", default="")
 
     args = parser.parse_args(argv)
-
-    if args.command == "record":
-        path = record(args.series, args.gathered, args.source, args.state, args.items, args.reason)
-        print(f"recorded {args.source} {args.state} on {args.gathered} ({path})")
-        return 0
 
     until = args.until or date.today().isoformat()
     dates = gathers(args.series, args.since, until)

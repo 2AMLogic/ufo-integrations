@@ -1,5 +1,5 @@
-"""The historical record a brief series builds: the sightings pool and the covered ledger, in tables
-this extension's own migration owns.
+"""The historical record a brief series builds: the sightings pool, the covered ledger and the
+coverage state, in tables this extension's own migration owns.
 
 **Why a table and not the workspace file alone.** The file lives at a workspace-relative path, which
 resolves against the working directory the turn's carrier starts in — and that is not one place. A
@@ -43,16 +43,22 @@ from uuid import UUID
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-# These three shapes are the skills' own, restated here because a skill script is materialised
-# standalone in a sandbox and cannot import this package. `test_record_store.py` reads the pattern
-# out of `_jsonl_pool.py` and the two date patterns out of their scripts and asserts they match, so
-# the duplication is checked rather than trusted.
+# These shapes are the skills' own, restated here because a skill script is materialised standalone
+# in a sandbox and cannot import this package. `test_projection_shape.py` reads the pattern out of
+# `_jsonl_pool.py`, the three date patterns out of their scripts, and the states and reasons out of
+# `coverage.py`, and asserts they match — so the duplication is checked rather than trusted.
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 POOL_DIR = "pulse"
 DEFAULT_WITHIN_DAYS = 14
 DEFAULT_EDITIONS = 5
+
+READ = "read"
+READ_EMPTY = "read-empty"
+NOT_READ = "not-read"
+COVERAGE_STATES = (READ, READ_EMPTY, NOT_READ)
+COVERAGE_REASONS = ("unreachable", "rate-limited", "budget-exhausted", "unauthorized")
 
 _metadata = sa.MetaData()
 
@@ -83,6 +89,20 @@ COVERED_TABLE = sa.Table(
     sa.Column("slug", sa.Text(), primary_key=True),
     sa.Column("title", sa.Text(), nullable=False),
     sa.Column("url", sa.Text(), nullable=False),
+    sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
+)
+
+
+COVERAGE_TABLE = sa.Table(
+    "pulse_ext_coverage",
+    _metadata,
+    sa.Column("workspace_id", sa.Uuid(), _workspace(), primary_key=True),
+    sa.Column("series", sa.Text(), primary_key=True),
+    sa.Column("gathered", sa.Text(), primary_key=True),
+    sa.Column("source", sa.Text(), primary_key=True),
+    sa.Column("state", sa.Text(), nullable=False),
+    sa.Column("items", sa.Integer(), nullable=False),
+    sa.Column("reason", sa.Text(), nullable=False),
     sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
 )
 
@@ -123,6 +143,20 @@ class Story:
     url: str = ""
 
 
+@dataclass(frozen=True)
+class Coverage:
+    """One source's answer on one gather: `coverage-honesty`'s state, and what it was.
+
+    The gather's date is the batch's, the way an edition's is, because every source in one call was
+    read on one gather — a row that carried its own would let one call straddle two of them.
+    """
+
+    source: str
+    state: str
+    items: int = 0
+    reason: str = ""
+
+
 def check_series(series: str) -> str:
     if not SLUG.fullmatch(series):
         raise ValueError(f"series must be a lowercase hyphenated slug, got {series!r}")
@@ -152,6 +186,36 @@ def check_story(edition: str, row: Story) -> Story:
     return row
 
 
+def check_coverage(gathered: str, row: Coverage) -> Coverage:
+    """The three states and their four failure reasons, refused where the row is none of them.
+
+    A read with no items is `read-empty`, which is an answer; a not-read row names which of the four
+    failures it was. Those are the two distinctions a footer is written from, and a row that blurred
+    either would report a source nobody reached as a source with nothing in it.
+    """
+    if not DATE.fullmatch(gathered):
+        raise ValueError(f"gathered must be YYYY-MM-DD, got {gathered!r}")
+    if not SLUG.fullmatch(row.source):
+        raise ValueError(f"source must be a lowercase hyphenated slug, got {row.source!r}")
+    if row.state not in COVERAGE_STATES:
+        raise ValueError(f"state must be one of {', '.join(COVERAGE_STATES)}, got {row.state!r}")
+    if row.state == NOT_READ:
+        if row.reason not in COVERAGE_REASONS:
+            raise ValueError(
+                f"a not-read source names one of {', '.join(COVERAGE_REASONS)}, got {row.reason!r}"
+            )
+        if row.items:
+            raise ValueError(f"a source that went unread returned no items, got {row.items}")
+    else:
+        if row.reason:
+            raise ValueError(f"{row.state} is an answer and carries no reason, got {row.reason!r}")
+        if row.state == READ and row.items < 1:
+            raise ValueError("a source read with nothing in it is read-empty, which is an answer")
+        if row.state == READ_EMPTY and row.items:
+            raise ValueError(f"read-empty is the state for no items, got {row.items}")
+    return row
+
+
 async def _upsert(
     connection: AsyncConnection,
     table: sa.Table,
@@ -161,8 +225,11 @@ async def _upsert(
     """Write the row whether or not it is already there, without a dialect-specific insert.
 
     An update that matches nothing is followed by an insert. Two fires racing on one key is not a
-    case this needs to win: both carry the same facts by construction — the key is every field that
-    distinguishes one sighting from another — so whichever lands second writes what the first did.
+    case this needs to win: for a sighting and a covered row both carry the same facts by
+    construction — the key is every field that distinguishes one from another — so whichever lands
+    second writes what the first did. A coverage row is the one key two writes can disagree under,
+    and there the later write is the answer by definition: a source that failed and then answered
+    was read that gather.
     """
     where = sa.and_(*(table.c[name] == value for name, value in key.items()))
     updated = await connection.execute(sa.update(table).where(where).values(**values))
@@ -222,6 +289,45 @@ async def record_covered(
                     "slug": row.slug,
                 },
                 {"title": row.title, "url": row.url, "recorded_at": now},
+            )
+    return len(checked)
+
+
+async def record_coverage(
+    ctx: Transactional,
+    series: str,
+    gathered: str,
+    rows: Sequence[Coverage],
+    now: datetime,
+    conversation_id: UUID | None = None,
+) -> int:
+    """Record what each source returned on one gather. Returns the number of rows written.
+
+    Two attempts at one source inside one gather are one row, and the later one is that gather's
+    answer: a source that rate-limited the first attempt and answered the second was read that day.
+    The file records both and resolves them on read; this resolves them on write, and
+    `coverage.py`'s window aggregates to the same states from either.
+    """
+    check_series(series)
+    checked = [check_coverage(gathered, row) for row in rows]
+    async with ctx.transaction() as connection:
+        await _touch_series(connection, ctx, series, now, conversation_id)
+        for row in checked:
+            await _upsert(
+                connection,
+                COVERAGE_TABLE,
+                {
+                    "workspace_id": ctx.workspace_id,
+                    "series": series,
+                    "gathered": gathered,
+                    "source": row.source,
+                },
+                {
+                    "state": row.state,
+                    "items": row.items,
+                    "reason": row.reason,
+                    "recorded_at": now,
+                },
             )
     return len(checked)
 
@@ -427,6 +533,51 @@ async def read_covered(ctx: Transactional, series: str) -> list[dict]:
     ]
 
 
+async def read_coverage(ctx: Transactional, series: str) -> list[dict]:
+    """Every source state one series has recorded, oldest gather first.
+
+    One row per source per gather, which is what the window aggregates: a source's three days read
+    as one source across three gathers, and a gather no source recorded a state on is not a gather.
+    """
+    check_series(series)
+    async with ctx.transaction() as connection:
+        rows = (
+            await connection.execute(
+                sa.select(
+                    COVERAGE_TABLE.c.gathered,
+                    COVERAGE_TABLE.c.source,
+                    COVERAGE_TABLE.c.state,
+                    # By key, not by attribute: `.c.items` is `ColumnCollection.items`, the
+                    # method, and passing that as a select column raises at execution time rather
+                    # than here. The column keeps the name the file's field has, because that name
+                    # is what the projection renders; the row it comes back on has no such method,
+                    # so `r.items` below is the column.
+                    COVERAGE_TABLE.c["items"],
+                    COVERAGE_TABLE.c.reason,
+                )
+                .where(
+                    COVERAGE_TABLE.c.workspace_id == ctx.workspace_id,
+                    COVERAGE_TABLE.c.series == series,
+                )
+                .order_by(
+                    COVERAGE_TABLE.c.gathered,
+                    COVERAGE_TABLE.c.recorded_at,
+                    COVERAGE_TABLE.c.source,
+                )
+            )
+        ).all()
+    return [
+        {
+            "gathered": r.gathered,
+            "source": r.source,
+            "state": r.state,
+            "items": r.items,
+            "reason": r.reason,
+        }
+        for r in rows
+    ]
+
+
 def last_seen(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     """The most recent sighting date per lead — the only date staleness may ask about."""
     latest: dict[str, str] = {}
@@ -489,9 +640,31 @@ def covered_lines(rows: Iterable[Mapping[str, Any]]) -> str:
     )
 
 
+def coverage_lines(rows: Iterable[Mapping[str, Any]]) -> str:
+    """The coverage state as `coverage.py` appended it."""
+    return "".join(
+        json.dumps(
+            {
+                "gathered": row["gathered"],
+                "source": row["source"],
+                "state": row["state"],
+                "items": row["items"],
+                "reason": row["reason"],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+        for row in rows
+    )
+
+
 def seen_projection(series: str) -> str:
     return f"{POOL_DIR}/{check_series(series)}.seen.jsonl"
 
 
 def covered_projection(series: str) -> str:
     return f"{POOL_DIR}/{check_series(series)}.covered.jsonl"
+
+
+def coverage_projection(series: str) -> str:
+    return f"{POOL_DIR}/{check_series(series)}.coverage.jsonl"
