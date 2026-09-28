@@ -80,7 +80,7 @@ THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
 PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
-WIRE_VERSIONS = re.compile(r'"v\d+"')
+WIRE_VERSIONS = re.compile(r'"v\d+"|/v\d+(?=[/"])')
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -119,15 +119,19 @@ def searchable(text: str) -> str:
 
     Two carve-outs, each scoped to a version this repo does not get to rename. `PROTOCOL_NAMES` is a
     dotted Matrix event or algorithm name — `m.olm.v1.curve25519-aes-sha2`, `m.megolm.v1.aes-sha2`.
-    `WIRE_VERSIONS` is a double-quoted version token, which is how an `EncryptedFile` names its own
-    format: `"v": "v2"`.
+    `WIRE_VERSIONS` is a version token a wire value carries: quoted on its own, which is how an
+    `EncryptedFile` names its format (`"v": "v2"`), or a segment of an endpoint's path, which is how
+    a homeserver names its API (`/_matrix/client/v1/media`).
+
+    Each strikes to a space rather than to nothing, because removing a token joins what sat either
+    side of it: `x"v1"legacy` collapses to `xlegacy` and passes a ban that `x legacy` fails.
 
     The boundary is the quoting, and it is honest about what that costs: a bare `v1` in a sentence
     fails, a backticked `v2` fails, and a version someone puts in double quotes mid-sentence passes.
     Reading a version out of a string literal is what writing the wire value looks like, and the
     narrower rule — knowing every way a constant or a JSON field might be spelled — would fail on
     the next spelling rather than on the next piece of transition language."""
-    return WIRE_VERSIONS.sub("", PROTOCOL_NAMES.sub("", text))
+    return WIRE_VERSIONS.sub(" ", PROTOCOL_NAMES.sub(" ", text))
 
 
 @pytest.mark.parametrize(
@@ -338,9 +342,22 @@ def test_no_transition_language(path: Path) -> None:
 def test_the_wire_carve_outs_do_not_launder_prose() -> None:
     """A carve-out that grows quietly is a ban that stopped holding, so its edges are asserted
     rather than described — the same lesson as the seam guard's reach."""
-    for source in ('sealed = {"v": "v2"}', 'ALGORITHM = "m.megolm.v1.aes-sha2"', 'KEY = "A256CTR"'):
+    passes = (
+        'sealed = {"v": "v2"}',
+        'ALGORITHM = "m.megolm.v1.aes-sha2"',
+        'KEY = "A256CTR"',
+        'MEDIA = "/_matrix/client/v1/media"',
+    )
+    fails = (
+        "the v2 format",
+        "the `v2` format",
+        "kept for v1 readers",
+        "a TODO here",
+        'x"v1"legacy',
+    )
+    for source in passes:
         assert TRANSITION_WORDS.search(searchable(source)) is None, source
-    for source in ("the v2 format", "the `v2` format", "kept for v1 readers", "a TODO here"):
+    for source in fails:
         assert TRANSITION_WORDS.search(searchable(source)) is not None, source
 
 

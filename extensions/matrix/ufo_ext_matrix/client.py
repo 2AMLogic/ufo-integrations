@@ -16,6 +16,7 @@ from ufo_ext_matrix.events import BACKFILL_FILTER, MESSAGE_TYPE, SYNC_FILTER, me
 
 CLIENT_PATH = "/_matrix/client/v3"
 MEDIA_PATH = "/_matrix/media/v3"
+AUTHENTICATED_MEDIA_PATH = "/_matrix/client/v1/media"
 BACKFILL_PAGE = 100
 SYNC_TIMEOUT_MS = 30_000
 REQUEST_TIMEOUT_SECONDS = 20.0
@@ -157,6 +158,11 @@ class MatrixClient:
         """The bytes an `mxc://` names. The counterpart to `upload`, and like it the one call that
         does not go through the session's base URL, since the media repository is its own API.
 
+        The download is the authenticated endpoint rather than the media repository's own: a
+        homeserver holding `enable_authenticated_media`, which is Synapse's default, refuses
+        authenticated media on the unauthenticated one. `upload` stays where it is, which the same
+        default does not move.
+
         The uri is an event's claim about where a file lives, so its two parts are taken and quoted
         into this homeserver's path: one that names a path of its own is refused rather than
         followed."""
@@ -164,7 +170,10 @@ class MatrixClient:
         if parts is None:
             raise MatrixError("download", 400, "M_INVALID_PARAM", None)
         server, media_id = parts
-        path = f"{self._root}{MEDIA_PATH}/download/{quote(server, safe='')}/{quote(media_id, safe='')}"
+        path = (
+            f"{self._root}{AUTHENTICATED_MEDIA_PATH}/download"
+            f"/{quote(server, safe='')}/{quote(media_id, safe='')}"
+        )
         response = await self._http.get(path)
         if not response.is_success:
             self._answer(response, "download")

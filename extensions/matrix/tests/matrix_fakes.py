@@ -40,7 +40,7 @@ from ufo.sdk.surfaces import (
 )
 from ufo_ext_matrix.answering import ANSWERING_TABLE
 from ufo_ext_matrix.asking import ASKING_TABLE
-from ufo_ext_matrix.client import MEDIA_PATH
+from ufo_ext_matrix.client import AUTHENTICATED_MEDIA_PATH, MEDIA_PATH
 from ufo_ext_matrix.crypto_store import CRYPTO_TABLE
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
@@ -149,7 +149,7 @@ class Homeserver:
             return self.failure
         if request.url.path == f"{MEDIA_PATH}/upload":
             return self.uploaded_media(request)
-        if request.url.path.startswith(f"{MEDIA_PATH}/download/"):
+        if request.url.path.startswith(f"{AUTHENTICATED_MEDIA_PATH}/download/"):
             return self.downloaded_media(request)
         path = request.url.path.removeprefix("/_matrix/client/v3")
         match request.method, path.split("/")[1:]:
