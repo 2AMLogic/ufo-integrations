@@ -1,8 +1,8 @@
-"""The three calls that keep a brief series' record in one place.
+"""The four calls that keep a brief series' record in one place.
 
-Two write, one reads. They exist because the record used to be a file at a workspace-relative path,
-which resolves against whatever directory the turn's carrier started in: a conversation bound to a
-terminal (`sandbox_handle` of `client:<cwd>`) writes on the member's machine in that directory,
+Three write, one reads. They exist because the record used to be a file at a workspace-relative
+path, which resolves against whatever directory the turn's carrier started in: a conversation bound
+to a terminal (`sandbox_handle` of `client:<cwd>`) writes on the member's machine in that directory,
 and any other conversation writes under `workspace_root/<conversation_id>`. One series therefore
 grew one ledger per tree, each looking complete and none of them whole. These write to tables
 instead, keyed by workspace and series, which every turn in the workspace reaches identically.
@@ -25,10 +25,11 @@ from pydantic import BaseModel, Field
 
 from ufo.sdk.tools import TextContent, ToolContext, ToolResult
 from ufo_ext_pulse import record
-from ufo_ext_pulse.record import Sighting, Story
+from ufo_ext_pulse.record import Coverage, Sighting, Story
 
 RECORD_SIGHTINGS_TOOL = "pulse_record_sightings"
 RECORD_EDITION_TOOL = "pulse_record_edition"
+RECORD_COVERAGE_TOOL = "pulse_record_coverage"
 RECALL_TOOL = "pulse_recall"
 
 
@@ -46,6 +47,29 @@ class StoryInput(BaseModel):
     url: str = Field(default="", description="The address the edition cited.")
 
 
+class CoverageInput(BaseModel):
+    source: str = Field(
+        description=(
+            "The source's stable identity, lowercase and hyphenated — the same slug on every "
+            "gather, so three days of one source aggregate as one source."
+        )
+    )
+    state: str = Field(
+        description=(
+            "read, read-empty, or not-read. A source that answered with nothing is read-empty, "
+            "which is an answer; not-read is a source this gather could not reach."
+        )
+    )
+    items: int = Field(default=0, description="How many items a read source returned.")
+    reason: str = Field(
+        default="",
+        description=(
+            "Why a not-read source went unread: unreachable, rate-limited, budget-exhausted, or "
+            "unauthorized. Empty on a source that answered."
+        ),
+    )
+
+
 class RecordSightingsInput(BaseModel):
     series: str = Field(description="The brief series, lowercase and hyphenated.")
     sightings: list[SightingInput] = Field(
@@ -57,6 +81,14 @@ class RecordEditionInput(BaseModel):
     series: str = Field(description="The brief series, lowercase and hyphenated.")
     edition: str = Field(description="The edition's date, YYYY-MM-DD.")
     stories: list[StoryInput] = Field(description="Every story this edition carried.")
+
+
+class RecordCoverageInput(BaseModel):
+    series: str = Field(description="The brief series, lowercase and hyphenated.")
+    gathered: str = Field(description="The gather's date, YYYY-MM-DD.")
+    sources: list[CoverageInput] = Field(
+        description="Every source this gather read or tried to read. Send them in one call."
+    )
 
 
 class RecallInput(BaseModel):
@@ -136,6 +168,32 @@ async def record_edition(ctx: ToolContext, args: RecordEditionInput) -> ToolResu
         f"edition {args.edition}. The record is durable now and pulse_recall reads it. The "
         f"workspace copy at {record.covered_projection(args.series)} is written separately by a "
         "job and may lag, or wait — a conversation bound to a terminal takes a file only while "
+        "that terminal is live. It is rendered whole from the record, so nothing written into it "
+        "by hand survives."
+    )
+
+
+async def record_coverage(ctx: ToolContext, args: RecordCoverageInput) -> ToolResult:
+    """Record what each source returned on one gather, so a later edition can count the days."""
+    ext = _ext(ctx, RECORD_COVERAGE_TOOL)
+    if not args.sources:
+        return _said(
+            "No sources given. A gather that reached none of them records not-read rows naming "
+            "why, which is the state an edition needs; recording nothing says nothing.",
+            error=True,
+        )
+    rows = [
+        Coverage(source=s.source, state=s.state, items=s.items, reason=s.reason)
+        for s in args.sources
+    ]
+    written = await record.record_coverage(
+        ext, args.series, args.gathered, rows, datetime.now(UTC), _lands_in(ctx)
+    )
+    return _said(
+        f"recorded {written} source state{'' if written == 1 else 's'} for {args.series} on "
+        f"{args.gathered}. The record is durable now and every later edition's footer counts it. "
+        f"The workspace copy at {record.coverage_projection(args.series)} is written separately by "
+        "a job and may lag, or wait — a conversation bound to a terminal takes a file only while "
         "that terminal is live. It is rendered whole from the record, so nothing written into it "
         "by hand survives."
     )

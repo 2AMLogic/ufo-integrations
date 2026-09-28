@@ -100,7 +100,12 @@ def test_the_report_reads_the_pool_by_tool() -> None:
 def test_the_report_reads_the_coverage_store_by_script() -> None:
     """The report is the only skill that writes an edition, so it is the only one that writes a
     footer over several gathers. That footer is a count of recorded states, and a file that
-    described the store rather than invoking it would be back to inferring from the pool."""
+    described the store rather than invoking it would be back to inferring from the pool.
+
+    The window is the one read with no tool behind it: it is an aggregation a footer is written
+    from rather than a decision, and a fourth read tool is a prompt-token cost on every turn of
+    every agent that loads this pack. It reads the projection, which is rendered whole from the
+    record, so what it aggregates is the record's rows and not one tree's half of them."""
     assert "coverage.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
 
 
@@ -165,13 +170,17 @@ def test_the_scheduled_task_records_through_a_tool_and_not_a_script() -> None:
     assert "pulse_record_sightings" in prompt
     assert "seen.py" not in prompt
     assert "covered.py" not in prompt
+    assert "coverage.py" not in prompt
 
 
 def test_the_scheduled_gather_records_each_source_state() -> None:
     """A state is only writable while the read is in front of the run, and the gather is the run
     that holds it. An armed row that recorded sightings and not states leaves every edition over
-    its window to read a failure out of the pool's silence, which is the ambiguity the store ends."""
-    assert "coverage.py" in scheduled_manifest()["spec"]["prompt"]
+    its window to read a failure out of the pool's silence, which is the ambiguity the store ends.
+
+    Through the tool, for the reason above it: a fire's own tree is not the tree the edition that
+    counts these states is written from."""
+    assert "pulse_record_coverage" in scheduled_manifest()["spec"]["prompt"]
 
 
 def test_the_daily_gather_is_bounded() -> None:

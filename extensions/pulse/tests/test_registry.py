@@ -1,6 +1,6 @@
 """The manifest against the real runtime: the skills parse into the registry, the agent provision
-validates under core's own rules, the three record tools validate beside the builtins, and the
-migration this extension ships lands its two tables on a real database. Skipped where `ufo` is not
+validates under core's own rules, the four record tools validate beside the builtins, and the
+migrations this extension ships land their tables on a real database. Skipped where `ufo` is not
 installed — it is not on PyPI, so a checkout without it still runs every contract test beside
 this one."""
 
@@ -31,6 +31,7 @@ from ufo_ext_pulse.agent import (  # noqa: E402
 from ufo_ext_pulse.jobs import JOB_NAME, SCHEDULE  # noqa: E402
 from ufo_ext_pulse.tools import (  # noqa: E402
     RECALL_TOOL,
+    RECORD_COVERAGE_TOOL,
     RECORD_EDITION_TOOL,
     RECORD_SIGHTINGS_TOOL,
 )
@@ -91,22 +92,24 @@ def test_the_handoff_names_the_agent_the_manifest_ships() -> None:
     assert f"agent:{AGENT_NAME}" in body
 
 
-def test_the_three_record_tools_validate_beside_the_builtins() -> None:
+def test_the_four_record_tools_validate_beside_the_builtins() -> None:
     """The extension owns tools because the record has to be one record: a script writes to a path
     resolved against the turn's working directory, and a brief's carriers do not share one."""
     manifest = pulse_manifest.manifest()
     assert [tool.name for tool in manifest.tools] == [
         RECORD_SIGHTINGS_TOOL,
         RECORD_EDITION_TOOL,
+        RECORD_COVERAGE_TOOL,
         RECALL_TOOL,
     ]
     validate_ext_tools((manifest,), CredentialStore(Fernet(Fernet.generate_key())))
 
 
-def test_the_two_writes_are_side_effecting_and_the_read_is_not() -> None:
+def test_the_three_writes_are_side_effecting_and_the_read_is_not() -> None:
     tools = {tool.name: tool for tool in pulse_manifest.manifest().tools}
     assert tools[RECORD_SIGHTINGS_TOOL].side_effecting
     assert tools[RECORD_EDITION_TOOL].side_effecting
+    assert tools[RECORD_COVERAGE_TOOL].side_effecting
     assert not tools[RECALL_TOOL].side_effecting
 
 
@@ -147,6 +150,16 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "url",
             "recorded_at",
         ]
+        assert [name for name, _ in info("pulse_ext_coverage")] == [
+            "workspace_id",
+            "series",
+            "gathered",
+            "source",
+            "state",
+            "items",
+            "reason",
+            "recorded_at",
+        ]
         assert [name for name, _ in info("pulse_ext_series")] == [
             "workspace_id",
             "series",
@@ -171,6 +184,7 @@ def test_the_keys_are_natural_so_a_replayed_fire_records_once(tmp_path: Path) ->
 
         assert key("pulse_ext_sighting") == ["workspace_id", "series", "seen", "slug", "url"]
         assert key("pulse_ext_covered") == ["workspace_id", "series", "edition", "slug"]
+        assert key("pulse_ext_coverage") == ["workspace_id", "series", "gathered", "source"]
 
 
 def test_every_declared_skill_path_exists() -> None:
@@ -269,6 +283,6 @@ def test_the_agent_prompt_names_the_record_tools() -> None:
     remaining lever after removing the subcommand; this pins that they are named.
     """
     prompt = agent.AGENT_PROMPT
-    for tool in (RECORD_SIGHTINGS_TOOL, RECORD_EDITION_TOOL, RECALL_TOOL):
+    for tool in (RECORD_SIGHTINGS_TOOL, RECORD_EDITION_TOOL, RECORD_COVERAGE_TOOL, RECALL_TOOL):
         assert tool in prompt, f"the agent's standing prompt never names {tool}"
     assert "erased" in prompt

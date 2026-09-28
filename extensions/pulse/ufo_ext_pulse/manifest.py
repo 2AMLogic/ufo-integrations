@@ -1,5 +1,5 @@
 """What the pulse extension declares: the agent a pulse runs as, five skills it loads on demand, and
-the three calls that keep a series' record alive when nobody is watching.
+the four calls that keep a series' record alive when nobody is watching.
 
 A recurring field brief is a series, not a report. `pulse-handoff` recognises the ask in the
 member's own conversation and hands it to the `pulse` agent; `field-pulse` runs the setup there,
@@ -16,10 +16,10 @@ one up from a `pulse` turn arms one that runs as `pulse`. `agent.py` holds the r
 the handoff is the one turn that reaches it.
 
 **The store is this extension's own, and that is the whole of why it owns tools and a job.** The
-ledger and the pool began as workspace files at a workspace-relative path, which resolves against
-the directory the turn's carrier started in — the member's own machine for a conversation bound to a
-terminal, `workspace_root/<conversation_id>` for one that is not. One series therefore grew one
-ledger per tree.
+ledger, the pool and the coverage state began as workspace files at a workspace-relative path, which
+resolves against the directory the turn's carrier started in — the member's own machine for a
+conversation bound to a terminal, `workspace_root/<conversation_id>` for one that is not. One series
+therefore grew one ledger per tree.
 On the demo deploy the `agent-runtimes` series had two of them, 15 rows each, whose 2026-09-28
 editions shared no story at all — and the no-repeat rule was enforced against whichever half the
 running carrier could see. The rows now land in tables keyed by workspace and series, which every
@@ -42,18 +42,21 @@ from ufo_ext_pulse.agent import PROVISION
 from ufo_ext_pulse.jobs import JOB
 from ufo_ext_pulse.tools import (
     RECALL_TOOL,
+    RECORD_COVERAGE_TOOL,
     RECORD_EDITION_TOOL,
     RECORD_SIGHTINGS_TOOL,
     RecallInput,
+    RecordCoverageInput,
     RecordEditionInput,
     RecordSightingsInput,
     recall,
+    record_coverage,
     record_edition,
     record_sightings,
 )
 
 NAME = "pulse"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 SKILLS_ROOT = Path(__file__).parent / "skills"
 SKILL_NAMES = (
@@ -90,6 +93,17 @@ def manifest() -> Manifest:
                 ),
                 input_model=RecordEditionInput,
                 handler=record_edition,
+                side_effecting=True,
+            ),
+            ToolDef(
+                name=RECORD_COVERAGE_TOOL,
+                description=(
+                    "Record what each source returned on one gather of a brief series — read with "
+                    "a count, read and empty, or not read for a named reason — so an edition "
+                    "covering several gathers can say which of them each source answered on."
+                ),
+                input_model=RecordCoverageInput,
+                handler=record_coverage,
                 side_effecting=True,
             ),
             ToolDef(

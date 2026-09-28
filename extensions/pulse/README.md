@@ -44,14 +44,13 @@ workflow without the writer or the contracts.
 | `pulse-handoff` | Recognising the ask, and handing the field to the `pulse` agent |
 | `field-pulse` | Setting one up, the first edition, the daily gather |
 | `field-report` | An edition on demand, from the pool, with no fresh search |
-| `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
+| `brief-continuity` | The covered ledger, the sightings pool and the coverage state; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares five skills, one agent, three tools, one job, and the migration behind them.
-The tools
-exist for one reason: **a brief's carriers do not share a working directory.** The ledger and the
-pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
-turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
+The extension declares five skills, one agent, four tools, one job, and the migrations behind them.
+The tools exist for one reason: **a brief's carriers do not share a working directory.** The ledger,
+the pool and the coverage state were workspace-relative paths, and such a path resolves against the
+directory the turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
 machine in that directory; any other conversation gets `workspace_root/<conversation_id>`. So the
 split is by *terminal binding*, not by whether a human was watching. The demo deploy's own census
 is eight `client:` conversations sharing one tree, **two** `local:` ones with a tree each, and one
@@ -77,6 +76,7 @@ still `report_digest`'s.
 | --- | --- |
 | `pulse_record_sightings` | Records every lead one gather surfaced, in one call |
 | `pulse_record_edition` | Records the stories one edition carried |
+| `pulse_record_coverage` | Records what each source returned on one gather, in one call |
 | `pulse_recall` | Reads back the live leads and the recent editions, or one lead's history |
 
 | Job | Does |
@@ -204,25 +204,33 @@ any pulse already running; with nothing in the index that search finds nothing, 
 field nobody has asked about looks like. The constraint is upstream's, on any deploy with memory
 active, rather than this extension's.
 
-## The two stores
+## The three stores
 
-`pulse_ext_covered` holds one row per story per edition, and `pulse_ext_sighting` one row per
-sighting a gather recorded. They answer different questions — what the series has published, and
-what it has seen — and a lead seen four times and never published is not a repeat. An edition reads
-both: the ledger decides what it may carry, the pool is everything it has to carry.
+`pulse_ext_covered` holds one row per story per edition, `pulse_ext_sighting` one row per sighting a
+gather recorded, and `pulse_ext_coverage` one row per source per gather. They answer different
+questions — what the series has published, what it has seen, and what it could read — and a lead
+seen four times and never published is not a repeat, while a source nobody reached is not a source
+with nothing in it. An edition reads all three: the ledger decides what it may carry, the pool is
+everything it has to carry, and the coverage state is what its footer may claim.
 
-Both keys are natural rather than surrogate: a sighting is one series, one day, one lead, one
-address, and a covered row is one series, one edition, one story. So a retried fire, a crash replay,
-or a gather that surfaces one lead twice writes one row. That also makes **importing an old file
-safe to repeat**, which is how a deploy already carrying divergent ledgers merges them — see below.
+Every key is natural rather than surrogate: a sighting is one series, one day, one lead, one
+address, a covered row is one series, one edition, one story, and a coverage row is one series, one
+gather, one source. So a retried fire, a crash replay, or a gather that surfaces one lead twice
+writes one row. That also makes **importing an old file safe to repeat**, which is how a deploy
+already carrying divergent ledgers merges them — see below.
 
-A third table, `pulse_ext_series`, is bookkeeping rather than record: which conversation a series
+A coverage row is the one key two writes can legitimately disagree under: a source that rate-limited
+the first attempt and answered the second was read that gather, so the later write is its answer.
+The file appended both rows and resolved them on read; the table resolves them on write, and the
+window aggregates to the same states from either.
+
+A fourth table, `pulse_ext_series`, is bookkeeping rather than record: which conversation a series
 lives in, and how far the workspace-file copy has caught up.
 
 **The files are still here, as a projection.** `pulse_project` renders the whole series from the
-tables to `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl`, in the same JSON Lines
-shape the scripts always appended, so the scripts below still read them and the member can still
-open them.
+tables to `pulse/<series>.seen.jsonl`, `pulse/<series>.covered.jsonl` and
+`pulse/<series>.coverage.jsonl`, in the same JSON Lines shape the scripts always appended, so the
+scripts below still read them and the member can still open them.
 
 It is a **job** and not part of the write, and that is forced rather than chosen: a workspace file
 is written through `ExtensionContext.files`, core wires that seam for the job runner and for surface
@@ -252,19 +260,21 @@ either order, and an interrupted import can simply be repeated.
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra --slug acme-1-0
 python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series data-infra --within-days 14
+python "$UFO_HOME/skills/brief-continuity/coverage.py" window --series data-infra
 ```
 
-**Both scripts are read-only.** Neither has a `record` subcommand, because a row written into a
+**All three scripts are read-only.** None has a `record` subcommand, because a row written into a
 projected file is erased by the next render rather than kept — and that is not theoretical: a live
 fire on 2026-09-28, told by the skill to call `pulse_record_edition` and holding the tool, appended
 its two published stories to the file instead. Both were pending erasure, which would have left the
 edition reading as never published and the next one free to carry it again. Prose did not move the
 model off the script, so the script no longer offers the move.
 
-`check` exits non-zero when the slug is covered in the span, and `fresh` lists the leads whose most
-recent sighting is inside the window. A story carried again under the material-new-development
-exception keeps its original slug, so the rows sharing a slug are that story's history across the
-series in either store.
+`check` exits non-zero when the slug is covered in the span, `fresh` lists the leads whose most
+recent sighting is inside the window, and `window` states each source across the gathers a report
+covers, which is what a multi-gather footer is written from. A story carried again under the
+material-new-development exception keeps its original slug, so the rows sharing a slug are that
+story's history across the series in either of the story stores.
 
 ## Traps
 
@@ -304,7 +314,7 @@ series in either store.
   the setup it declares. A deploy adopting a changed row edits it, and `select provisioned_version
   from agent` says which declaration the one it holds came from.
 - **The projection follows the last write.** A setup runs in the agent's own conversation, so the
-  first `pulse/<series>.*.jsonl` pair lands in that conversation's tree rather than in a terminal's
+  first `pulse/<series>.*.jsonl` set lands in that conversation's tree rather than in a terminal's
   working directory. An edition written where the member asked re-binds the series and the next
   projection lands with them. The record is unaffected either way — the rows are keyed by workspace
   and series — so this decides where the readable copy is, never what it says.
