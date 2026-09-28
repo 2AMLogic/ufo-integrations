@@ -15,24 +15,23 @@ from uuid import UUID
 
 import pytest
 import yaml
-
 from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
-    media_parts,
-    room_file,
     answer_txn_id,
     file_txn_id,
     gaps,
     invites,
     localpart,
+    media_parts,
     next_batch,
     part_txn_id,
     permalink,
     poll_answer,
     poll_txn_id,
+    room_file,
     room_key,
     room_message,
     room_names,
