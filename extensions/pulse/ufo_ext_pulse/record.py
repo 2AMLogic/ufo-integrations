@@ -249,6 +249,14 @@ async def _touch_series(
     once, because a series is where it is currently being worked on: a member who moves a brief to a
     new conversation should get the file there, not in the one they left. A write that does not know
     its conversation leaves the existing binding alone rather than clearing it.
+
+    The update is one statement, so `revision + 1` is evaluated by the engine and no advance is lost
+    when two writes race: SQLite serializes writers outright, and Postgres under READ COMMITTED
+    blocks the second on the row lock and re-evaluates against the committed value, giving N+2
+    rather than both N+1. The *insert* path is the narrower case — two writers finding no row can
+    both attempt one, and on Postgres the loser takes a unique violation that rolls its transaction
+    back, rows and stamp together. Nothing is half-written, and the retry finds the row and updates
+    it.
     """
     where = sa.and_(
         SERIES_TABLE.c.workspace_id == ctx.workspace_id, SERIES_TABLE.c.series == series

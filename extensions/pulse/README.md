@@ -51,8 +51,10 @@ exist for one reason: **a brief's carriers do not share a working directory.** T
 pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
 turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
 machine in that directory; any other conversation gets `workspace_root/<conversation_id>`. So the
-split is by *terminal binding*, not by whether a human was watching — on the demo deploy eight
-conversations share one `client:` tree and one `local:` conversation has its own.
+split is by *terminal binding*, not by whether a human was watching. The demo deploy's own census
+is eight `client:` conversations sharing one tree, **two** `local:` ones with a tree each, and one
+row with no handle at all — a conversation that has not opened a sandbox yet, and which becomes
+terminal-bound if it opens one while a terminal is live. Three trees for one deploy, not two.
 
 That is not a hypothesis. On the demo deploy the `agent-runtimes` series had two
 `covered.jsonl` files of 15 rows each, and for edition 2026-09-28 they shared **no story at all**:
