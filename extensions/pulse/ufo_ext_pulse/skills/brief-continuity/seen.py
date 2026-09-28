@@ -62,7 +62,8 @@ def record(series: str, seen: str, slug: str, title: str, url: str, source: str)
     # row without one is not beyond manual repair; it is simply the one a reconciler cannot do
     # automatically. So it is required, and required to be more than whitespace: " " and an empty
     # string are equally unreconcilable, and the blank one at least announces itself.
-    if not url.strip():
+    url = url.strip()
+    if not url:
         raise ValueError("url is required: a sighting with no url cannot be reconciled later")
     path = pool_path(series)
     row = {"seen": seen, "slug": slug, "title": title, "url": url, "source": source}

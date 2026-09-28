@@ -127,8 +127,9 @@ def test_fresh_separates_a_max_length_slug_from_its_title(seen, capsys) -> None:
 
 
 def test_a_sighting_without_a_url_is_refused(seen) -> None:
-    """The url is the only thing outside a run that two sightings of one story agree on, so a row
-    without one can never be reconciled with another. Losing it silently is unrepairable later."""
+    """The url is the best external key a row carries — better than a title, which drifts between
+    sightings, and a source, which cannot separate two stories from one publisher. A row without one
+    is the row a reconciler cannot repair automatically, which is why record refuses it."""
     with pytest.raises(ValueError, match="url is required"):
         seen.record("data-infra", "2026-09-27", "no-url", "No url", "", "releases")
 
@@ -137,3 +138,10 @@ def test_a_whitespace_only_url_is_refused_too(seen) -> None:
     """A blank url at least announces itself; " " looks like a value and reconciles no better."""
     with pytest.raises(ValueError, match="url is required"):
         seen.record("data-infra", "2026-09-27", "blank-url", "Blank", "   ", "releases")
+
+
+def test_a_padded_url_is_stored_stripped(seen) -> None:
+    """Checking `strip()` and storing the raw string would defeat the reason the url is required:
+    two sightings of one story that differ only by surrounding whitespace would not reconcile."""
+    seen.record("data-infra", "2026-09-27", "padded", "Padded", "  https://x/1  ", "releases")
+    assert seen.history("data-infra", "padded")[0]["url"] == "https://x/1"

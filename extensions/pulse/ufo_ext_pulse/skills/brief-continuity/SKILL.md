@@ -154,5 +154,6 @@ appeared once.
 - Reading more than five editions back and calling a genuinely old story ineligible forever.
 - Recording a sighting in the covered ledger, which marks an unpublished lead as already covered.
 - Recording a blog index or a repository root as a story's url, which reconciles two different
-  stories into one and looks correct while doing it.
+  stories into one and looks correct while doing it. A placeholder like `n/a` or `-` passes the
+  check for the same reason and identifies even less.
 - Deleting or rewriting a pool row to express staleness, rather than letting `stale` answer it.
