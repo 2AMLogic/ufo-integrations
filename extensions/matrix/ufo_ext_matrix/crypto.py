@@ -263,14 +263,21 @@ class Verifying:
     It lives in this process's memory rather than the store. A `vodozemac.Sas` holds an ephemeral
     Curve25519 secret it neither pickles nor takes back, so there is nothing to seal into a row; an
     exchange a restart interrupts is one the member's client starts again, which is a prompt they
-    are already looking at. `EXCHANGE_SECONDS` and `EXCHANGE_LIMIT` bound what is held, so a client
-    that walks away mid-exchange costs the process one entry until it times out."""
+    are already looking at. `EXCHANGE_SECONDS` is how long one is answered for, read at every event
+    of it and not only swept when the next exchange starts, and `EXCHANGE_LIMIT` is how many one
+    workspace holds at once, so a client that walks away mid-exchange costs its own workspace a
+    single entry and nobody else's."""
 
     peer_device: str
     public: str
     sas: vz.Sas
     established: vz.EstablishedSas | None = None
     at: int = field(default_factory=now_ms)
+
+    def aged(self, now: int) -> bool:
+        """An exchange `EXCHANGE_SECONDS` old is one this device has let go of, whether it is read
+        or swept."""
+        return now - self.at >= EXCHANGE_SECONDS * 1000
 
 
 _EXCHANGES: dict[tuple[str, str, str, str], Verifying] = {}
@@ -797,22 +804,38 @@ class Device:
         await self._olm_send(rows, {(user, device_id): pinned}, kind, content)
 
     def _slot(self, user: str, transaction: str) -> tuple[str, str, str, str]:
+        """One exchange's place in the table, workspace first: no workspace reads another's
+        exchange, and `EXCHANGE_LIMIT` counts the entries under this workspace alone."""
         return (str(self.store.ctx.workspace_id), self.device_id, user, transaction)
 
     def _held(self, user: str, transaction: str) -> Verifying | None:
-        return _EXCHANGES.get(self._slot(user, transaction))
+        """The exchange that transaction id names, unless it has aged past `EXCHANGE_SECONDS`. The
+        age is read here rather than only swept when the next exchange starts, so a `.key` arriving
+        hours after its `.start` is let go on a bot nobody else is verifying too."""
+        slot = self._slot(user, transaction)
+        exchange = _EXCHANGES.get(slot)
+        if exchange is not None and exchange.aged(now_ms()):
+            del _EXCHANGES[slot]
+            return None
+        return exchange
 
     def _drop(self, user: str, transaction: str) -> None:
         _EXCHANGES.pop(self._slot(user, transaction), None)
 
     def _hold(self, user: str, transaction: str, exchange: Verifying) -> None:
-        """Hold one exchange, letting go of whatever timed out and of the oldest past the limit."""
-        stale = now_ms() - EXCHANGE_SECONDS * 1000
-        for slot in [held for held, kept in _EXCHANGES.items() if kept.at < stale]:
+        """Hold one exchange, letting go of whatever timed out anywhere and of this workspace's
+        oldest past the limit. A member who opens exchange after exchange crowds out their own
+        workspace's and no other's."""
+        now = now_ms()
+        for slot in [held for held, kept in _EXCHANGES.items() if kept.aged(now)]:
             del _EXCHANGES[slot]
-        while len(_EXCHANGES) >= EXCHANGE_LIMIT:
-            del _EXCHANGES[min(_EXCHANGES, key=lambda held: _EXCHANGES[held].at)]
-        _EXCHANGES[self._slot(user, transaction)] = exchange
+        slot = self._slot(user, transaction)
+        ours = [held for held in _EXCHANGES if held[0] == slot[0]]
+        while len(ours) >= EXCHANGE_LIMIT:
+            oldest = min(ours, key=lambda held: _EXCHANGES[held].at)
+            ours.remove(oldest)
+            del _EXCHANGES[oldest]
+        _EXCHANGES[slot] = exchange
 
     async def _olm_decrypt(self, rows: Rows, sender_key: str, message: vz.AnyOlmMessage) -> bytes:
         """Decrypt with the sender's session that takes the message, or open an inbound session
