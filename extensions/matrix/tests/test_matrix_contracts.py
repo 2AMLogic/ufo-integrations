@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import UUID
 
@@ -82,6 +83,9 @@ PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
 PURE = ("events.py", "messages.py", "addressed.py", "questions.py")
+TRANSPORT = "client.py"
+SEAM = "surface.MatrixSurface.send"
+WIRE = ("send_message", "send_event")
 ROLLOUT = Asked("Ship it?", ("Ship it", "Hold"))
 TIMING = Asked("When?", ("Today", "Tomorrow"))
 FLAVOURS = Asked("Which ones?", ("Apples", "Pears", "Plums"), multi_select=True)
@@ -179,23 +183,100 @@ def test_the_e2ee_libraries_are_an_extra_and_not_baseline() -> None:
         assert not any(base.startswith(dep.split(">")[0]) for base in project["dependencies"]), dep
 
 
+def own_calls(node: ast.AST) -> Iterator[ast.Call]:
+    """The calls in a function's own body, stopping at a nested function so the name reported holds
+    the call rather than merely enclosing it."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.AsyncFunctionDef | ast.FunctionDef | ast.ClassDef):
+            continue
+        if isinstance(child, ast.Call):
+            yield child
+        yield from own_calls(child)
+
+
+def dotted(path: Path) -> str:
+    """A module's name for a failure to quote, qualified by the directories it sits in, so a
+    `client.py` under a subdirectory does not report under the transport's own name."""
+    return ".".join(path.relative_to(PACKAGE).with_suffix("").parts)
+
+
+def wire_callers(source: str, module: str) -> set[str]:
+    """`module.Class.function` for every function in `source` that puts an event on the wire.
+
+    Qualified by class, because a bare function name is ambiguous across a package: a second class
+    growing its own `send` would read as the seam itself and the equality below would hold.
+
+    The match is an attribute call on the method name, and that is the boundary of what this guard
+    claims: a send reached through an alias, a `getattr` lookup, or a lambda body is invisible to
+    it."""
+    callers: set[str] = set()
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                walk(child, f"{prefix}{child.name}.")
+            elif isinstance(child, ast.AsyncFunctionDef | ast.FunctionDef):
+                if any(
+                    isinstance(call.func, ast.Attribute) and call.func.attr in WIRE
+                    for call in own_calls(child)
+                ):
+                    callers.add(f"{prefix}{child.name}")
+                walk(child, f"{prefix}{child.name}.")
+            else:
+                walk(child, prefix)
+
+    walk(ast.parse(source), f"{module}.")
+    return callers
+
+
 def test_only_one_seam_puts_a_message_on_the_wire() -> None:
     """`MatrixSurface.send` is where an event meets `outbound`, so a room that is encrypted takes
     ciphertext whichever handler is speaking and whatever type it is speaking in — a reply, a shared
     file's message, a poll, a proof answer, the rewrite that marks an answer. A handler calling the
     client's own send instead would reach the room in the clear, and nothing in the type system says
-    so — only this."""
-    tree = ast.parse((PACKAGE / "surface.py").read_text())
+    so — only this.
+
+    Every module but the transport is read: the confidentiality this holds is a property of the
+    package, and `feedback.py` already carries a client of its own."""
     callers = {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
-        for call in ast.walk(node)
-        if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr in ("send_message", "send_event")
+        caller
+        for path in sorted(PACKAGE.rglob("*.py"))
+        if path != PACKAGE / TRANSPORT
+        for caller in wire_callers(path.read_text(), dotted(path))
     }
-    assert callers == {"send"}, f"a message leaves outside the seam, from {sorted(callers)}"
+    assert callers == {SEAM}, f"a message leaves outside the seam, from {sorted(callers)}"
+
+
+def test_the_seam_guard_catches_a_bypass_wherever_it_is_written() -> None:
+    """The guard earned its place on a rebase, where `poll` and `settled` reached the client
+    directly and only the combination of two branches showed it. A bypass is caught in a class and
+    at module level alike, and each is named by where it sits, so a failure says which function to
+    open rather than that some module is wrong."""
+    bypass = (
+        "class Ear:\n"
+        "    async def leak(self, client, room_id):\n"
+        '        await client.send_event(room_id, "m.room.message", "txn", {})\n'
+        "\n\n"
+        "async def slip(client, room_id):\n"
+        '    await client.send_message(room_id, "txn", {})\n'
+    )
+    assert wire_callers(bypass, "feedback") == {"feedback.Ear.leak", "feedback.slip"}
+
+
+def test_the_seam_guard_reads_every_module_but_the_transport() -> None:
+    """A glob matching nothing satisfies an equality against one name just as well as a clean
+    package does, so the reach itself is asserted rather than described.
+
+    The exclusion is one path, not one filename. `client.py` names the transport by where it sits;
+    matching the name alone would skip a `client.py` in any subdirectory the package grows, and a
+    module holding a plaintext send would pass by virtue of where it was filed."""
+    assert sorted(PACKAGE.rglob(TRANSPORT)) == [PACKAGE / TRANSPORT]
+    read = {path for path in PACKAGE.rglob("*.py") if path != PACKAGE / TRANSPORT}
+    assert {PACKAGE / "surface.py", PACKAGE / "feedback.py"} <= read
+    assert wire_callers((PACKAGE / TRANSPORT).read_text(), "client"), (
+        "the transport is skipped because it is the wire; a transport holding no send means this "
+        "exclusion now hides the seam"
+    )
 
 
 def test_deploy_keys_are_bare_names_core_prefixes() -> None:
