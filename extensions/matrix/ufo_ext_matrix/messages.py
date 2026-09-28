@@ -113,6 +113,33 @@ def file_content(
     return content
 
 
+def encrypted_file_content(
+    msgtype: str,
+    filename: str,
+    caption: str | None,
+    media_type: str,
+    size_bytes: int,
+    sealed: Mapping[str, Any],
+    relates_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One sealed file as the message that carries it.
+
+    The `mxc://` moves inside `file`, beside the key that opens it, so the event names no url a
+    client could fetch without the key. `info.mimetype` stays the file's own type rather than the
+    ciphertext's: it describes what the bytes become, and a room renders from it after decrypting."""
+    content: dict[str, Any] = {
+        "msgtype": msgtype,
+        "body": caption or filename,
+        "file": dict(sealed),
+        "info": {"mimetype": media_type, "size": size_bytes},
+    }
+    if caption:
+        content["filename"] = filename
+    if relates_to:
+        content["m.relates_to"] = dict(relates_to)
+    return content
+
+
 def parts(markdown: str, budget: int = PART_BUDGET_BYTES) -> tuple[str, ...]:
     """One reply as the messages it is sent in: whole paragraphs, in the order they were written,
     each at most `budget` bytes — except a fenced block whose opener alone reaches the budget,
