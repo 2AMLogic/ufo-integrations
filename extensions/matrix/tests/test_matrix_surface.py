@@ -1780,3 +1780,53 @@ async def test_a_name_already_in_uploads_is_numbered_after_a_restart(
         "uploads/chart.png",
         "uploads/chart-1.png",
     ]
+
+
+@on_loop
+async def test_a_replayed_file_event_lands_once(workspace: Workspace) -> None:
+    """`deliver` runs before the `/sync` position is written, so a crash between the two replays the
+    batch with the same event ids. Core admits the message once on that id; the file half answers
+    from the row it wrote rather than fetching, storing and delivering a second time."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("chart.png", "image/png", b"\x89PNG")
+    once = shared_file("$r1", ALICE, "the chart", uri)
+    once["content"]["filename"] = "chart.png"
+    server.syncs["s1"] = batch("s2", {DIRECT: [once]})
+    server.syncs["s2"] = batch("s3", {DIRECT: [once]})
+    assert await installation.step() == 0.0
+    assert await installation.step() == 0.0
+
+    rels = [rel for _, _, rel in workspace.delivered]
+    assert rels == ["uploads/chart.png"], "the replay must not deliver a second copy"
+    conversation = workspace.delivered[0][0]
+    assert sorted(workspace.workspace[conversation]) == ["uploads/chart.png"]
+    # One artifact row for one message: the replay answers with the key it recorded, and core's
+    # insert conflicts on it. A freshly minted key would have conflicted with nothing.
+    assert len(workspace.artifacts) == 1
+    assert len(workspace.inbound_files) == 1, "the replay must not re-store the bytes"
+
+
+@on_loop
+async def test_a_second_file_after_a_replay_is_still_numbered(workspace: Workspace) -> None:
+    """The replay key is the event's, not the name's, so a genuinely different file under a name
+    already used is still numbered beside it."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        first = await client.upload("chart.png", "image/png", b"\x89PNG-one")
+        second = await client.upload("chart.png", "image/png", b"\x89PNG-two")
+    once = shared_file("$r1", ALICE, "the chart", first)
+    once["content"]["filename"] = "chart.png"
+    other = shared_file("$r2", ALICE, "another chart", second)
+    other["content"]["filename"] = "chart.png"
+    server.syncs["s1"] = batch("s2", {DIRECT: [once]})
+    server.syncs["s2"] = batch("s3", {DIRECT: [once, other]})
+    assert await installation.step() == 0.0
+    assert await installation.step() == 0.0
+
+    assert [rel for _, _, rel in workspace.delivered] == [
+        "uploads/chart.png",
+        "uploads/chart-1.png",
+    ]

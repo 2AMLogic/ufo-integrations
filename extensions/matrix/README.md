@@ -47,6 +47,7 @@ the recent 20 are the evidence the ambient decision reads.
 | The message that founded the turn | `m.in_reply_to`, or `m.thread` under its root where the member spoke in a thread |
 | Markdown the turn wrote | `formatted_body` in `org.matrix.custom.html`, beside the words in `body` |
 | A shared file | `POST /_matrix/media/v3/upload`, then `m.image` / `m.video` / `m.audio` / `m.file` under the reply |
+| A file a member shares | The bytes fetched, unsealed where the room is encrypted, stored, and delivered to `uploads/` in the conversation's workspace, where the turn that answers them reads it |
 | A detailed write-up | A link in the reply to the portal, never an upload |
 | Words marked mid-turn | One message each, under `ufo-say-{reply_id}` |
 | A terminal `ask_user` | The words, then its questions as a labelled list in a message of their own under `ufo-question-{turn_id}`, and an `m.poll.start` where one question takes one choice |
@@ -77,6 +78,16 @@ reply lands under that.
 The typing indicator runs off `tail(turn_id)` and stops on the turn's terminal or parked frame. The
 `PUT` carries the homeserver's own timeout and is refreshed under it, so a stream that drops leaves
 the indicator to the server's clock rather than leaving a room typing.
+
+A file a member shares is fetched and stored under an artifact key, and the workspace path it lands
+under is `uploads/<name>`, where the turn that answers the member reads it. A file from an encrypted
+room is unsealed first, and its ciphertext is checked against the file's own sha256 before anything
+is decrypted, so bytes the media repository substituted are refused rather than opened.
+
+Its caption is what the member said. MSC2530 puts the caption in `body` and the name in `filename`,
+so a file sent with a sentence founds a turn carrying that sentence, and a bare file carries its
+name. Where the file landed is recorded in `matrix_ext_delivered`, keyed on the event that carried
+it, so a batch replayed after a crash delivers it once.
 
 The `/sync` position is stored per workspace in `matrix_ext_since`, a table the extension's
 migration owns, after each batch is delivered. A restart resumes from it; a batch replayed after a
@@ -327,10 +338,21 @@ workspace's to know.
   as ever; an encrypted one logs `matrix.crypto_extra_missing` naming the extra, and a reply into one
   is refused with the same sentence. The store key does not substitute for the extra, nor the extra
   for the store key.
-- **A file a room reads is not read back.** In an encrypted room the bytes are sealed before they
+- **A file the bot sends is not read back.** In an encrypted room the bytes are sealed before they
   are uploaded, so the media repository holds ciphertext and the key travels inside the Megolm
-  payload — the timeline names no url that opens it. Inbound is the other half: a file arriving in a
-  room is not read, sealed or otherwise, so a member sharing one with the bot shares it with nobody.
+  payload — the timeline names no url that opens it.
+- **A member's filename is a name, never a path.** `content.filename` is the sender's to choose, so
+  it reaches a workspace path through core's own sanitiser: components dropped, everything outside a
+  word character collapsed, a dots-only or empty name replaced, and a name already in `uploads/`
+  numbered rather than written over. The set it is numbered against is the directory read at
+  delivery, not a set carried in memory, so two members sharing `chart.png` an hour apart each keep
+  their own file.
+- **A replayed file event lands once, and the gap is narrow rather than closed.** The `/sync`
+  position is written after the batch is delivered, so a crash between the two replays it with the
+  same event ids. `matrix_ext_delivered` keys each delivery on the event that carried it: a replayed
+  event answers from that row, so the member keeps one copy and the turn one artifact row. The row is
+  written after core accepts the delivery, so a crash inside that one gap still replays as it did
+  before.
 - **An unconfigured deploy boots, and answers nothing.** `requires` is empty because matrix consumes
   no seam another extension serves — a credential slot is not one of the four seams `requires` can
   name. The deploy-refuses-to-boot instinct is `deploy_keys`, already carried here for

@@ -45,6 +45,7 @@ from ufo_ext_matrix.answering import ANSWERING_TABLE
 from ufo_ext_matrix.asking import ASKING_TABLE
 from ufo_ext_matrix.client import AUTHENTICATED_MEDIA_PATH, MEDIA_PATH
 from ufo_ext_matrix.crypto_store import CRYPTO_TABLE
+from ufo_ext_matrix.delivered import DELIVERED_TABLE
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
@@ -276,6 +277,7 @@ async def extension_engine() -> AsyncEngine:
         CLAIM_TABLE,
         LINK_TABLE,
         CRYPTO_TABLE,
+        DELIVERED_TABLE,
     ):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
@@ -408,6 +410,7 @@ class Workspace:
     delivered: list[tuple[UUID, str, str]] = field(default_factory=list)
     workspace: dict[UUID, dict[str, str]] = field(default_factory=dict)
     member_files: list[tuple[UUID, tuple[str, ...]]] = field(default_factory=list)
+    artifacts: set[tuple[UUID, str]] = field(default_factory=set)
     write_limit_bytes: int | None = None
 
     async def store_inbound_file(self, filename: str, chunks: AsyncIterator[bytes]) -> str:
@@ -444,7 +447,13 @@ class Workspace:
     async def attach_member_files(
         self, turn_id: UUID, blob_keys: tuple[str, ...], *, member_id: UUID | None
     ) -> None:
+        """Core inserts one shared-artifact row per key and conflicts on `(turn_id, blob_key)`,
+        doing nothing on a repeat, so the same file attached twice to one turn is one row. The fake
+        holds both readings: `member_files` is every call in order, and `artifacts` is the set of
+        rows a repeat cannot grow."""
         self.member_files.append((turn_id, tuple(blob_keys)))
+        for blob_key in blob_keys:
+            self.artifacts.add((turn_id, blob_key))
 
     async def ambient_reply_wanted(
         self, message: AmbientMessage, history: tuple[AmbientMessage, ...]
