@@ -25,7 +25,19 @@ from crypto_fakes import (  # noqa: E402
     Peer,
     Verifier,
 )
-from matrix_fakes import ALICE, BOB, BOT, DIRECT, ROOM, Listener, Workspace, batch, on_loop  # noqa: E402
+from matrix_fakes import (  # noqa: E402
+    ALICE,
+    BOB,
+    BOT,
+    DIRECT,
+    HOMESERVER,
+    ROOM,
+    TOKEN,
+    Listener,
+    Workspace,
+    batch,
+    on_loop,
+)
 from ufo.sdk.surfaces import (  # noqa: E402
     MidTurnReply,
     SharedArtifact,
@@ -35,6 +47,7 @@ from ufo.sdk.surfaces import (  # noqa: E402
 )
 from ufo_ext_matrix import crypto  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient  # noqa: E402
+from ufo_ext_matrix.events import RoomFile  # noqa: E402
 from ufo_ext_matrix.crypto import STORE_KEY_SLOT, device_for  # noqa: E402
 from ufo_ext_matrix.crypto_store import (  # noqa: E402
     CRYPTO_TABLE,
@@ -864,3 +877,50 @@ async def test_a_shared_file_costs_one_reading_of_the_rooms_encryption(
 
 def _encryption_reads(server: E2EHomeserver) -> int:
     return sum("m.room.encryption" in str(request.url) for request in server.requests)
+
+
+@on_loop
+async def test_a_sealed_member_file_is_opened_after_its_hash(workspace: Workspace) -> None:
+    """The bytes a member sealed come back as the bytes they sealed, and the media repository
+    holds ciphertext throughout."""
+    server = E2EHomeserver()
+    installation = await primed(server, workspace)
+    plaintext = b"the quarterly numbers"
+    ciphertext, sealed = crypto.seal_file(plaintext)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("q3.pdf", "application/octet-stream", ciphertext)
+        shared = RoomFile(
+            room_id=DIRECT,
+            event_id="$f",
+            sender=ALICE,
+            filename="q3.pdf",
+            media_type="application/pdf",
+            size_bytes=len(plaintext),
+            sealed={**sealed, "url": uri},
+        )
+        assert await installation.fetched(client, shared) == plaintext
+    [(_, stored)] = server.uploaded
+    assert stored == ciphertext != plaintext
+
+
+@on_loop
+async def test_a_tampered_sealed_file_is_dropped_not_raised(workspace: Workspace) -> None:
+    """The media repository is the homeserver's, so what it answers with is a claim. A body that
+    does not match the file's own sha256 costs that file and never reaches the cipher — and never
+    stops the room being read."""
+    server = E2EHomeserver()
+    installation = await primed(server, workspace)
+    ciphertext, sealed = crypto.seal_file(b"the original")
+    tampered = bytes([ciphertext[0] ^ 0xFF]) + ciphertext[1:]
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("q3.pdf", "application/octet-stream", tampered)
+        shared = RoomFile(
+            room_id=DIRECT,
+            event_id="$f",
+            sender=ALICE,
+            filename="q3.pdf",
+            media_type="application/pdf",
+            size_bytes=len(ciphertext),
+            sealed={**sealed, "url": uri},
+        )
+        assert await installation.fetched(client, shared) is None
