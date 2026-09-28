@@ -108,6 +108,96 @@ jobs:
           print(f"{len(cases)} tests ran, {len(registry)} of them against the registry, none skipped")
           PY
 
+  encryption-against-a-homeserver:
+    name: encryption against a Synapse container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      # A `services:` container cannot be handed the configuration this needs: the image writes its
+      # own on first start, and what it writes has registration off, so the suite would have no way
+      # to provision the two accounts a round trip is between. The container is generated,
+      # configured and started here instead, and the file it is configured with is read back below
+      # so a homeserver that came up refusing registration fails this step rather than the suite.
+      - name: A throwaway Synapse, with registration open
+        run: |
+          set -euo pipefail
+          mkdir -p synapse-data
+          docker run --rm -v "$PWD/synapse-data:/data" \
+            -e SYNAPSE_SERVER_NAME=integration.test -e SYNAPSE_REPORT_STATS=no \
+            ghcr.io/element-hq/synapse:latest generate
+          # The generated file ends in a comment and no newline, so the first line appended here is
+          # blank; the rate limits are Synapse's own defaults raised out of the way, since one test
+          # registers two accounts and logs one of them in twice, which the defaults refuse.
+          cat > synapse-extra.yaml <<'YAML'
+
+          enable_registration: true
+          enable_registration_without_verification: true
+          rc_registration:
+            per_second: 1000
+            burst_count: 1000
+          rc_login:
+            address:
+              per_second: 1000
+              burst_count: 1000
+            account:
+              per_second: 1000
+              burst_count: 1000
+            failed_attempts:
+              per_second: 1000
+              burst_count: 1000
+          rc_message:
+            per_second: 1000
+            burst_count: 1000
+          YAML
+          docker run --rm --user root --entrypoint /bin/sh \
+            -v "$PWD/synapse-data:/data" -v "$PWD/synapse-extra.yaml:/extra.yaml:ro" \
+            ghcr.io/element-hq/synapse:latest -c 'cat /extra.yaml >> /data/homeserver.yaml'
+          docker run -d --name synapse -p 8008:8008 -v "$PWD/synapse-data:/data" \
+            ghcr.io/element-hq/synapse:latest
+          for _ in $(seq 1 90); do
+            if curl -fs http://127.0.0.1:8008/_matrix/client/versions >/dev/null 2>&1; then
+              echo "the homeserver answers"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the homeserver never answered, so nothing here was tested"
+          docker logs synapse
+          exit 1
+      - name: The encrypted round trip against it
+        env:
+          MATRIX_INTEGRATION_HOMESERVER: http://127.0.0.1:8008
+        run: |
+          uv run --python 3.12 --extra matrix-e2ee \
+            --with pytest --with pyyaml --with pytest-xdist \
+            --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
+            pytest extensions/matrix/tests/test_matrix_crypto_integration.py \
+            -v -rs --junitxml=pytest-report.xml
+      - name: The round trip ran, and no test in it skipped
+        run: |
+          python3 - pytest-report.xml <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          # This job exists to run the tests the gate holds back everywhere else, so a report with
+          # nothing in it is this job's own failure: an unset env var, a module that would not
+          # import, and a homeserver that came up too late all read as a green suite otherwise.
+          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
+          skipped = [f"{c.get('classname')}::{c.get('name')}" for c in cases if c.find("skipped") is not None]
+          if not cases:
+              print("::error::no test ran, so the gate held this suite back from the job that sets it")
+              sys.exit(1)
+          if skipped:
+              print("::error::this job names a homeserver and installs the extra, so no test may skip")
+              print("\n".join(skipped))
+              sys.exit(1)
+          print(f"{len(cases)} tests ran against the homeserver, none skipped")
+          PY
+      - name: What the homeserver made of it
+        if: failure()
+        run: docker logs synapse
+
   without-the-crypto-extra:
     name: against ufo without the crypto extra
     runs-on: ubuntu-latest

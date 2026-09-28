@@ -373,17 +373,45 @@ surface writes. The rest need `ufo` and skip without it.
 | `test_matrix_crypto.py` | Real Olm and Megolm between the bot and members' devices, and a real SAS exchange driven by a fake client that spells the spec's commitment and MACs out for itself, through that same fake homeserver with key and to-device endpoints added. The one module that also skips without the extra |
 | `test_matrix_registry.py` | The installed entry point through ufo's loader, and the migrations applied |
 
-`test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
-collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite
-there is unchanged and the registry job's no-skip rule holds. It registers its own throwaway users,
-so the named homeserver must allow registration; a private Synapse container does. It needs `ufo`
-installed, and runs for example as:
+Two modules drive a real homeserver, and one env var names it for both: they are collected only
+where `MATRIX_INTEGRATION_HOMESERVER` holds a homeserver's base url. The jobs that run the whole
+suite never set it, so what they collect is unchanged and the registry job's no-skip rule holds.
+Both register their own throwaway users, so the named homeserver must allow registration; a private
+Synapse container does.
+
+| Module | What it drives |
+| --- | --- |
+| `test_matrix_integration.py` | The delivery handlers: a reply, a thread, files, a re-handed say, and a foreign token |
+| `test_matrix_crypto_integration.py` | An encrypted round trip with a second account, and what only a homeserver answers for: which batch a room key arrives in, the count of a pool it drew on, the fallback key it reaches for, and the `device_lists` it emits |
+
+The delivery module needs `ufo` installed, and the crypto module needs the `matrix-e2ee` extra
+beside it. A container to run them against, and the run itself:
+
+```bash
+mkdir -p /tmp/synapse && cd /tmp/synapse
+docker run --rm -v /tmp/synapse:/data -e SYNAPSE_SERVER_NAME=integration.test \
+  -e SYNAPSE_REPORT_STATS=no ghcr.io/element-hq/synapse:latest generate
+# Registration is off in what `generate` writes, and the rate limits refuse a suite that registers
+# two accounts a test. The file it wrote ends without a newline, so the first line appended is blank.
+docker run --rm --user root --entrypoint /bin/sh -v /tmp/synapse:/data \
+  ghcr.io/element-hq/synapse:latest -c 'printf "\nenable_registration: true\n\
+enable_registration_without_verification: true\nrc_registration:\n  per_second: 1000\n\
+  burst_count: 1000\nrc_message:\n  per_second: 1000\n  burst_count: 1000\n" >> /data/homeserver.yaml'
+docker run -d --name synapse -p 8017:8008 -v /tmp/synapse:/data ghcr.io/element-hq/synapse:latest
+```
 
 ```bash
 MATRIX_INTEGRATION_HOMESERVER=http://localhost:8017 \
-  uv run --python 3.12 --with pytest --with "ufo @ file:///home/ubuntu/ufo-core" \
-  pytest extensions/matrix/tests/test_matrix_integration.py -v
+  uv run --python 3.12 --extra matrix-e2ee --with pytest --with pytest-xdist \
+  --with "ufo @ file:///home/ubuntu/ufo-core" \
+  pytest extensions/matrix/tests/test_matrix_integration.py \
+  extensions/matrix/tests/test_matrix_crypto_integration.py -v
 ```
+
+The `encryption against a Synapse container` job stands that container up for the crypto module and
+nothing else, and holds itself to having run: a report with a skip in it, or with no test in it,
+fails the job rather than passing as a suite that tested nothing. `rc_login` is raised there too,
+since the `device_lists` test logs a member in a second time for their second device.
 
 ## License
 
