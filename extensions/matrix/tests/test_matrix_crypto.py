@@ -326,6 +326,75 @@ async def test_a_mac_over_a_key_this_device_does_not_hold_ends_in_a_cancel(
     assert await confirmed(server, workspace, ALICE) == {}
 
 
+def in_flight(workspace: Workspace) -> list[crypto.Verifying]:
+    """The exchanges the table holds for this workspace, which is the scope its bounds count in."""
+    held = crypto._EXCHANGES.items()
+    return [kept for slot, kept in held if slot[0] == str(workspace.workspace_id)]
+
+
+@on_loop
+async def test_an_exchange_older_than_the_age_bound_is_not_answered(
+    workspace: Workspace,
+) -> None:
+    """The age bound holds on a bot nobody else is verifying, where no later exchange starts to
+    sweep this one. A `.key` for an exchange `EXCHANGE_SECONDS` old — the age the bound counts as
+    let go — is answered with `m.unknown_transaction` and never with this end's key."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    verifier = Verifier(alice)
+    verifier.request()
+    await exchange(installation, verifier, rounds=2)
+
+    [held] = in_flight(workspace)
+    held.at -= crypto.EXCHANGE_SECONDS * 1000
+    await exchange(installation, verifier, rounds=1)
+
+    assert verifier.cancelled == "m.unknown_transaction"
+    assert not verifier.verified
+    assert not verifier.done
+    assert in_flight(workspace) == []
+    assert await confirmed(server, workspace, ALICE) == {}
+
+
+async def opened(server: E2EHomeserver, workspace: Workspace) -> crypto.Device:
+    """The bot's device for this workspace, opened straight from the store: the exchange table hangs
+    off the device, so its bounds want nothing a sync brings."""
+    workspace.credentials[STORE_KEY_SLOT] = STORE_KEY
+    async with MatrixClient(
+        workspace.credentials[HOMESERVER_SLOT],
+        workspace.credentials[TOKEN_SLOT],
+        transport=server.transport,
+    ) as client:
+        device = await device_for(workspace, client)  # type: ignore[arg-type]
+    assert device is not None
+    return device
+
+
+@on_loop
+async def test_one_workspaces_exchanges_outlive_anothers_filling_the_table(
+    workspace: Workspace,
+) -> None:
+    """`EXCHANGE_LIMIT` counts one workspace's exchanges. A member opening exchange after exchange
+    lets go of their own workspace's oldest and of no other workspace's, so a bot serving several
+    workspaces has no member who can end another's verification."""
+    theirs = Workspace(engine=workspace.engine)
+    ours = await opened(E2EHomeserver(), workspace)
+    neighbour = await opened(E2EHomeserver(), theirs)
+    at = crypto.now_ms()
+    neighbour._hold(ALICE, "t-theirs", crypto.Verifying("ALICEPHONE", "", vz.Sas(), at=at))
+    for count in range(crypto.EXCHANGE_LIMIT + 1):
+        opening = crypto.Verifying("ALICEPHONE", "", vz.Sas(), at=at + 1 + count)
+        ours._hold(ALICE, f"t-{count}", opening)
+
+    assert neighbour._held(ALICE, "t-theirs") is not None
+    assert len(in_flight(workspace)) == crypto.EXCHANGE_LIMIT
+    assert ours._held(ALICE, "t-0") is None
+    assert ours._held(ALICE, "t-1") is not None
+    assert ours._held(ALICE, f"t-{crypto.EXCHANGE_LIMIT}") is not None
+
+
 @on_loop
 async def test_a_member_who_never_verifies_is_served_exactly_as_before(
     workspace: Workspace,

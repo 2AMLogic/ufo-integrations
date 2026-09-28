@@ -174,7 +174,10 @@ an unencrypted to-device event, so it names a user and not the device the verifi
 An exchange in flight lives in the process's memory: a `vodozemac.Sas` holds an ephemeral key it
 neither pickles nor gives back, so there is nothing to seal into a row. A restart mid-exchange is one
 the member starts again from a prompt they are still looking at, and an exchange abandoned for
-10 minutes is let go.
+10 minutes is let go — the age is read at every event of it, so an exchange that old is answered no
+further whether or not another one has started in the meantime. Each workspace holds 32 exchanges at
+once and lets go of its own oldest past that, so a member opening exchange after exchange crowds out
+their workspace's and no other's.
 
 Cross-signing is not here. The bot holds no master key, signs no device but its own, and reads no
 user's cross-signing keys, so the MAC it checks is the device key it pinned and a `.mac` naming any
