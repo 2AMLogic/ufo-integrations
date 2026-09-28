@@ -236,6 +236,10 @@ workspace's to know.
   as ever; an encrypted one logs `matrix.crypto_extra_missing` naming the extra, and a reply into one
   is refused with the same sentence. The store key does not substitute for the extra, nor the extra
   for the store key.
+- **A shared file's bytes are not sealed, only its message.** In an encrypted room the event
+  carrying a file is Megolm ciphertext, so the filename, the subject and the `mxc://` stay off the
+  server's timeline — but the object the `mxc://` points at is stored as it was given. Only room
+  members learn that `mxc://`, which is a weaker guarantee than the room's own.
 - **An event that will not decrypt is a dropped event.** A plaintext that does not read as a Matrix
   event is logged as `matrix.undecryptable` with its error class and skipped. It is never retried
   into a stalled stream, so one malformed sender cannot silence a bot.
