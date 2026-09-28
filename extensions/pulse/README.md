@@ -160,7 +160,9 @@ story's history across the series.
   the pin is rewritten.
 - **Recall is empty rather than unavailable.** With no `UFO_OPENAI_API_KEY` nothing reaches the
   index, and the silence a pulse turn's opening `memory_search` returns is the same silence a new
-  field returns.
+  field returns. This is a missing key, not a business the member never stated — `field-pulse`'s
+  step 1a only asks when the opening line *also* carries no business sentence; an unavailable index
+  next to a populated opening line is this trap, not that one.
 - **A turn with no carrier writes no ledger, and says so only in the brief.** The file tools are
   the client's, not an extension's: no manifest in the active set declares one, so a turn driven
   straight at the `ufo` surface over HTTP — no client attached, no `--remote` sandbox — has no
