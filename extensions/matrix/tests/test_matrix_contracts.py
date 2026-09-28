@@ -1074,6 +1074,18 @@ def test_what_is_not_a_member_file(content: dict[str, object]) -> None:
     assert room_file(ROOM, _file_event(**content)) is None
 
 
+def test_a_caption_is_what_the_member_said_and_the_name_is_the_file() -> None:
+    """A file sent with words carries both, and neither stands in for the other. Reading the name
+    as the message discards the caption; reading the caption as the name writes the workspace file
+    under a sentence."""
+    shared = room_file(ROOM, _file_event(body="here is the chart you asked for", filename="c.png"))
+    assert shared is not None
+    assert shared.caption == "here is the chart you asked for"
+    assert shared.filename == "c.png"
+    bare = room_file(ROOM, _file_event(body="c.png"))
+    assert bare is not None and (bare.caption, bare.filename) == ("c.png", "c.png")
+
+
 def test_a_caption_names_the_file_and_the_body_is_the_caption() -> None:
     """A file sent with words carries `filename` beside them; one sent bare is named by its body."""
     named = room_file(ROOM, _file_event(body="last week's numbers", filename="q3.pdf"))
