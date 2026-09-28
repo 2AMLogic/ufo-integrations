@@ -1,13 +1,24 @@
-"""The covered ledger, run against a temporary UFO_HOME: these assert the file the next fire actually
-reads, which is the whole point of keeping the ledger on disk rather than in memory."""
+"""The covered ledger, run against a temporary workspace: these assert the file the next fire
+actually reads, which is the whole point of keeping the ledger on disk rather than in memory."""
 
 import json
+from pathlib import Path
 
 import pytest
 
 
 def test_an_unwritten_series_reads_empty(covered) -> None:
     assert covered.recent_rows("data-infra", 5) == []
+
+
+def test_the_ledger_lands_in_the_workspace(covered, tmp_path, monkeypatch) -> None:
+    """Workspace-relative, so the member can open it and no sandbox refuses the write: a `UFO_HOME`
+    pointing elsewhere — a scratch dir outside every writable root, on the local carrier — moves
+    nothing."""
+    monkeypatch.setenv("UFO_HOME", str(tmp_path / "scratch" / "ufo"))
+    path = covered.record("data-infra", "2026-09-21", "acme-1-0", "Acme 1.0", "")
+    assert path == Path("pulse/data-infra.covered.jsonl")
+    assert (tmp_path / "pulse" / "data-infra.covered.jsonl").is_file()
 
 
 def test_a_recorded_story_is_ineligible(covered) -> None:

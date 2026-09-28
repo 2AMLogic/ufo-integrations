@@ -1,10 +1,15 @@
 """The covered ledger: what a brief series has already published, and what it may carry again.
 
-One JSON Lines file per series under `$UFO_HOME/pulse/<series>.covered.jsonl`, append-only, one row
-per story per edition. `record` appends a row; `recent` reads the rows belonging to the last N
-editions; `check` answers whether one slug is inside that span. A slug carried again under the
-material-new-development exception appears once per edition that carried it, so the history of a
-story is the rows sharing its slug.
+One JSON Lines file per series at `pulse/<series>.covered.jsonl` in the conversation workspace,
+append-only, one row per story per edition. `record` appends a row; `recent` reads the rows belonging
+to the last N editions; `check` answers whether one slug is inside that span. A slug carried again
+under the material-new-development exception appears once per edition that carried it, so the history
+of a story is the rows sharing its slug.
+
+The path is workspace-relative, and that is what keeps the ledger where the member can open it and
+where every carrier lets a command write. Only a command's argv is rewritten to the carrier's own
+workspace directory, never a path inside a script, so the ledger resolves against the working
+directory a sandbox command starts in: the workspace root.
 
 Append-only is what makes the ledger readable as history: a row states that an edition published a
 story, which stays true after the story develops.
@@ -14,21 +19,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 EDITION = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+LEDGER_DIR = "pulse"
 DEFAULT_EDITIONS = 5
 
 
 def ledger_path(series: str) -> Path:
     if not SLUG.match(series):
         raise ValueError(f"series must be a lowercase hyphenated slug, got {series!r}")
-    home = Path(os.environ.get("UFO_HOME", Path.home() / ".ufo"))
-    return home / "pulse" / f"{series}.covered.jsonl"
+    return Path(LEDGER_DIR) / f"{series}.covered.jsonl"
 
 
 def read_rows(series: str) -> list[dict]:

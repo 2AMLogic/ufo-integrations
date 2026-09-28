@@ -54,8 +54,10 @@ is for.
 
 ## The ledger
 
-One JSON Lines file per series under `$UFO_HOME/pulse/<series>.covered.jsonl`, one row per story per
-edition, append-only.
+One JSON Lines file per series at `pulse/<series>.covered.jsonl` in the conversation workspace, one
+row per story per edition, append-only. The path is workspace-relative and resolves against the
+working directory a sandbox command starts in, so the file lands where the member can open it and
+where every carrier lets a command write.
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series data-infra --editions 5
