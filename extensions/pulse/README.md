@@ -212,11 +212,16 @@ python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series data-infra --w
 ```
 
 **Both scripts are read-only.** Neither has a `record` subcommand, because a row written into a
-projected file is erased by the next render rather than kept — and that is not theoretical: a live
-fire on 2026-09-28, told by the skill to call `pulse_record_edition` and holding the tool, appended
-its two published stories to the file instead. Both were pending erasure, which would have left the
+projected file is erased by the next render rather than kept — and that is not theoretical. A live
+fire on 2026-09-28, told by the skill to call `pulse_record_edition`, made seven tool calls of which
+five were `bash` and none were `pulse_*`: it ran `python seen.py record --series agent-runtimes …`
+and put its two published stories in the file. Both were pending erasure, which would have left the
 edition reading as never published and the next one free to carry it again. Prose did not move the
 model off the script, so the script no longer offers the move.
+
+This removes the route that was taken, not every route. `bash`, `write` and `edit` are ungated core
+builtins, so a shell can still append to the file — and the next render will erase that too. What
+makes the file safe is that it is derived, not that it is guarded.
 
 `check` exits non-zero when the slug is covered in the span, and `fresh` lists the leads whose most
 recent sighting is inside the window. A story carried again under the material-new-development
