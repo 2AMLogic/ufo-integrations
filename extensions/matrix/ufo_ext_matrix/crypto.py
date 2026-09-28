@@ -17,6 +17,12 @@ shared over Olm with every device of every joined member that has not had it. De
 first use: the keys a device id first shows are pinned, and a device that later shows other keys is
 neither sent keys nor believed.
 
+A member verifies the bot's device from their own client, and the bot answers: an
+`m.key.verification.*` exchange over SAS is to-device protocol from end to end, so no command, no
+keyword and no endpoint carries it, and the bot never starts one. A device that finishes the
+exchange is recorded verified beside its pin, which gates nothing — first use is what decides who
+is sent a room key, whether a member verifies or never does.
+
 Olm and Megolm are `vodozemac`, which the `matrix-e2ee` extra installs. This module imports without
 it — every name it needs from the library is reached inside a call, and annotations are deferred
 — so the surface loads and an unencrypted room is served whether the extra is there or not."""
@@ -28,7 +34,7 @@ import hashlib
 import json
 import time
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
@@ -60,6 +66,31 @@ PENDING_LIMIT = 200
 OLM_SESSIONS_KEPT = 5
 ROTATION_MS = 7 * 24 * 3600 * 1000
 ROTATION_MSGS = 100
+
+VERIFICATION = "m.key.verification"
+REQUEST = f"{VERIFICATION}.request"
+READY = f"{VERIFICATION}.ready"
+START = f"{VERIFICATION}.start"
+ACCEPT = f"{VERIFICATION}.accept"
+KEY = f"{VERIFICATION}.key"
+MAC = f"{VERIFICATION}.mac"
+DONE = f"{VERIFICATION}.done"
+CANCEL = f"{VERIFICATION}.cancel"
+SAS = "m.sas.v1"
+SAS_AGREEMENT = "curve25519-hkdf-sha256"
+SAS_HASH = "sha256"
+SAS_MAC = "hkdf-hmac-sha256.v2"
+SAS_STRINGS = ("emoji", "decimal")
+KEY_IDS = "KEY_IDS"
+MAC_INFO = "MATRIX_KEY_VERIFICATION_MAC"
+EXCHANGE_SECONDS = 600
+EXCHANGE_LIMIT = 32
+CANCELLED = {
+    "m.unknown_method": f"this device verifies over {SAS} with {SAS_MAC}",
+    "m.unknown_transaction": "this device holds no exchange under that transaction id",
+    "m.key_mismatch": "the key this exchange confirms is not the key pinned here",
+    "m.invalid_message": "a verification event reached this device in the clear",
+}
 
 ACCOUNT = "account"
 DEVICES = "devices"
@@ -108,6 +139,33 @@ def verified_device(user_id: str, device_id: str, keys: Any) -> dict[str, str] |
     if not isinstance(curve, str):
         return None
     return {"curve25519": curve, "ed25519": ed}
+
+
+def _mac_info(sender: str, device_id: str, peer: str, peer_device: str, transaction: str) -> str:
+    """The MAC info string of one direction of an exchange, as the spec composes it: the sender's
+    user and device, then the receiver's, then the transaction id."""
+    return f"{MAC_INFO}{sender}{device_id}{peer}{peer_device}{transaction}"
+
+
+@dataclass
+class Verifying:
+    """One SAS exchange in flight: the ephemeral key pair that agrees the secret, the device on the
+    other end, and when it began.
+
+    It lives in this process's memory rather than the store. A `vodozemac.Sas` holds an ephemeral
+    Curve25519 secret it neither pickles nor takes back, so there is nothing to seal into a row; an
+    exchange a restart interrupts is one the member's client starts again, which is a prompt they
+    are already looking at. `EXCHANGE_SECONDS` and `EXCHANGE_LIMIT` bound what is held, so a client
+    that walks away mid-exchange costs the process one entry until it times out."""
+
+    peer_device: str
+    public: str
+    sas: vz.Sas
+    established: vz.EstablishedSas | None = None
+    at: int = field(default_factory=now_ms)
+
+
+_EXCHANGES: dict[tuple[str, str, str, str], Verifying] = {}
 
 
 def _verified_key(user_id: str, device_id: str, ed25519: str, key: Any) -> str | None:
@@ -321,13 +379,22 @@ class Device:
                         continue
                     pinned = record["pins"].setdefault(device_id, shown)
                     if pinned != shown:
-                        warn("matrix.device_keys_changed", device_id=device_id)
+                        warn(
+                            "matrix.device_keys_changed",
+                            device_id=device_id,
+                            verified=device_id in record.get("verified", {}),
+                        )
                         continue
                     current.append(device_id)
                 await rows.put(
                     DEVICES,
                     user,
-                    value={"pins": record["pins"], "current": current, "outdated": False},
+                    value={
+                        "pins": record["pins"],
+                        "current": current,
+                        "outdated": False,
+                        "verified": record.get("verified", {}),
+                    },
                 )
 
     async def trusted(self, rows: Rows, users: Iterable[str]) -> dict[tuple[str, str], dict]:
@@ -342,45 +409,302 @@ class Device:
                     found[(user, device_id)] = record["pins"][device_id]
         return found
 
-    async def _sender_device(self, rows: Rows, user: str, curve: str) -> dict | None:
-        for pinned in (await self.trusted(rows, [user])).values():
+    async def verified(self, user: str) -> dict[str, str]:
+        """The Ed25519 key each of this user's devices confirmed over SAS, by device id. A device
+        absent from it is pinned and no more, which every device is until a member verifies one."""
+        async with self.store.rows() as rows:
+            record = await rows.get(DEVICES, user)
+        return dict(record.get("verified", {})) if record is not None else {}
+
+    async def _sender_device(self, rows: Rows, user: str, curve: str) -> tuple[str, dict] | None:
+        for (_, device_id), pinned in (await self.trusted(rows, [user])).items():
             if pinned["curve25519"] == curve:
-                return pinned
+                return device_id, pinned
         return None
 
     async def _to_device(self, event: Mapping[str, Any]) -> None:
+        kind = event.get("type")
         content = event.get("content")
-        if event.get("type") != ENCRYPTED_TYPE or not isinstance(content, Mapping):
-            return
-        if content.get("algorithm") != OLM:
-            return
         sender = event.get("sender")
+        if not isinstance(kind, str) or not isinstance(content, Mapping):
+            return
+        if not isinstance(sender, str):
+            return
+        if kind.startswith(f"{VERIFICATION}."):
+            await self._in_the_clear(sender, kind, content)
+            return
+        if kind != ENCRYPTED_TYPE or content.get("algorithm") != OLM:
+            return
         sender_key = content.get("sender_key")
         ours = (content.get("ciphertext") or {}).get(self.identity_key)
-        if not isinstance(sender, str) or not isinstance(sender_key, str) or not ours:
+        if not isinstance(sender_key, str) or not ours:
             return
         message = vz.AnyOlmMessage.from_parts(ours["type"], decode(ours["body"]))
         async with self.store.rows() as rows:
             payload = json.loads(await self._olm_decrypt(rows, sender_key, message))
-            device = await self._sender_device(rows, sender, sender_key)
+            found = await self._sender_device(rows, sender, sender_key)
             if (
-                device is None
+                found is None
                 or payload.get("sender") != sender
                 or payload.get("recipient") != self.user_id
                 or (payload.get("recipient_keys") or {}).get("ed25519") != self.signing_key
-                or (payload.get("keys") or {}).get("ed25519") != device["ed25519"]
+                or (payload.get("keys") or {}).get("ed25519") != found[1]["ed25519"]
             ):
                 warn("matrix.to_device_untrusted", kind=str(payload.get("type")))
                 return
+            device_id, device = found
             kind = payload.get("type")
             inner = payload.get("content")
-            if kind == ROOM_KEY and isinstance(inner, Mapping):
+            if not isinstance(kind, str) or not isinstance(inner, Mapping):
+                return
+            if kind == ROOM_KEY:
                 await self._room_key(rows, sender, device, inner, forwarded=False)
-            elif kind == FORWARDED_ROOM_KEY and isinstance(inner, Mapping):
+            elif kind == FORWARDED_ROOM_KEY:
                 if inner.get("sender_key") == sender_key and (
                     inner.get("sender_claimed_ed25519_key") == device["ed25519"]
                 ):
                     await self._room_key(rows, sender, device, inner, forwarded=True)
+            elif kind.startswith(f"{VERIFICATION}."):
+                await self._verification(rows, sender, device_id, device, kind, inner)
+
+    async def _in_the_clear(self, sender: str, kind: str, content: Mapping[str, Any]) -> None:
+        """A verification event no Olm session carried. The homeserver stamps the sender of an
+        unencrypted to-device event, so it names a user and not a device: it can never be the
+        evidence that one device is verified, and the exchange itself is read only off Olm, where
+        the sending device proves its identity key. The opening request names no key and its one
+        effect is the `.ready` sent back, so the clients that send it in the clear are answered; a
+        `.start` in the clear is ended where the member's client can show why, and every later
+        event in the clear names no device to end it with."""
+        if kind != REQUEST:
+            warn("matrix.verification_in_the_clear", kind=kind)
+        if kind not in (REQUEST, START):
+            return
+        transaction = content.get("transaction_id")
+        device_id = content.get("from_device")
+        if not isinstance(transaction, str) or not isinstance(device_id, str):
+            return
+        async with self.store.rows() as rows:
+            if kind == REQUEST:
+                await self._ready(rows, sender, device_id, transaction, content)
+            else:
+                await self._cancel(rows, sender, device_id, transaction, "m.invalid_message")
+
+    async def _verification(
+        self,
+        rows: Rows,
+        sender: str,
+        device_id: str,
+        pinned: dict,
+        kind: str,
+        content: Mapping[str, Any],
+    ) -> None:
+        """One event of a SAS exchange, from the device Olm proved sent it. The bot is always the
+        answering end: a member's client requests, starts, sends its key and sends its MAC, and each
+        of those is answered here."""
+        transaction = content.get("transaction_id")
+        if not isinstance(transaction, str):
+            return
+        if kind == REQUEST:
+            await self._ready(rows, sender, device_id, transaction, content)
+        elif kind == START:
+            await self._accept(rows, sender, device_id, transaction, content)
+        elif kind == KEY:
+            await self._agree(rows, sender, device_id, transaction, content)
+        elif kind == MAC:
+            await self._confirm(rows, sender, device_id, pinned, transaction, content)
+        elif kind in (DONE, CANCEL):
+            self._drop(sender, transaction)
+            if kind == CANCEL:
+                log(
+                    "matrix.verification_cancelled",
+                    device_id=device_id,
+                    code=str(content.get("code")),
+                )
+
+    async def _ready(
+        self, rows: Rows, user: str, device_id: str, transaction: str, content: Mapping[str, Any]
+    ) -> None:
+        """Answer a request with `.ready`, naming SAS as the one method. The bot offers no method
+        it cannot finish alone, and it starts nothing: a `.ready` says which end the member's client
+        is to start from."""
+        methods = content.get("methods")
+        if content.get("from_device") != device_id or not isinstance(methods, list):
+            return
+        if SAS not in methods:
+            await self._cancel(rows, user, device_id, transaction, "m.unknown_method")
+            return
+        await self._to_peer(
+            rows,
+            user,
+            device_id,
+            READY,
+            {"transaction_id": transaction, "from_device": self.device_id, "methods": [SAS]},
+        )
+
+    async def _accept(
+        self, rows: Rows, user: str, device_id: str, transaction: str, content: Mapping[str, Any]
+    ) -> None:
+        """Answer a `.start` with `.accept`, committing to an ephemeral key before the other end's
+        key is known. The commitment is the hash of that key and the `.start` as it arrived, so a
+        member's client can tell the key was chosen ahead of its own."""
+        if (
+            content.get("method") != SAS
+            or content.get("from_device") != device_id
+            or SAS_AGREEMENT not in (content.get("key_agreement_protocols") or ())
+            or SAS_HASH not in (content.get("hashes") or ())
+            or SAS_MAC not in (content.get("message_authentication_codes") or ())
+        ):
+            await self._cancel(rows, user, device_id, transaction, "m.unknown_method")
+            return
+        offered = content.get("short_authentication_string") or ()
+        strings = [string for string in SAS_STRINGS if string in offered]
+        if not strings:
+            await self._cancel(rows, user, device_id, transaction, "m.unknown_method")
+            return
+        sas = vz.Sas()
+        public = sas.public_key.to_base64()
+        self._hold(user, transaction, Verifying(device_id, public, sas))
+        digest = hashlib.sha256(public.encode() + canonical(dict(content))).digest()
+        await self._to_peer(
+            rows,
+            user,
+            device_id,
+            ACCEPT,
+            {
+                "transaction_id": transaction,
+                "method": SAS,
+                "key_agreement_protocol": SAS_AGREEMENT,
+                "hash": SAS_HASH,
+                "message_authentication_code": SAS_MAC,
+                "short_authentication_string": strings,
+                "commitment": encode(digest),
+            },
+        )
+
+    async def _agree(
+        self, rows: Rows, user: str, device_id: str, transaction: str, content: Mapping[str, Any]
+    ) -> None:
+        """Agree the shared secret from the other end's ephemeral key, and send this end's."""
+        exchange = self._held(user, transaction)
+        public = content.get("key")
+        if exchange is None or exchange.peer_device != device_id or not isinstance(public, str):
+            await self._cancel(rows, user, device_id, transaction, "m.unknown_transaction")
+            return
+        exchange.established = exchange.sas.diffie_hellman(
+            vz.Curve25519PublicKey.from_base64(public)
+        )
+        await self._to_peer(
+            rows,
+            user,
+            device_id,
+            KEY,
+            {"transaction_id": transaction, "key": exchange.public},
+        )
+
+    async def _confirm(
+        self,
+        rows: Rows,
+        user: str,
+        device_id: str,
+        pinned: dict,
+        transaction: str,
+        content: Mapping[str, Any],
+    ) -> None:
+        """Take the other end's MAC, answer with this end's, and record the device verified.
+
+        The MAC the member's client sends covers the Ed25519 key it holds for its own device, under
+        the secret this exchange agreed. It is checked against the key pinned here, so a MAC over
+        any other key ends the exchange in `m.key_mismatch` and verifies nothing. A key id the MAC
+        names beyond that device's own — a cross-signing key, say — is covered by the key-id MAC and
+        checked no further, since nothing here signs or holds cross-signing keys.
+
+        The bot has no screen and compares no emoji: what it answers is the member's own
+        confirmation, arriving as a MAC their client sends only once they have confirmed. The
+        answer is what their client checks the bot's device key against, which is the verification
+        the member asked for."""
+        exchange = self._held(user, transaction)
+        macs = content.get("mac")
+        listed = content.get("keys")
+        if (
+            exchange is None
+            or exchange.established is None
+            or exchange.peer_device != device_id
+            or not isinstance(macs, Mapping)
+            or not isinstance(listed, str)
+        ):
+            await self._cancel(rows, user, device_id, transaction, "m.unknown_transaction")
+            return
+        self._drop(user, transaction)
+        theirs = _mac_info(user, device_id, self.user_id, self.device_id, transaction)
+        key_id = f"ed25519:{device_id}"
+        try:
+            exchange.established.verify_mac(",".join(sorted(macs)), theirs + KEY_IDS, listed)
+            exchange.established.verify_mac(pinned["ed25519"], theirs + key_id, macs[key_id])
+        except (vz.SasException, KeyError, TypeError, ValueError):
+            warn("matrix.verification_key_mismatch", device_id=device_id)
+            await self._cancel(rows, user, device_id, transaction, "m.key_mismatch")
+            return
+        ours = _mac_info(self.user_id, self.device_id, user, device_id, transaction)
+        mine = f"ed25519:{self.device_id}"
+        await self._to_peer(
+            rows,
+            user,
+            device_id,
+            MAC,
+            {
+                "transaction_id": transaction,
+                "keys": exchange.established.calculate_mac(mine, ours + KEY_IDS),
+                "mac": {mine: exchange.established.calculate_mac(self.signing_key, ours + mine)},
+            },
+        )
+        record = await rows.get(DEVICES, user, lock=True)
+        if record is not None:
+            verified = {**record.get("verified", {}), device_id: pinned["ed25519"]}
+            await rows.put(DEVICES, user, value={**record, "verified": verified})
+            log("matrix.device_verified", device_id=device_id)
+        await self._to_peer(rows, user, device_id, DONE, {"transaction_id": transaction})
+
+    async def _cancel(
+        self, rows: Rows, user: str, device_id: str, transaction: str, code: str
+    ) -> None:
+        self._drop(user, transaction)
+        await self._to_peer(
+            rows,
+            user,
+            device_id,
+            CANCEL,
+            {"transaction_id": transaction, "code": code, "reason": CANCELLED[code]},
+        )
+
+    async def _to_peer(
+        self, rows: Rows, user: str, device_id: str, kind: str, content: Mapping[str, Any]
+    ) -> None:
+        """One verification event, Olm-encrypted to the single device it answers. A device the
+        store holds no pinned keys for is written nothing: an exchange is with a device, and one
+        that is not pinned is one this bot cannot verify anything about."""
+        pinned = (await self.trusted(rows, [user])).get((user, device_id))
+        if pinned is None:
+            log("matrix.verification_unknown_device", device_id=device_id)
+            return
+        await self._olm_send(rows, {(user, device_id): pinned}, kind, content)
+
+    def _slot(self, user: str, transaction: str) -> tuple[str, str, str, str]:
+        return (str(self.store.ctx.workspace_id), self.device_id, user, transaction)
+
+    def _held(self, user: str, transaction: str) -> Verifying | None:
+        return _EXCHANGES.get(self._slot(user, transaction))
+
+    def _drop(self, user: str, transaction: str) -> None:
+        _EXCHANGES.pop(self._slot(user, transaction), None)
+
+    def _hold(self, user: str, transaction: str, exchange: Verifying) -> None:
+        """Hold one exchange, letting go of whatever timed out and of the oldest past the limit."""
+        stale = now_ms() - EXCHANGE_SECONDS * 1000
+        for slot in [held for held, kept in _EXCHANGES.items() if kept.at < stale]:
+            del _EXCHANGES[slot]
+        while len(_EXCHANGES) >= EXCHANGE_LIMIT:
+            del _EXCHANGES[min(_EXCHANGES, key=lambda held: _EXCHANGES[held].at)]
+        _EXCHANGES[self._slot(user, transaction)] = exchange
 
     async def _olm_decrypt(self, rows: Rows, sender_key: str, message: vz.AnyOlmMessage) -> bytes:
         """Decrypt with the sender's session that takes the message, or open an inbound session
@@ -588,7 +912,7 @@ class Device:
                     "session_id": session.session_id,
                     "session_key": session.session_key.to_base64(),
                 }
-                shared |= await self._share(rows, missing, room_key)
+                shared |= await self._olm_send(rows, missing, ROOM_KEY, room_key)
             ciphertext = session.encrypt(
                 canonical({"type": event_type, "content": dict(content), "room_id": room_id})
             )
@@ -630,12 +954,17 @@ class Device:
             return None, set()
         return vz.GroupSession.from_pickle(record["pickle"], self._pickle_key), shared
 
-    async def _share(
-        self, rows: Rows, devices: Mapping[tuple[str, str], dict], room_key: Mapping[str, Any]
+    async def _olm_send(
+        self,
+        rows: Rows,
+        devices: Mapping[tuple[str, str], dict],
+        kind: str,
+        content: Mapping[str, Any],
     ) -> set[tuple[str, str]]:
-        """Send the room key to each device over Olm, opening a session with a claimed one-time key
-        where there is none. A device that offers no signed key is left out and tried again on the
-        next message."""
+        """Send one payload to each device over Olm, opening a session with a claimed one-time key
+        where there is none, and return the devices it reached. A device that offers no signed key
+        is left out: a room key is offered again on the next message, and a verification event
+        ends that exchange in the member's client."""
         sessions: dict[tuple[str, str], list[vz.Session]] = {}
         unopened = []
         for device, keys in devices.items():
@@ -675,19 +1004,19 @@ class Device:
         for (user, device_id), held in sessions.items():
             pinned = devices[(user, device_id)]
             payload = {
-                "type": ROOM_KEY,
-                "content": dict(room_key),
+                "type": kind,
+                "content": dict(content),
                 "sender": self.user_id,
                 "sender_device": self.device_id,
                 "keys": {"ed25519": self.signing_key},
                 "recipient": user,
                 "recipient_keys": {"ed25519": pinned["ed25519"]},
             }
-            kind, body = held[0].encrypt(canonical(payload)).to_parts()
+            olm, body = held[0].encrypt(canonical(payload)).to_parts()
             messages.setdefault(user, {})[device_id] = {
                 "algorithm": OLM,
                 "sender_key": self.identity_key,
-                "ciphertext": {pinned["curve25519"]: {"type": kind, "body": encode(body)}},
+                "ciphertext": {pinned["curve25519"]: {"type": olm, "body": encode(body)}},
             }
             await self._save_sessions(rows, pinned["curve25519"], held)
         if messages:

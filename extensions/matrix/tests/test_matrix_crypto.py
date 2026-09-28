@@ -1,8 +1,8 @@
 """End-to-end encryption against a fake homeserver, with real Olm and Megolm on both ends: an
 encrypted direct room round trips, a restart keeps its device and its sessions, an event that
 arrives before its key is heard once the key lands and never as ciphertext, a post reaches every
-member device and no departed one, a device that changes its keys is not believed, and the store
-opens only under its slot's key."""
+member device and no departed one, a device that changes its keys is not believed, a member's client
+verifies the bot's device over SAS, and the store opens only under its slot's key."""
 
 import asyncio
 import logging
@@ -16,7 +16,15 @@ pytest.importorskip("cryptography", reason="install the matrix-e2ee extra to run
 
 import sqlalchemy as sa  # noqa: E402
 import vodozemac as vz  # noqa: E402
-from crypto_fakes import BOT_DEVICE, MEGOLM, STORE_KEY, E2EHomeserver, Peer  # noqa: E402
+from crypto_fakes import (  # noqa: E402
+    BOT_DEVICE,
+    MEGOLM,
+    READY,
+    STORE_KEY,
+    E2EHomeserver,
+    Peer,
+    Verifier,
+)
 from matrix_fakes import ALICE, BOB, BOT, DIRECT, ROOM, Listener, Workspace, batch, on_loop  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
     MidTurnReply,
@@ -254,6 +262,133 @@ async def test_a_device_that_changes_its_keys_is_not_believed(workspace: Workspa
     server.syncs["s2"] = batch("s3", {ROOM: [forged]})
     await installation.step()
     assert workspace.admitted == []
+
+
+async def confirmed(server: E2EHomeserver, workspace: Workspace, user: str) -> dict[str, str]:
+    """The devices of `user` the bot holds verified, as the bot's own device answers it."""
+    async with MatrixClient(
+        workspace.credentials[HOMESERVER_SLOT],
+        workspace.credentials[TOKEN_SLOT],
+        transport=server.transport,
+    ) as client:
+        device = await device_for(workspace, client)  # type: ignore[arg-type]
+        assert device is not None
+        return await device.verified(user)
+
+
+async def exchange(installation: Installation, verifier: Verifier, rounds: int = 5) -> None:
+    """The exchange to its end: one round is one sync of the bot's and the client's answer."""
+    for _ in range(rounds):
+        await installation.step()
+        verifier.answer()
+
+
+@on_loop
+async def test_a_member_verifies_the_bots_device_over_sas(workspace: Workspace) -> None:
+    """The member's client starts, and the bot answers every event of the exchange — no command, no
+    keyword, nothing but to-device protocol. The client's MAC over the bot's device key is the
+    verification the member asked for, and the bot records which device confirmed it."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    assert await confirmed(server, workspace, ALICE) == {}
+
+    verifier = Verifier(alice)
+    verifier.request()
+    await exchange(installation, verifier)
+
+    assert verifier.verified
+    assert verifier.done
+    assert verifier.cancelled is None
+    assert verifier.strings == ["emoji", "decimal"]
+    assert await confirmed(server, workspace, ALICE) == {"ALICEPHONE": alice.ed}
+    assert workspace.admitted == []
+
+
+@on_loop
+async def test_a_mac_over_a_key_this_device_does_not_hold_ends_in_a_cancel(
+    workspace: Workspace,
+) -> None:
+    """A MAC that covers any key but the pinned one ends the exchange in `m.key_mismatch`, and
+    nothing is recorded verified. A false verified is the one outcome worse than none."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    verifier = Verifier(alice, honest=False)
+    verifier.request()
+    await exchange(installation, verifier)
+
+    assert verifier.cancelled == "m.key_mismatch"
+    assert not verifier.verified
+    assert not verifier.done
+    assert await confirmed(server, workspace, ALICE) == {}
+
+
+@on_loop
+async def test_a_member_who_never_verifies_is_served_exactly_as_before(
+    workspace: Workspace,
+) -> None:
+    """Trust on first use is what decides who is sent a room key. A device that never verifies is
+    pinned, hears what the bot posts, is heard back, and is recorded verified nowhere."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    alice.share(DIRECT)
+    server.syncs["s1"] = batch("s2", {DIRECT: [alice.say(DIRECT, "$d1", "what's on today")]})
+    await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$d1"]
+
+    sent = await post(server, workspace, DIRECT, "Standup at ten.")
+    assert [p["type"] for p in alice.read_inbox()] == ["m.room_key"]
+    assert alice.decrypt(sent)["content"]["body"] == "Standup at ten."
+    assert await confirmed(server, workspace, ALICE) == {}
+
+
+@on_loop
+async def test_a_request_in_the_clear_opens_an_exchange_that_runs_over_olm(
+    workspace: Workspace,
+) -> None:
+    """Clients send the opening request with no Olm around it. It names no key and its one effect is
+    the `.ready` that comes back, so it is answered — and the exchange it opens finishes as any
+    other, every event of it Olm-encrypted."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    verifier = Verifier(alice)
+    verifier.request(clear=True)
+    await installation.step()
+    assert verifier.answer() == [READY]
+    await exchange(installation, verifier, rounds=4)
+
+    assert verifier.verified and verifier.done
+    assert await confirmed(server, workspace, ALICE) == {"ALICEPHONE": alice.ed}
+
+
+@on_loop
+async def test_a_start_in_the_clear_is_refused(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unencrypted to-device event names a user and not a device, so it can never be the
+    evidence that one device is verified. A `.start` in the clear is ended where the member's client
+    can show why, rather than left to hang."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    verifier = Verifier(alice)
+    verifier.begin(clear=True)
+    with caplog.at_level(logging.DEBUG):
+        await installation.step()
+    verifier.answer()
+
+    assert "matrix.verification_in_the_clear" in caplog.text
+    assert verifier.cancelled == "m.invalid_message"
+    assert not verifier.verified
+    assert await confirmed(server, workspace, ALICE) == {}
 
 
 @on_loop

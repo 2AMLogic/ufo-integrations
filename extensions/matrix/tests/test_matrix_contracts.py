@@ -80,7 +80,7 @@ THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
 PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
-WIRE_VERSIONS = re.compile(r'"v\d+"|/v\d+(?=[/"])')
+WIRE_VERSIONS = re.compile(r'"v\d+"|/v\d+(?=[/"])|\.v\d+(?=")')
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -120,8 +120,9 @@ def searchable(text: str) -> str:
     Two carve-outs, each scoped to a version this repo does not get to rename. `PROTOCOL_NAMES` is a
     dotted Matrix event or algorithm name — `m.olm.v1.curve25519-aes-sha2`, `m.megolm.v1.aes-sha2`.
     `WIRE_VERSIONS` is a version token a wire value carries: quoted on its own, which is how an
-    `EncryptedFile` names its format (`"v": "v2"`), or a segment of an endpoint's path, which is how
-    a homeserver names its API (`/_matrix/client/v1/media`).
+    `EncryptedFile` names its format (`"v": "v2"`), a segment of an endpoint's path, which is how a
+    homeserver names its API (`/_matrix/client/v1/media`), or the tail of a quoted value, which is
+    how the spec names a SAS MAC method (`"hkdf-hmac-sha256.v2"`).
 
     Each strikes to a space rather than to nothing, because removing a token joins what sat either
     side of it: `x"v1"legacy` collapses to `xlegacy` and passes a ban that `x legacy` fails.

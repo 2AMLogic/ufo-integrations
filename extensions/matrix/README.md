@@ -141,6 +141,7 @@ same device they already know, not a new one on every boot. The libraries that c
 | Outbound | A post into a room with `m.room.encryption` state is Megolm-encrypted. The session key goes first over Olm to every device of every joined member that lacks it. |
 | Rotation | A room's session is replaced when the room's rotation settings say it has served long enough (100 messages or 7 days by default), or when a device it was shared with has left. |
 | Trust | First use. The keys a device id first shows are pinned; a device that later shows other keys is sent no room key and not believed. |
+| Verification | A member's client starts an `m.key.verification.*` exchange and the bot answers it to its end, recording that device verified beside its pin. It gates nothing: first use is what decides who is sent a room key. |
 | No device keys | A batch carrying ciphertext to a bot with no device logs `matrix.crypto_no_keys` once and is heard whole apart from that ciphertext — the tell for a `matrix_store_key` slot left empty, which the device open itself passes over in silence. |
 
 The device's account, its Olm and Megolm sessions, the pinned device keys, and the parked events
@@ -151,6 +152,33 @@ the bot's own user and device id. The account row is minted once per device by a
 table's primary key arbitrates, so two processes opening the device together agree on one account
 and publish one set of keys. A token bound to another device finds no rows, starts a new device, and
 logs `matrix.crypto_device_new`.
+
+### Verifying the bot's device
+
+A member verifies the bot from the bot's device entry in their own client, and the whole exchange is
+to-device protocol: no command, no keyword, nothing typed in a room. The bot answers, and it never
+starts one.
+
+| Event | The bot's answer |
+| --- | --- |
+| `m.key.verification.request` | `.ready` naming `m.sas.v1` as its one method, or `.cancel` with `m.unknown_method` |
+| `m.key.verification.start` | `.accept` carrying the hash of a fresh ephemeral key and the `.start` as it arrived, so the key is committed to before the member's is known |
+| `m.key.verification.key` | Its own `.key`, the secret agreed from both |
+| `m.key.verification.mac` | Its own `.mac` and a `.done`, and the device recorded verified — or `.cancel` with `m.key_mismatch`, and nothing recorded |
+
+The exchange runs over Olm, where the sending device proves its identity key. The opening request is
+answered in the clear as well, since several clients send it that way and it names no key; anything
+later in the clear is refused with `m.invalid_message`, because the homeserver stamps the sender of
+an unencrypted to-device event, so it names a user and not the device the verification is about.
+
+An exchange in flight lives in the process's memory: a `vodozemac.Sas` holds an ephemeral key it
+neither pickles nor gives back, so there is nothing to seal into a row. A restart mid-exchange is one
+the member starts again from a prompt they are still looking at, and an exchange abandoned for
+10 minutes is let go.
+
+Cross-signing is not here. The bot holds no master key, signs no device but its own, and reads no
+user's cross-signing keys, so the MAC it checks is the device key it pinned and a `.mac` naming any
+other key ends the exchange.
 
 ### The `matrix-e2ee` extra
 
@@ -258,8 +286,25 @@ workspace's to know.
   token — a new device — to start a fresh store.
 - **The bot's device is the bot's alone.** Use its token in no other client: a client that shares the
   device id publishes its own keys over the bot's, and peers stop reading the bot.
-- **Trust is first use.** The bot believes the keys a device first shows and never cross-signs or
-  verifies interactively; a member who wants the bot's device verified compares its keys by hand.
+- **Trust is first use, verified or not.** The bot believes the keys a device first shows, and a
+  device that completes SAS is recorded beside its pin without being sent anything a pinned device
+  is not. Verification is what the member gets out of it: their client stops warning about the
+  bot's device.
+- **The member's client starts, and the bot waits.** The bot answers a request with `.ready` and
+  sends no `.start` of its own, so a client that asks and then waits to be started sits there until
+  its own timeout. The spec lets either end start; this end never does.
+- **A verification asked for in a room is not read.** The to-device exchange is the one the bot
+  answers. An `m.key.verification.request` sent as a room message is an `m.room.message` of a
+  msgtype that founds no turn, so it is heard as nothing at all.
+- **The bot compares no emoji.** It has no screen, so the emoji its side of an exchange would show
+  is never displayed and never checked. What the bot answers is the member's own confirmation,
+  which their client sends as a MAC; a homeserver that relayed the exchange with keys of its own
+  would be caught by the member's screen, and the bot's silence is not a second screen. The
+  guarantee is that the member's client verified the device keys the homeserver published for the
+  bot, over a secret agreed in the exchange — and no more than that.
+- **Cross-signing is not here.** No master key, no device signed but the bot's own, no user's
+  cross-signing keys read. A member whose client insists on a cross-signed identity sees the bot's
+  device verified and the bot's user unverified, which is the whole of what the bot claims.
 - **An event older than its key's reach stays unread.** A parked event whose key does not arrive
   within 10 minutes is dropped with `matrix.undecryptable_dropped`. The bot asks the sender for the
   key once; whether the sender's client answers is its own policy.
@@ -317,7 +362,7 @@ surface writes. The rest need `ufo` and skip without it.
 | `test_matrix_surface.py` | The listener and the three delivery handlers against a fake homeserver |
 | `test_matrix_linking.py` | A claim through its proof, the same way |
 | `test_matrix_without_the_extra.py` | What a deploy without `matrix-e2ee` meets, by switching the flag its absence sets |
-| `test_matrix_crypto.py` | Real Olm and Megolm between the bot and members' devices, through that same fake homeserver with key and to-device endpoints added. The one module that also skips without the extra |
+| `test_matrix_crypto.py` | Real Olm and Megolm between the bot and members' devices, and a real SAS exchange driven by a fake client that spells the spec's commitment and MACs out for itself, through that same fake homeserver with key and to-device endpoints added. The one module that also skips without the extra |
 | `test_matrix_registry.py` | The installed entry point through ufo's loader, and the migrations applied |
 
 `test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
