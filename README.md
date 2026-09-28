@@ -19,10 +19,16 @@ its own, and a deploy activates them one at a time by name.
 ```bash
 pip install "ufo @ git+https://github.com/ufo-ai/ufo-core"
 pip install "ufo-integrations @ git+https://github.com/2AMLogic/ufo-integrations"
-ufoctl ext install pulse
 ```
 
-The entry point registers the pack; the next `ufoctl serve` loads it.
+Installing the distribution registers both `ufo.extension` entry points. Activating one is a separate
+act: a deploy runs the extensions its active set names, and `ufoctl init` writes
+`[pack] name = "assistant"`, which narrows that set to the extensions the assistant pack bundles.
+Neither extension here is among them, so a deploy created that way installs both and runs neither,
+and says nothing about it.
+
+Each extension's README names what its own deploy needs: [`pulse`](extensions/pulse#install),
+[`matrix`](extensions/matrix#install).
 
 ## Deploy notes
 
