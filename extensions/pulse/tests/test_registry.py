@@ -1,6 +1,10 @@
-"""The manifest against the real runtime: the skills parse into the registry and the pack declares
-what it says it declares. Skipped where `ufo` is not installed — it is not on PyPI, so a checkout
-without it still runs every contract test beside this one."""
+"""The manifest against the real runtime: the skills parse into the registry, the three record
+tools validate beside the builtins, and the migration this extension ships lands its two tables on a
+real database. Skipped where `ufo` is not installed — it is not on PyPI, so a checkout without it
+still runs every contract test beside this one."""
+
+import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -8,7 +12,19 @@ pytest.importorskip("ufo", reason="install ufo from git to run the registry inte
 
 import ufo_ext_pulse.manifest as pulse_manifest  # noqa: E402
 from conftest import SKILL_NAMES, SKILLS_ROOT  # noqa: E402
+from cryptography.fernet import Fernet  # noqa: E402
+
+from ufo.db import apply_migrations  # noqa: E402
+from ufo.host.ext.loader import migration_locations, validate_ext_tools  # noqa: E402
+from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
+from ufo_ext_pulse.tools import (  # noqa: E402
+    RECALL_TOOL,
+    RECORD_EDITION_TOOL,
+    RECORD_SIGHTINGS_TOOL,
+)
+
+MIGRATIONS = Path(__file__).resolve().parents[1] / "ufo_ext_pulse" / "migrations"
 
 
 def test_manifest_declares_four_skills_and_the_search_seam() -> None:
@@ -16,7 +32,80 @@ def test_manifest_declares_four_skills_and_the_search_seam() -> None:
     assert manifest.name == "pulse"
     assert [spec.path.name for spec in manifest.skills] == list(SKILL_NAMES)
     assert manifest.requires == ("search_providers",)
-    assert manifest.tools == ()
+
+
+def test_the_three_record_tools_validate_beside_the_builtins() -> None:
+    """The extension owns tools because a scheduled fire carries no command tool to run a script
+    with, so the record has to be reachable through the manifest rather than through a client."""
+    manifest = pulse_manifest.manifest()
+    assert [tool.name for tool in manifest.tools] == [
+        RECORD_SIGHTINGS_TOOL,
+        RECORD_EDITION_TOOL,
+        RECALL_TOOL,
+    ]
+    validate_ext_tools((manifest,), CredentialStore(Fernet(Fernet.generate_key())))
+
+
+def test_the_two_writes_are_side_effecting_and_the_read_is_not() -> None:
+    tools = {tool.name: tool for tool in pulse_manifest.manifest().tools}
+    assert tools[RECORD_SIGHTINGS_TOOL].side_effecting
+    assert tools[RECORD_EDITION_TOOL].side_effecting
+    assert not tools[RECALL_TOOL].side_effecting
+
+
+def test_no_record_tool_is_bound_to_an_object_row() -> None:
+    """Recording is something a turn does wherever it runs, including a fire with no surface row to
+    address — a binding would put the record behind an object the scheduled path never holds."""
+    assert all(tool.bound is None for tool in pulse_manifest.manifest().tools)
+
+
+def test_the_loader_finds_the_migrations() -> None:
+    assert str(MIGRATIONS) in {str(Path(p).resolve()) for p in migration_locations()}
+
+
+def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
+    database = tmp_path / "ufo.db"
+    apply_migrations(f"sqlite+aiosqlite:///{database}")
+    with sqlite3.connect(database) as connection:
+
+        def info(table: str) -> list[tuple[str, int]]:
+            return [(row[1], row[5]) for row in connection.execute(f"pragma table_info({table})")]
+
+        assert [name for name, _ in info("pulse_ext_sighting")] == [
+            "workspace_id",
+            "series",
+            "seen",
+            "slug",
+            "url",
+            "title",
+            "source",
+            "recorded_at",
+        ]
+        assert [name for name, _ in info("pulse_ext_covered")] == [
+            "workspace_id",
+            "series",
+            "edition",
+            "slug",
+            "title",
+            "url",
+            "recorded_at",
+        ]
+
+
+def test_the_keys_are_natural_so_a_replayed_fire_records_once(tmp_path: Path) -> None:
+    """The primary keys are the whole of why a retried or crash-replayed fire lands one row rather
+    than a second copy. A surrogate key here would let every replay through, and the file this
+    record projects to could never have caught it."""
+    database = tmp_path / "ufo.db"
+    apply_migrations(f"sqlite+aiosqlite:///{database}")
+    with sqlite3.connect(database) as connection:
+
+        def key(table: str) -> list[str]:
+            rows = [row for row in connection.execute(f"pragma table_info({table})") if row[5]]
+            return [row[1] for row in sorted(rows, key=lambda row: row[5])]
+
+        assert key("pulse_ext_sighting") == ["workspace_id", "series", "seen", "slug", "url"]
+        assert key("pulse_ext_covered") == ["workspace_id", "series", "edition", "slug"]
 
 
 def test_every_declared_skill_path_exists() -> None:

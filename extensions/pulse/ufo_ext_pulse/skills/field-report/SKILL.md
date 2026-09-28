@@ -30,16 +30,16 @@ search under another name.
 | --- | --- |
 | Opens | The most recent edition in the covered ledger |
 | Closes | Today |
-| Reaches back at most | Fourteen days, the span `seen.py` calls a lead live |
+| Reaches back at most | Fourteen days, the span `pulse_recall` calls a lead live |
 | Overridden by | A window the member named in the ask |
 
 With no edition in the ledger yet, the pool's own fourteen days are the window. Both bounds are
 read rather than assumed:
 
-```bash
-python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
-python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series <series> --within-days 14
-```
+Call `pulse_recall` with the series. One call answers both: the leads seen in the last fourteen
+days, and every story the last five editions carried. Use it rather than the scripts — an edition
+written on a fire with no client has no command tool to run them with, and a script that cannot run
+reads as a series with no history.
 
 Run both from the workspace root, which is where a command starts: the pool and the ledger are
 workspace-relative, so a run that changes directory first reads two empty files and publishes an

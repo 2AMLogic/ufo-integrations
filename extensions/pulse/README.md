@@ -46,9 +46,18 @@ without the writer or the contracts.
 | `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares four skills and nothing else — no tool, no schedule kind, no store.
-Gathering is `research`'s, the recurring row is `scheduled_tasks`', the feed entry is
-`report_digest`'s, and the ledger and the pool are workspace files the member can read.
+The extension declares four skills, three tools, and the migration behind them. The tools exist
+for one reason: a skill's script is run by a command tool, a command tool belongs to the terminal
+client, and the scheduled fire a recurring brief actually runs on has no client — so every
+unattended gather and every unattended edition used to record nothing at all (#120). The rows now
+land in two tables this extension owns. Gathering is still `research`'s, the recurring row still
+`scheduled_tasks`', and the feed entry still `report_digest`'s.
+
+| Tool | Does |
+| --- | --- |
+| `pulse_record_sightings` | Records every lead one gather surfaced, in one call |
+| `pulse_record_edition` | Records the stories one edition carried |
+| `pulse_recall` | Reads back the live leads and the recent editions, or one lead's history |
 
 ## Install
 
@@ -132,15 +141,23 @@ active, rather than this extension's.
 
 ## The two stores
 
-One JSON Lines file per series per store, in the conversation workspace, append-only:
-`pulse/<series>.covered.jsonl` holds one row per story per edition, and `pulse/<series>.seen.jsonl`
-holds one row per sighting a gather recorded. They answer different questions — what the series has
-published, and what it has seen — and a lead seen four times and never published is not a repeat.
-An edition reads both: the ledger decides what it may carry, the pool is everything it has to carry.
+`pulse_ext_covered` holds one row per story per edition, and `pulse_ext_sighting` one row per
+sighting a gather recorded. They answer different questions — what the series has published, and
+what it has seen — and a lead seen four times and never published is not a repeat. An edition reads
+both: the ledger decides what it may carry, the pool is everything it has to carry.
 
-Both paths are workspace-relative and resolve against the working directory a sandbox command starts
-in, so the files land where the member can open them and where a carrier that runs commands can
-write. A turn reaching the surface without one writes neither — see Traps.
+Both keys are natural rather than surrogate: a sighting is one series, one day, one lead, one
+address, and a covered row is one series, one edition, one story. So a retried fire, a crash replay,
+or a gather that surfaces one lead twice writes one row — which the append-only files this replaced
+could never have caught, and which every count read off them would have been wrong by.
+
+**The files are still here, as a projection.** After each write the whole series is rendered from
+the tables to `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl` in the conversation
+workspace, in the same JSON Lines shape the scripts always appended, so the scripts below still read
+them and the member can still open them. Rendered whole rather than appended: there is no state in a
+file that the tables do not hold, so a projection written after three unwatched fires simply catches
+up. A fire with no carrier lands no file and says so in the tool's own result — and records the rows
+regardless, which is the whole point.
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra --slug acme-1-0
@@ -177,14 +194,14 @@ series in either store.
   field returns. This is a missing key, not a business the member never stated — `field-pulse`'s
   step 1a only asks when the opening line *also* carries no business sentence; an unavailable index
   next to a populated opening line is this trap, not that one.
-- **A turn with no carrier writes no ledger, and says so only in the brief.** The file tools are
-  the client's, not an extension's: no manifest in the active set declares one, so a turn driven
+- **A turn with no carrier writes no workspace file.** The file and command tools are the
+  client's, not an extension's: no manifest in the active set declares one, so a turn driven
   straight at the `ufo` surface over HTTP — no client attached, no `--remote` sandbox — has no
-  filesystem at all. It still gathers, ranks and writes a full edition; it just cannot record what
-  it published. The edition opens with a line about not being able to save files and the ledger is
-  never created, so the next edition reads an empty ledger and repeats the last one. Drive a pulse
-  through the `ufo` client or a `--remote` sandbox; a brief that looks right is not evidence the
-  series does.
+  filesystem at all. This used to mean the record was lost: the edition was written, nothing was
+  recorded, and the next edition read an empty ledger and repeated the last one. It no longer does,
+  because the record goes to the tables. What is still lost is the *copy* a member opens — the tool
+  result says which half happened, and the next projection with a carrier attached catches the file
+  up. A brief that looks right is still not evidence the series does; `pulse_recall` is.
 - **An armed gather keeps the rule it was set up under.** `task-scheduling` stores `field-pulse`'s
   manifest prompt on the scheduled row at apply time; editing the skill changes only what the next
   setup writes, not a row already armed. Re-applying `<field>-gather` upserts it in place and

@@ -9,24 +9,39 @@ is not "what is true about this field" but "what changed since the edition befor
 questions select different stories, and a run that answers the first one publishes last week's brief
 again with today's date on it.
 
-The covered ledger is what makes the difference decidable. It is a workspace file —
-`pulse/<series>.covered.jsonl` — one row per story the series has published, written by the run that
-published it and read by the run after. The workspace is where it belongs twice over: the member can
-open it there, and it is the one tree every carrier lets a command write. Never in memory:
-`task-scheduling` puts an already-covered ledger in workspace files because a per-run snapshot
+The covered ledger is what makes the difference decidable: one row per story the series has
+published, written by the run that published it and read by the run after.
+
+**Write it with `pulse_record_edition` and read it with `pulse_recall`.** Both are tools, and that
+is deliberate — a script is run by a command tool, a command tool belongs to the client, and the
+scheduled fire a recurring brief runs on has no client. A ledger written by a script was therefore
+a ledger only an attended run ever added to, which is no ledger at all. Never in memory either:
+`task-scheduling` keeps an already-covered ledger out of memory facts because a per-run snapshot
 written as a memory fact is injected into unrelated later turns.
+
+The workspace files are still written, from the record, after each call: `pulse/<series>.covered.jsonl`
+and `pulse/<series>.seen.jsonl`, in the same shape the scripts below read. They are the copy the
+member opens. A fire with no carrier lands no file and says so; the record is kept regardless, and
+the next attended call catches the files up. Never treat a missing file as a missing record.
 
 ## Read the ledger before ranking, not after
 
 Read it first. A story's eligibility decides whether it is worth researching further, so a run that
 ranks and then filters spends the whole window's effort on stories it then throws away.
 
+Call `pulse_recall` with the series. It answers with the leads seen recently and every story the
+last five editions carried, which is both halves of the ranking decision in one call.
+
+The member's own reader over the projected file is the same answer, for a turn that has a command
+tool and wants it on the terminal:
+
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
 ```
 
-Run it from the workspace root, which is where a command starts: the ledger path is relative, so a
-run that changes directory first reads an empty ledger and carries the last edition again.
+Run that from the workspace root, which is where a command starts: the file path is relative, so a
+run that changes directory first reads an empty file. Never conclude from an empty file that the
+series has published nothing — ask `pulse_recall`, which reads the record itself.
 
 The last five editions are the baseline. Older coverage has left the reader's head and may be
 carried again as new; five editions is the span a returning reader holds.
@@ -70,10 +85,8 @@ Every story that reaches the published edition gets a row, and the rows are writ
 is out — not while drafting, or a story cut in the last pass reads as covered to the next run and is
 never carried at all.
 
-```bash
-python "$UFO_HOME/skills/brief-continuity/covered.py" record \
-  --series <series> --edition <YYYY-MM-DD> --slug <story-slug> --title <title> --url <url>
-```
+Call `pulse_record_edition` once with the series, the edition date, and every story the edition
+carried. One call, not one per story.
 
 The slug is the story's durable address across editions, so it names the thing that happened and not
 the way this edition phrased it: `acme-compiler-1-0-shipped`, never `big-week-for-acme`. A story
@@ -85,29 +98,36 @@ carries the rest.
 
 ## The sightings pool is a second store, not a second ledger
 
-`pulse/<series>.seen.jsonl`, written by `seen.py`, records what a gather has **seen**. The covered
-ledger records what an edition **published**. They answer different questions and must not be
-merged: a lead seen four times and never published is not a repeat, and a story published once is
-not a lead.
+The sightings pool records what a gather has **seen**. The covered ledger records what an edition
+**published**. They answer different questions and must not be merged: a lead seen four times and
+never published is not a repeat, and a story published once is not a lead.
+
+**Write it with `pulse_record_sightings`** — one call carrying every candidate the gather surfaced,
+each with a date, a slug, a title, and a url. **Read it with `pulse_recall`**: with no slug it names
+the live leads, and with one it answers that lead's whole sighting history and every edition that
+carried it, which is the evidence the material-new-development exception needs.
+
+Two diagnostics have no tool and are run over the projected file, so they need a carrier:
 
 ```bash
-python "$UFO_HOME/skills/brief-continuity/seen.py" record --series <s> --seen <date> --slug <slug> --title <t> --url <u>
-python "$UFO_HOME/skills/brief-continuity/seen.py" fresh   --series <s> --within-days 14
-python "$UFO_HOME/skills/brief-continuity/seen.py" stale   --series <s> --slug <slug>
-python "$UFO_HOME/skills/brief-continuity/seen.py" history --series <s> --slug <slug>
+python "$UFO_HOME/skills/brief-continuity/seen.py" stale     --series <s> --slug <slug>
 python "$UFO_HOME/skills/brief-continuity/seen.py" reconcile --series <s>
 ```
 
-Fourteen days is the window both `fresh` and `stale` default to, and it is the same kind of number
+Fourteen days is the window both `pulse_recall` and `stale` default to, and it is the same kind of number
 as the five-edition span above: two weeks is roughly how long a lead stays worth chasing before its
 silence is the story. Pass `--within-days` where a field moves faster or slower.
 
-The pool is append-only and nothing is ever removed. Age is a reason not to pursue a lead, never a
-reason to forget it: `stale` exits non-zero for a lead that has gone quiet, and the lead stays in
-the pool with its whole history, so when it moves again that history is still attached. A pool that
-expired it would have discarded it at exactly the moment it became interesting.
+Nothing is ever removed. Age is a reason not to pursue a lead, never a reason to forget it:
+`stale` exits non-zero for a lead that has gone quiet, and the lead stays in the pool with its whole
+history, so when it moves again that history is still attached. A pool that expired it would have
+discarded it at exactly the moment it became interesting.
 
-`--url` is required, and whitespace does not count. The slug is this run's judgement of what a
+Recording the same sighting twice is safe. One series, one day, one lead, one address is one row, so
+a retried fire, a replayed batch, or a gather that surfaces a lead twice in one run adds nothing the
+second time. That is a property of the record, not of care taken at the call site.
+
+A url is required on every sighting, and whitespace does not count. The slug is this run's judgement of what a
 story is, so two runs need not agree on it. The url is the best external key a row carries: better
 than the title, which legitimately drifts between sightings, and than the source, which cannot tell
 two stories from one publisher apart. It is not the only external field and a thin row is not beyond
@@ -119,9 +139,10 @@ this check and identifies nothing: the next story from the same index carries th
 different stories reconcile as one. That failure is quieter than a missing url, because the row
 looks complete.
 
-Rows written before this was required are not rejected retroactively, and no read path reads `url`
-today — it is recorded for a reconciler that does not exist yet. So a url-less row is inert rather
-than broken, and stays readable by `fresh`, `stale` and `history`.
+Rows written into the old file before this was required are not rejected retroactively and stay
+readable by `stale` and `reconcile`. They are not in the record, though — nothing backfills the
+tables from a file — so a series with history from before this change reads its own past only
+through the file. `reconcile` is the tool for auditing those rows.
 
 `reconcile` reads the pool against itself and exits non-zero where rows cannot be told apart. It
 reports; it does not diagnose, and the difference is the point.
