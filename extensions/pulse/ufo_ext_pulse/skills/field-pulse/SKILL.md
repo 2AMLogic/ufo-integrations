@@ -42,11 +42,25 @@ the recent past. Set each source's state as its read returns, per `coverage-hone
 lives by: what an edition may repeat, and what it may claim about a source it could not read. They are
 loaded, not optional.
 
-Rank what you found. Importance is whether someone working in this field would want to know it
-happened; source signals inform the ranking and do not decide it. Cluster the sources covering one
-story and rank the story once, on its own weight rather than the sum of its coverage. Five to ten
-stories carry an edition; a longer list is a list, and the reader stops at the point where ranking
+Rank what you found, against the business rather than the field. Importance is whether this changes
+a decision, a plan, a cost, a risk or a dependency for *this* business — not whether someone working
+in the field would find it notable. The business sentence that chose the field is the same sentence
+that ranks inside it; a brief that stops using it after step 1 is a brief about an industry, and the
+reader did not ask for one. Source signals inform the ranking and do not decide it. Cluster the
+sources covering one story and rank the story once, on its own weight rather than the sum of its
+coverage.
+
+Five to ten stories carry an edition, but that is a ceiling rather than a quota. The count is a
+consequence of the bar: publish what clears it and stop. Reaching for a number is how a brief about
+this business becomes a brief about its field, and the reader stops at the point where ranking
 stopped being visible.
+
+An edition where nothing clears the bar is a finished edition, not a failed one. Say plainly that
+the window was quiet and name what was read, and never lower the bar to fill a page — a reader who
+is told "nothing this week" and can believe it is the reader this brief is for. That claim is only
+worth anything with `coverage-honesty`'s footer under it: a quiet window is every source read and
+nothing clearing the bar, and an edition reporting quiet on top of sources it could not read is the
+failure that skill exists to prevent, not a quiet day.
 
 Each story gets a headline in the reader's plain language — not the source's headline — and two to
 four sentences on why it matters. Say what a thing claims, not what it might mean, and say plainly
@@ -84,13 +98,16 @@ spec:
   schedule: "0 13 * * 1,3,5"
   description: <Field> pulse, Monday/Wednesday/Friday
   prompt: |
-    Write the <field> pulse for <business>. Load brief-continuity and read the covered ledger for
-    series <series> before ranking anything — a story the last five editions published is
-    ineligible without a material new development. Load research-assistant and find what changed
-    across <the confirmed sources> since the previous edition. Load coverage-honesty and set each
-    source's state as it returns; name every unread source in the footer. Load research-report and
-    write <series>-<date>.md. Record the published stories with brief-continuity. Reply with the
-    brief; when the window is quiet, say so in one line.
+    Write the <field> pulse for <business>. Rank against that business, not the field: a story
+    earns a slot by changing a decision, a plan, a cost, a risk or a dependency for it, and five
+    to ten is a ceiling rather than a quota — publish what clears the bar and stop. Load
+    brief-continuity and read the covered ledger for series <series> before ranking anything — a
+    story the last five editions published is ineligible without a material new development. Load
+    research-assistant and find what changed across <the confirmed sources> since the previous
+    edition. Load coverage-honesty and set each source's state as it returns; name every unread
+    source in the footer. Load research-report and write <series>-<date>.md. Record the published
+    stories with brief-continuity. Reply with the brief; when nothing clears the bar, say the
+    window was quiet and never lower the bar to fill it.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a
@@ -121,3 +138,7 @@ on, and that every edition lands in this conversation.
 - Skipping the ledger record on the first edition, which leaves the second one no baseline.
 - Letting the schedule's prompt name the sources while the ledger series name is left as a placeholder.
 - Writing a headline in the source's words rather than the reader's.
+- Padding a thin window to reach a story count, which turns a brief about this business back into a
+  brief about its field.
+- Calling a window quiet over sources that went unread, which is the one claim `coverage-honesty`
+  exists to refuse.
