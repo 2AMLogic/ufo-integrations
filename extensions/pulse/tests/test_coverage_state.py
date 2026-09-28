@@ -134,16 +134,40 @@ def test_the_window_says_which_of_the_gathers_failed(coverage, unread: int, line
     assert coverage.state_line(coverage.window("data-infra", WEEK[0], WEEK[-1])[0]) == line
 
 
+@pytest.mark.parametrize(
+    ("answers", "line"),
+    [
+        ((1, "unreachable", "unreachable"), "read on 1 of 3 gathers (1 item)"),
+        ((1, 1, "unreachable"), "read on 2 of 3 gathers (2 items)"),
+        ((0, "unreachable", "unreachable"), "read on 1 of 3 gathers, nothing in it"),
+        ((0, 0, "unreachable"), "read on 2 of 3 gathers, nothing in them"),
+    ],
+)
+def test_the_line_agrees_in_number_with_the_count_in_front_of_it(
+    coverage, answers: tuple, line: str
+) -> None:
+    """One item is an ordinary result and one gather is one gather: the singular and the plural are
+    written from the same counts, so the table holds both and they cannot part company."""
+    for gathered, answer in zip(WEEK, answers):
+        gather_of(coverage, gathered, filings_index=answer)
+    unread = sum(isinstance(answer, str) for answer in answers)
+    aggregate = coverage.window("data-infra", WEEK[0], WEEK[-1])[0]
+    assert coverage.state_line(aggregate) == (
+        f"{line}; not read on {unread} of 3 gathers — unreachable"
+    )
+
+
 def test_a_window_of_one_gather_reads_as_one_run(coverage) -> None:
     """The single-run wording stays the default where the window is a single gather: a report of one
-    day has no count of days to state."""
-    gather_of(coverage, WEEK[0], releases=11, forums=0, filings_index="rate-limited")
+    day has no count of days to state, and a source that returned one item says one item."""
+    gather_of(coverage, WEEK[0], releases=11, papers=1, forums=0, filings_index="rate-limited")
     lines = {
         aggregate["source"]: coverage.state_line(aggregate)
         for aggregate in coverage.window("data-infra", WEEK[0], WEEK[0])
     }
     assert lines == {
         "releases": "read (11 items)",
+        "papers": "read (1 item)",
         "forums": "read, nothing in it",
         "filings-index": "not read — rate-limited",
     }
