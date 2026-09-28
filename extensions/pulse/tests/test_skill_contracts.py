@@ -3,13 +3,37 @@ breaks one of these fails at boot, so it is worth catching in a test that needs 
 
 The description budget is a routing budget, not a style preference — an over-long description is what
 makes a skill load on the wrong turn.
+
+The prompts belong here for the same reason. The standing prompt and the armed row's are text this
+extension ships, so a contract over them needs no more installed than a SKILL.md does, and the
+instruction present on every turn is the one worth checking in the lane that always runs.
 """
+
+import ast
 
 import pytest
 import yaml
-from conftest import SKILL_NAMES, SKILLS_ROOT
+from conftest import PACKAGE_ROOT, SKILL_NAMES, SKILLS_ROOT
 
 DESCRIPTION_WORD_BUDGET = 50
+
+
+def module_strings(name: str) -> dict[str, str]:
+    """The module-level string constants of one of the extension's own modules, read rather than
+    imported.
+
+    `agent.py` and `tools.py` both import `ufo.sdk`, so importing either would put this lane behind
+    the runtime — and the prompt and the tool names are text, which is the whole of what a contract
+    over them needs. The parse binds the same string the runtime would: a constant renamed or
+    dropped is a `KeyError` here, which is what makes the cross-check bite in both directions."""
+    module = ast.parse((PACKAGE_ROOT / name).read_text())
+    return {
+        target.id: node.value.value
+        for node in module.body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        for target in node.targets
+        if isinstance(target, ast.Name) and isinstance(node.value.value, str)
+    }
 
 
 def frontmatter(name: str) -> dict:
@@ -133,6 +157,31 @@ def test_the_setup_reads_its_clock_from_the_payload() -> None:
     the only other answer available — which arms the gather in the member's evening."""
     body = (SKILLS_ROOT / "field-pulse" / "SKILL.md").read_text()
     assert "local_time" in body
+
+
+def test_the_agent_prompt_names_the_record_tools() -> None:
+    """The standing prompt is the only instruction present on every turn of this agent — a skill's
+    is there once it loads, and the armed row's is frozen at apply time.
+
+    A live fire on 2026-09-28 had `brief-continuity` loaded, had the tools, and recorded by running
+    `python seen.py record …` from its shell anyway. Its two published stories went to the projected
+    file and were pending erasure. Naming the tools where the agent always sees them is the cheapest
+    remaining lever after removing the subcommand; this pins that they are named.
+    """
+    prompt = module_strings("agent.py")["AGENT_PROMPT"]
+    tools = module_strings("tools.py")
+    for constant in (
+        "RECORD_SIGHTINGS_TOOL",
+        "RECORD_EDITION_TOOL",
+        "RECORD_COVERAGE_TOOL",
+        "RECALL_TOOL",
+    ):
+        tool = tools[constant]
+        assert tool in prompt, f"the agent's standing prompt never names {tool}"
+    assert "erased" in prompt, (
+        "the standing prompt names the tools without saying what a hand-written row costs: the "
+        "consequence is what moved the fire, so the prompt has to carry it"
+    )
 
 
 def scheduled_manifest() -> dict:
