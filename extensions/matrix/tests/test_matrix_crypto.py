@@ -801,6 +801,8 @@ def test_a_malformed_file_is_a_dropped_file_and_never_an_unhandled_error() -> No
         {**sealed, "key": None},
         {**sealed, "key": {**sealed["key"], "k": None}},
         {**sealed, "key": {**sealed["key"], "k": "c2hvcnQ="}},
+        {**sealed, "iv": "c2hvcnQ="},
+        {**sealed, "iv": crypto.encode(bytes(32))},
         {**sealed, "iv": crypto.encode(b"12345678")},
         {k: v for k, v in sealed.items() if k != "iv"},
     ):
