@@ -1,12 +1,19 @@
-"""What the pulse extension declares: four skills the agent loads on demand, and the three calls
-that keep a series' record alive when nobody is watching.
+"""What the pulse extension declares: the agent a pulse runs as, five skills it loads on demand, and
+the three calls that keep a series' record alive when nobody is watching.
 
-A recurring field brief is a series, not a report. `field-pulse` sets one up in chat, writes the
-first brief in that turn and arms a daily gather; `field-report` writes every edition after it, from
+A recurring field brief is a series, not a report. `pulse-handoff` recognises the ask in the
+member's own conversation and hands it to the `pulse` agent; `field-pulse` runs the setup there,
+writes the first brief and arms a daily gather; `field-report` writes every edition after it, from
 the pool those gathers filled and without a search in the request path; `brief-continuity` holds the
 covered ledger that makes the next brief carry what the last one did not, and the sightings pool the
 report reads; `coverage-honesty` keeps a window nobody could read from being published as a window
 where nothing happened.
+
+**The agent is why the handoff exists.** `scheduled_tasks` writes a row's `agent_id` from the turn
+that applied it and its manifest `spec` names no agent, so a gather is owned by whoever set the
+pulse up. Setting one up from a chat turn arms a daily search that runs as the assistant; setting
+one up from a `pulse` turn arms one that runs as `pulse`. `agent.py` holds the row and the reasons;
+the handoff is the one turn that reaches it.
 
 **The store is this extension's own, and that is the whole of why it owns tools and a job.** The
 ledger and the pool began as workspace files at a workspace-relative path, which resolves against
@@ -31,6 +38,7 @@ from pathlib import Path
 
 from ufo.sdk.manifest import Manifest, SkillSpec
 from ufo.sdk.tools import ToolDef
+from ufo_ext_pulse.agent import PROVISION
 from ufo_ext_pulse.jobs import JOB
 from ufo_ext_pulse.tools import (
     RECALL_TOOL,
@@ -45,16 +53,23 @@ from ufo_ext_pulse.tools import (
 )
 
 NAME = "pulse"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 SKILLS_ROOT = Path(__file__).parent / "skills"
-SKILL_NAMES = ("field-pulse", "field-report", "brief-continuity", "coverage-honesty")
+SKILL_NAMES = (
+    "pulse-handoff",
+    "field-pulse",
+    "field-report",
+    "brief-continuity",
+    "coverage-honesty",
+)
 
 
 def manifest() -> Manifest:
     return Manifest(
         name=NAME,
         version=VERSION,
+        agents=(PROVISION,),
         tools=(
             ToolDef(
                 name=RECORD_SIGHTINGS_TOOL,

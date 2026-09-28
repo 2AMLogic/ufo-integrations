@@ -51,8 +51,10 @@ and both are legitimate editions of the same series.
 ## Rank against the business, not the field
 
 The opening line states the business, and its business sentence is what a story is ranked against —
-read it and never ask what the business does. `memory_search` for the series returns what the setup
-turn recorded: the field sentence, the confirmed source set, and the series name.
+read it and never ask what the business does. A turn that has no opening line is the setup turn
+`pulse-handoff` spawned, and there the business is the one in its payload. `memory_search` for the
+series returns what that setup recorded: the field sentence, the confirmed source set, and the
+series name.
 
 `brief-continuity` and `coverage-honesty` arrive with this skill and hold the two contracts a series
 lives by: what an edition may repeat, and what it may claim about a source it could not read. Read

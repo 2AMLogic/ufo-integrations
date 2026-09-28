@@ -49,9 +49,34 @@ def test_field_report_pulls_both_contracts() -> None:
     assert set(depends) == {"brief-continuity", "coverage-honesty"}
 
 
-def test_field_pulse_routes_away_from_competitive_intel() -> None:
-    """The two skills answer nearby asks, so the description has to say which one this is not."""
-    assert "competitive-intel" in frontmatter("field-pulse")["description"]
+def test_the_handoff_pulls_nothing() -> None:
+    """`depends` is the only pull, and the workflow this turn must not run is the one it hands over.
+    A `field-pulse` pulled in here is a second turn able to run the setup, in the one agent whose
+    armed gather would be owned by the wrong row."""
+    assert "depends" not in frontmatter("pulse-handoff").get("metadata", {})
+
+
+def test_the_handoff_routes_away_from_competitive_intel() -> None:
+    """This is the description that reads the member's own sentence, so it is the one that has to
+    say which nearby ask it is not: a list of named companies is `competitive-intel`, which watches
+    names rather than a domain."""
+    assert "competitive-intel" in frontmatter("pulse-handoff")["description"]
+
+
+def test_the_handoff_routes_away_from_reading_an_edition() -> None:
+    """An edition is answered where the member asked, because the record is keyed by workspace and
+    series. A handoff that took the edition too would spawn a conversation to write what this one
+    can write, and answer minutes later."""
+    assert "field-report" in frontmatter("pulse-handoff")["description"]
+
+
+def test_field_pulse_routes_the_chat_side_ask_to_the_handoff() -> None:
+    """Both descriptions sit in every agent's index, and the member's sentence has to reach exactly
+    one of them. The handoff names the phrasing; this one names the situation it answers in — a
+    turn already handed a field — and says where the phrasing goes instead."""
+    description = frontmatter("field-pulse")["description"]
+    assert "pulse-handoff" in description
+    assert "pulse agent" in description
 
 
 def test_field_report_routes_away_from_setting_a_pulse_up() -> None:
@@ -77,6 +102,32 @@ def test_the_report_reads_the_coverage_store_by_script() -> None:
     footer over several gathers. That footer is a count of recorded states, and a file that
     described the store rather than invoking it would be back to inferring from the pool."""
     assert "coverage.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+
+
+def test_the_handoff_spawns_the_agent_and_not_a_profile() -> None:
+    """`agent:pulse` resolves against the workspace's agent rows whatever else a deploy registered.
+    The bare name resolves across both namespaces, so the day a subagent profile takes it the
+    handoff runs the setup under this turn's own agent and the armed gather is the assistant's —
+    silently, because a profile spawn succeeds."""
+    body = (SKILLS_ROOT / "pulse-handoff" / "SKILL.md").read_text()
+    assert 'target="agent:pulse"' in body
+
+
+def test_the_handoff_carries_the_clock_the_spawned_turn_cannot_read() -> None:
+    """A spawned turn's inbound is the bare payload — no opening line, no `<context>` header — so
+    the business and the member's own clock are handed over or they are absent. The gather fires
+    early in the member's morning, and a setup with no clock has only the deploy's."""
+    body = (SKILLS_ROOT / "pulse-handoff" / "SKILL.md").read_text()
+    for key in ("request", "business", "local_time"):
+        assert key in body
+
+
+def test_the_setup_reads_its_clock_from_the_payload() -> None:
+    """The one field the setup cannot recover for itself. It runs as a spawn, so the `<context>`
+    header a member's own turn carries its clock in is not in front of it, and the deploy's time is
+    the only other answer available — which arms the gather in the member's evening."""
+    body = (SKILLS_ROOT / "field-pulse" / "SKILL.md").read_text()
+    assert "local_time" in body
 
 
 def scheduled_manifest() -> dict:
