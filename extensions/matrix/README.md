@@ -278,6 +278,10 @@ workspace's to know.
   carrying a file is Megolm ciphertext, so the filename, the subject and the `mxc://` stay off the
   server's timeline — but the object the `mxc://` points at is stored as it was given. Only room
   members learn that `mxc://`, which is a weaker guarantee than the room's own.
+- **An unconfigured deploy boots, and answers nothing.** `requires` is empty because the credential
+  slots are filled by `matrix_connect` in chat, and a deploy that refused to boot without them would
+  offer no chat to fill them in. Naming them there deadlocks the documented setup rather than
+  hardening it.
 - **An event that will not decrypt is a dropped event.** A plaintext that does not read as a Matrix
   event is logged as `matrix.undecryptable` with its error class and skipped. It is never retried
   into a stalled stream, so one malformed sender cannot silence a bot.
