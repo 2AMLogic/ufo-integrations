@@ -60,6 +60,11 @@ class Api:
     async def aclose(self) -> None:
         await self._http.aclose()
 
+    async def get_status(self, path: str) -> int:
+        """The status one raw GET answers with, for asking whether an endpoint serves at all."""
+        answer = await self._http.get(path)
+        return answer.status_code
+
     async def register(self, localpart: str, password: str) -> tuple[str, str]:
         answer = (
             await self._http.post(
