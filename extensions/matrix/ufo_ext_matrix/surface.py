@@ -60,7 +60,7 @@ from ufo.sdk.surfaces import (
     mint_marker,
     writeback_says_nothing,
 )
-from ufo.sdk.tools import TextContent, ToolContext, ToolResult
+from ufo.sdk.tools import ToolContext, ToolResult
 from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.answering import Answering, read_answering, write_answering
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking
@@ -93,7 +93,7 @@ from ufo_ext_matrix.events import (
     txn_id,
 )
 from ufo_ext_matrix.feedback import attend
-from ufo_ext_matrix.linking import Linking, code_in, proof_txn, unlinked
+from ufo_ext_matrix.linking import Linking, _said, code_in, proof_txn, unlinked
 from ufo_ext_matrix.messages import (
     edit_content,
     file_content,
@@ -615,10 +615,6 @@ class MatrixSurface:
             "It is listening." if listed else f"It listens once the deploy's {BOTS_ENV} names it."
         )
         return _said(f"Connected {bot}. {tail}")
-
-
-def _said(text: str, *, error: bool = False) -> ToolResult:
-    return ToolResult(content=(TextContent(text=text),), is_error=error)
 
 
 @dataclass
