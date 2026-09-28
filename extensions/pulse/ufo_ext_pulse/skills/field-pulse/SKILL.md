@@ -156,3 +156,10 @@ on, and that every edition lands in this conversation.
   brief about its field.
 - Calling a window quiet over sources that went unread, which is the one claim `coverage-honesty`
   exists to refuse.
+- Assuming an edit to this skill reaches an armed row. `task-scheduling`'s manifest stores its
+  `prompt` on the scheduled row at apply time, and a fire runs that stored copy, not this file — an
+  armed pulse keeps the rule it was set up under until someone re-applies the manifest. Re-applying
+  `<field>-pulse` upserts it in place and re-points reporting to whichever conversation ran the
+  re-apply, so a member who wants the new rule re-applies from the pulse's own conversation, not from
+  wherever the skill was edited. Same family as #70's running `serve` process keeping the skills it
+  booted with — a durable copy an edit does not reach, different surface.
