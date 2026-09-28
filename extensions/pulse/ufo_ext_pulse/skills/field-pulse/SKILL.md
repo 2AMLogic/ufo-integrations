@@ -56,13 +56,12 @@ is in front of you.
 edition from a pool, and the other two hold the contracts a series lives by — what an edition may
 repeat, and what it may claim about a source it could not read. They are loaded, not optional.
 
-Record every candidate in the sightings pool, with `brief-continuity`'s `seen.py` — everything the
-gather surfaced, not only what looks publishable. A sighting is a fact at the moment the source
+Record every candidate in the sightings pool with `pulse_record_sightings` — everything the gather
+surfaced, not only what looks publishable, in one call. A sighting is a fact at the moment the source
 returned it; whether it clears the bar is a separate judgement made after, and recording the two at
-the same moment is how a pool ends up holding only what an edition already carried. A pool append or
-a coverage row that fails is named in the reply, per `field-report`'s rule on a write that did not
-land: a gather whose rows never reached the workspace is a window no later edition can recover, and
-one whose states never reached it is a window every later edition has to read from silence.
+the same moment is how a pool ends up holding only what an edition already carried. A coverage row
+that fails is named in the reply, per `field-report`'s rule on a write that did not land: a window
+whose states never reached the workspace is one every later edition has to read from silence.
 
 `field-report`'s business-relative bar makes the pool more valuable rather than less. That bar
 rejects more than a field-relative one would, and every rejection is a lead rather than nothing: a
@@ -103,8 +102,10 @@ A one-time answer ends here: say the brief is written, name the file, offer noth
 For a recurring answer, load `task-scheduling` and apply one manifest named `<field>-gather`. Fire
 early in the member's morning, before they would think to ask for an edition, read from the
 `<context>` header's `time:` line and converted to UTC. Carry no `run_now`: this turn gathered the
-window already, and an immediate fire would record every sighting in it a second time — `seen.py`
-keeps those as two observations, and `history` then shows a story moving when nothing moved.
+window already, so an immediate fire would spend a full gather re-reading it. The pool itself is
+safe — one series, one day, one lead, one address is one row, so a second recording of this window
+adds nothing — but the coverage rows are still files and would double in the fire's own tree, and
+the gather is the expensive half either way.
 
 ```yaml
 kind: scheduled_task
@@ -116,16 +117,17 @@ spec:
   prompt: |
     Gather the <field> window for series <series>. Load research-assistant and find what changed
     across <the confirmed sources> since yesterday, bounding every query to that window. Record
-    every candidate in the sightings pool with brief-continuity's seen.py — everything seen, one
-    row per sighting, each with its source. Load coverage-honesty and set each source's state as
-    its read returns, recording each one under today's date with brief-continuity's coverage.py:
-    the edition that covers this window counts those rows, and a state nobody recorded here is a
-    day it cannot account for. Rank nothing, write no report file, and record nothing in the
-    covered ledger: the edition is written when the member asks for one. If a pool append or a
-    coverage row fails, say so and say which sources went unrecorded; a fire with no client
-    attached has no file tools, and a window that silently recorded nothing is a window no later
-    edition can recover. The pool and coverage rows are this fire's whole product, so send no
-    brief.
+    every candidate in the sightings pool with the pulse_record_sightings tool — everything seen,
+    one row per sighting, each with its source, in one call. Use the tool and not a script: a
+    script writes to a path resolved against this fire's own working directory, which is not the
+    one a terminal-bound conversation starts in, and a series recorded from both keeps two ledgers
+    that each look complete. Load coverage-honesty and set each source's state as its read returns,
+    recording each one under today's date with brief-continuity's coverage.py: the edition that
+    covers this window counts those rows, and a state nobody recorded here is a day it cannot
+    account for. That store is still a workspace file and so still splits by carrier — record the
+    states, and say in the reply that they went to this fire's own tree. Rank nothing, write no
+    report file, and record nothing in the covered ledger: the edition is written when the member
+    asks for one. The pool is this fire's whole product, so send no brief.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a

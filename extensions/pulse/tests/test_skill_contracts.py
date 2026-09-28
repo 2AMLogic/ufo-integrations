@@ -60,10 +60,16 @@ def test_field_report_routes_away_from_setting_a_pulse_up() -> None:
     assert "field-pulse" in frontmatter("field-report")["description"]
 
 
-def test_the_report_reads_the_pool_by_script() -> None:
+def test_the_report_reads_the_pool_by_tool() -> None:
     """The report's whole claim -- that it publishes without searching -- rests on it reading the
-    pool a gather filled, so the file has to invoke the pool script rather than describe it."""
-    assert "seen.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+    pool a gather filled, so the file has to name the call rather than describe the store.
+
+    It names the tool and not the script because an edition written on a fire with no client has no
+    command tool to run a script with, and a script that cannot run reads as a series with no
+    history: the report would then publish last week's stories as new."""
+    body = (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+    assert "pulse_recall" in body
+    assert "seen.py" not in body
 
 
 def test_the_report_reads_the_coverage_store_by_script() -> None:
@@ -87,10 +93,26 @@ def test_the_scheduled_task_gathers_and_nothing_else() -> None:
     manifest = scheduled_manifest()
     assert manifest["name"].endswith("-gather")
     prompt = manifest["spec"]["prompt"]
-    assert "seen.py" in prompt
+    assert "pulse_record_sightings" in prompt
     assert "research-report" not in prompt
     assert "covered.py" not in prompt
     assert "run_now" not in manifest["spec"]
+
+
+def test_the_scheduled_task_records_through_a_tool_and_not_a_script() -> None:
+    """The armed row is the prompt certain to run from the sandbox root rather than the deploy home,
+    so it is the one that must not reach for a script. A row telling the fire to run `seen.py`
+    writes a second ledger for the series in the fire's own tree, which is the fault this whole
+    store replaced — measured on the demo deploy as two `agent-runtimes` ledgers whose most recent
+    edition shared no story at all.
+
+    It asserts the tool and the *absence* of the script, not a phrase, because the reason belongs in
+    prose that can be rewritten. The earlier version of this test pinned the phrase "no client
+    attached" — which described a mechanism that turned out not to exist."""
+    prompt = scheduled_manifest()["spec"]["prompt"]
+    assert "pulse_record_sightings" in prompt
+    assert "seen.py" not in prompt
+    assert "covered.py" not in prompt
 
 
 def test_the_scheduled_gather_records_each_source_state() -> None:

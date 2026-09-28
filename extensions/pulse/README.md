@@ -46,9 +46,38 @@ without the writer or the contracts.
 | `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares four skills and nothing else — no tool, no schedule kind, no store.
-Gathering is `research`'s, the recurring row is `scheduled_tasks`', the feed entry is
-`report_digest`'s, and the ledger and the pool are workspace files the member can read.
+The extension declares four skills, three tools, one job, and the migration behind them. The tools
+exist for one reason: **a brief's carriers do not share a working directory.** The ledger and the
+pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
+turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
+machine in that directory; any other conversation gets `workspace_root/<conversation_id>`. So the
+split is by *terminal binding*, not by whether a human was watching — on the demo deploy eight
+conversations share one `client:` tree and one `local:` conversation has its own.
+
+That is not a hypothesis. On the demo deploy the `agent-runtimes` series had two
+`covered.jsonl` files of 15 rows each, and for edition 2026-09-28 they shared **no story at all**:
+
+```
+2026-09-27:  deploy-home 9  sandbox 9  shared 5  only-in-one 8
+2026-09-28:  deploy-home 6  sandbox 6  shared 0  only-in-one 12
+```
+
+Both were plausible. The no-repeat rule was enforced against whichever half the running carrier
+could see. Rows keyed by workspace and series are reached identically by every turn, whatever ran it
+and wherever it started, and that is the whole of why these tables exist.
+
+Gathering is still `research`'s, the recurring row still `scheduled_tasks`', and the feed entry
+still `report_digest`'s.
+
+| Tool | Does |
+| --- | --- |
+| `pulse_record_sightings` | Records every lead one gather surfaced, in one call |
+| `pulse_record_edition` | Records the stories one edition carried |
+| `pulse_recall` | Reads back the live leads and the recent editions, or one lead's history |
+
+| Job | Does |
+| --- | --- |
+| `pulse_project` | Writes the workspace-file copy of a series whose record has moved |
 
 ## Install
 
@@ -132,15 +161,48 @@ active, rather than this extension's.
 
 ## The two stores
 
-One JSON Lines file per series per store, in the conversation workspace, append-only:
-`pulse/<series>.covered.jsonl` holds one row per story per edition, and `pulse/<series>.seen.jsonl`
-holds one row per sighting a gather recorded. They answer different questions — what the series has
-published, and what it has seen — and a lead seen four times and never published is not a repeat.
-An edition reads both: the ledger decides what it may carry, the pool is everything it has to carry.
+`pulse_ext_covered` holds one row per story per edition, and `pulse_ext_sighting` one row per
+sighting a gather recorded. They answer different questions — what the series has published, and
+what it has seen — and a lead seen four times and never published is not a repeat. An edition reads
+both: the ledger decides what it may carry, the pool is everything it has to carry.
 
-Both paths are workspace-relative and resolve against the working directory a sandbox command starts
-in, so the files land where the member can open them and where a carrier that runs commands can
-write. A turn reaching the surface without one writes neither — see Traps.
+Both keys are natural rather than surrogate: a sighting is one series, one day, one lead, one
+address, and a covered row is one series, one edition, one story. So a retried fire, a crash replay,
+or a gather that surfaces one lead twice writes one row. That also makes **importing an old file
+safe to repeat**, which is how a deploy already carrying divergent ledgers merges them — see below.
+
+A third table, `pulse_ext_series`, is bookkeeping rather than record: which conversation a series
+lives in, and how far the workspace-file copy has caught up.
+
+**The files are still here, as a projection.** `pulse_project` renders the whole series from the
+tables to `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl`, in the same JSON Lines
+shape the scripts always appended, so the scripts below still read them and the member can still
+open them.
+
+It is a **job** and not part of the write, and that is forced rather than chosen: a workspace file
+is written through `ExtensionContext.files`, core wires that seam for the job runner and for surface
+contexts, and `host/ext/loader.py`'s `turn_tools` does not wire it at all. `ctx.ext.files` is
+therefore `None` in *every* extension tool handler, on every deploy. A projection attempted from a
+tool is not unreliable; it is dead code.
+
+The job wakes every five minutes and renders only series whose record has moved since their last
+projection, because `ConversationFiles.write` opens a sandbox rather than reusing a live one — an
+unconditional projection would start a container per pulse conversation per tick to rewrite files
+nothing had changed.
+
+### Merging ledgers a split left behind
+
+The tables start empty; nothing backfills them. A deploy that ran pulse before this change has one
+file per carrier, and the way to make them one record is to read each file and record its rows:
+
+```bash
+cat pulse/<series>.covered.jsonl                                   # the deploy-home copy
+cat workspaces/<conversation-id>/pulse/<series>.covered.jsonl      # the sandbox copy
+```
+
+then call `pulse_record_edition` with the rows of each. **Importing the same file twice is safe** —
+the natural key means a row already present is not a second row — so the two can be imported in
+either order, and an interrupted import can simply be repeated.
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra --slug acme-1-0
@@ -177,14 +239,19 @@ series in either store.
   field returns. This is a missing key, not a business the member never stated — `field-pulse`'s
   step 1a only asks when the opening line *also* carries no business sentence; an unavailable index
   next to a populated opening line is this trap, not that one.
-- **A turn with no carrier writes no ledger, and says so only in the brief.** The file tools are
-  the client's, not an extension's: no manifest in the active set declares one, so a turn driven
-  straight at the `ufo` surface over HTTP — no client attached, no `--remote` sandbox — has no
-  filesystem at all. It still gathers, ranks and writes a full edition; it just cannot record what
-  it published. The edition opens with a line about not being able to save files and the ledger is
-  never created, so the next edition reads an empty ledger and repeats the last one. Drive a pulse
-  through the `ufo` client or a `--remote` sandbox; a brief that looks right is not evidence the
-  series does.
+- **A workspace-relative path is not one place.** `bash`, `read` and `write` are core builtins
+  (`host/tools/builtins.py`), present for every turn including a scheduled fire, and
+  `ToolContext.sandbox` is non-optional — so a fire *can* run a script, and does. What differs is
+  where it starts, and `conversation.sandbox_handle` is what says: `client:<cwd>` runs on the
+  member's machine in that directory, anything else under `workspace_root/<conversation_id>`. A
+  store at `pulse/<series>.jsonl` is a different file in each. An earlier version of this README
+  said the opposite — that a fire had "no filesystem at all" — and that claim was wrong and cost a
+  whole design built on it. `select id, sandbox_handle from conversation` is the check that settles
+  it.
+- **The tables are per workspace, the files are per conversation.** `pulse_recall` is the record;
+  a file is a copy of it that lands where the series is being worked on. Moving a brief to a new
+  conversation moves the file with it on the next projection and moves no rows, which is the
+  intended behaviour and worth knowing before wondering where the old file went.
 - **An armed gather keeps the rule it was set up under.** `task-scheduling` stores `field-pulse`'s
   manifest prompt on the scheduled row at apply time; editing the skill changes only what the next
   setup writes, not a row already armed. Re-applying `<field>-gather` upserts it in place and

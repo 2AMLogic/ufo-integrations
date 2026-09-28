@@ -30,20 +30,16 @@ search under another name.
 | --- | --- |
 | Opens | The most recent edition in the covered ledger |
 | Closes | Today |
-| Reaches back at most | Fourteen days, the span `seen.py` calls a lead live |
+| Reaches back at most | Fourteen days, the span `pulse_recall` calls a lead live |
 | Overridden by | A window the member named in the ask |
 
 With no edition in the ledger yet, the pool's own fourteen days are the window. Both bounds are
 read rather than assumed:
 
-```bash
-python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
-python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series <series> --within-days 14
-```
-
-Run both from the workspace root, which is where a command starts: the pool and the ledger are
-workspace-relative, so a run that changes directory first reads two empty files and publishes an
-edition with nothing behind it.
+Call `pulse_recall` with the series. One call answers both: the leads seen in the last fourteen
+days, and every story the last five editions carried. Use it rather than the scripts — a script
+reads whichever copy of the ledger happens to sit in the directory this turn started in, and that
+is one tree's half of the series, not the series.
 
 The reply states the window as a span, and says how much of it the pool holds rows from.
 
@@ -89,11 +85,12 @@ Record the published stories with `brief-continuity` once the edition is out. Ev
 eligibility read is against these rows, and a lead the pool keeps but no edition carried stays a
 lead — the two stores answer different questions and a row in the wrong one loses the answer.
 
-**If a write fails, say so in the brief.** Writing the report file and recording the ledger both need
-a workspace a command can write to, and not every run has one: a turn with no client attached has no
-file tools at all. Such a run reads, ranks and replies perfectly well, so the edition looks finished
-while the ledger learned nothing — and the next edition, reading a ledger missing this one, publishes
-it again. A series quietly stops being a series.
+**If a write fails, say so in the brief.** Writing the report file needs a workspace a command can
+write to, and a turn bound to a terminal that has since disconnected has none — it reads, ranks and
+replies perfectly well, so the edition looks finished while the file was never written. Recording
+the ledger is no longer in that category: `pulse_record_edition` writes to the record, which every
+turn reaches. Name the file that did not land, and do not describe the ledger as lost when it was
+not.
 
 So a failed write is part of the brief, not a detail to swallow: name what could not be written and
 that continuity is broken for this edition. An edition that could not record itself is worth more
@@ -118,8 +115,9 @@ state held, which is the count it requires and the ambiguity it refuses.
     Read: releases on all 6 gathers (14 items), papers on 4 of 6 gathers (5 items).
     Not read: the filings index rate-limited 5 of the 6 gathers.
 
-A gather can leave no coverage row at all — a fire with no client attached has no file tools, and a
-window can reach back past the gathers a series has states from. There the pool is the only witness,
+A gather can leave no coverage row at all — that store is still a workspace file, so a gather whose
+rows went to a different tree leaves none visible here, and a window can reach back past the gathers
+a series has states from. There the pool is the only witness,
 and it records sightings rather than reads: a source with rows was read at least once, and a source
 with none may have been read and empty or never reached. Say which store answered, because the two
 support different claims — a recorded state names the failure, and the pool's silence supports only

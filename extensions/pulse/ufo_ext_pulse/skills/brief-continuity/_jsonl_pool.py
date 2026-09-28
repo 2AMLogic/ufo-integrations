@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def dated_path(directory: str, series: str, suffix: str) -> Path:
@@ -23,7 +23,7 @@ def dated_path(directory: str, series: str, suffix: str) -> Path:
     `suffix` carries the store's own extension (`seen.jsonl`, `covered.jsonl`) so the two stores
     never collide on the same series name.
     """
-    if not SLUG.match(series):
+    if not SLUG.fullmatch(series):
         raise ValueError(f"series must be a lowercase hyphenated slug, got {series!r}")
     return Path(directory) / f"{series}.{suffix}"
 

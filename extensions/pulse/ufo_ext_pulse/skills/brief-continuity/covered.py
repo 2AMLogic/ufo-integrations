@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _jsonl_pool import SLUG, append_row, dated_path  # noqa: E402
 from _jsonl_pool import read_rows as _read_rows  # noqa: E402
 
-EDITION = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+EDITION = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 LEDGER_DIR = "pulse"
 DEFAULT_EDITIONS = 5
 
@@ -51,9 +51,9 @@ def recent_rows(series: str, editions: int) -> list[dict]:
 
 
 def record(series: str, edition: str, slug: str, title: str, url: str) -> Path:
-    if not EDITION.match(edition):
+    if not EDITION.fullmatch(edition):
         raise ValueError(f"edition must be YYYY-MM-DD, got {edition!r}")
-    if not SLUG.match(slug):
+    if not SLUG.fullmatch(slug):
         raise ValueError(f"slug must be a lowercase hyphenated slug, got {slug!r}")
     path = ledger_path(series)
     row = {"edition": edition, "slug": slug, "title": title, "url": url}

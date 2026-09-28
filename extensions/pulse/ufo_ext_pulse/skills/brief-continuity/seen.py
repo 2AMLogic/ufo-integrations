@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _jsonl_pool import SLUG, append_row, dated_path  # noqa: E402
 from _jsonl_pool import read_rows as _read_rows  # noqa: E402
 
-SEEN_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+SEEN_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 POOL_DIR = "pulse"
 DEFAULT_WITHIN_DAYS = 14
 
@@ -52,9 +52,9 @@ def read_rows(series: str) -> list[dict]:
 
 
 def record(series: str, seen: str, slug: str, title: str, url: str, source: str) -> Path:
-    if not SEEN_DATE.match(seen):
+    if not SEEN_DATE.fullmatch(seen):
         raise ValueError(f"seen must be YYYY-MM-DD, got {seen!r}")
-    if not SLUG.match(slug):
+    if not SLUG.fullmatch(slug):
         raise ValueError(f"slug must be a lowercase hyphenated slug, got {slug!r}")
     # The url is the best key a row carries for reconciling two sightings of one story later --
     # better than title, which legitimately drifts between sightings, and than source, which is too
