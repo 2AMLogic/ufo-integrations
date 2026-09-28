@@ -643,3 +643,106 @@ def test_device_keys_must_be_self_signed() -> None:
         "keys": {**keys["keys"], "curve25519:D": vz.Account().curve25519_key.to_base64()},
     }
     assert crypto.verified_device(ALICE, "D", tampered) is None
+
+
+def test_a_sealed_file_round_trips() -> None:
+    """The bytes a room gets back are the bytes that went in, and nothing about the plaintext is
+    left in the event: the `mxc://` names ciphertext, and the key that opens it travels inside the
+    Megolm payload rather than beside it."""
+    data = b"the quarterly numbers, and a picture of a cat" * 40
+    ciphertext, sealed = crypto.seal_file(data)
+    assert ciphertext != data
+    assert data not in ciphertext
+    assert sealed["v"] == crypto.FILE_VERSION
+    assert sealed["key"]["alg"] == crypto.FILE_ALGORITHM
+    assert sealed["key"]["kty"] == "oct"
+    assert crypto.open_file(sealed, ciphertext) == data
+
+
+def test_each_file_is_sealed_under_its_own_key_and_counter() -> None:
+    """AES-CTR reuses a keystream whenever the key and counter repeat, and two files sealed under
+    one pair are readable from their XOR without either key. So the pair is fresh per file, and the
+    same bytes sealed twice share no ciphertext."""
+    data = b"identical content"
+    first, one = crypto.seal_file(data)
+    second, two = crypto.seal_file(data)
+    assert one["key"]["k"] != two["key"]["k"]
+    assert one["iv"] != two["iv"]
+    assert first != second
+
+
+def test_the_counter_half_of_the_iv_starts_at_zero() -> None:
+    """The low half of the IV is the block counter and the high half is the nonce.
+
+    The literals are written out rather than taken from the constants under test: sliced by its own
+    `FILE_COUNTER_BYTES`, this holds for any value of it, and a four-byte counter is both off-spec
+    and a 32 GiB ceiling before it carries into the nonce."""
+    assert crypto.FILE_IV_BYTES == 16
+    assert crypto.FILE_COUNTER_BYTES == 8
+    _, sealed = crypto.seal_file(b"x")
+    iv = crypto.decode(sealed["iv"])
+    assert len(iv) == 16
+    assert iv[8:] == bytes(8)
+    assert iv[:8] != bytes(8)
+
+
+def test_a_hash_that_does_not_match_is_never_decrypted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the media repository answers with is not yet what the sender sealed.
+
+    The cipher is replaced with a failure, so this asserts the ordering rather than the raise: a
+    test that only catches `FileHashMismatch` passes just as well when the decryption happens first
+    and the check happens after, which is the arrangement the bold claim rules out."""
+    ciphertext, sealed = crypto.seal_file(b"the original file")
+    tampered = bytes([ciphertext[0] ^ 0xFF]) + ciphertext[1:]
+    monkeypatch.setattr(
+        crypto,
+        "_stream",
+        lambda *_: pytest.fail("the ciphertext reached the cipher before the hash was checked"),
+    )
+    for sealed_file, body in (
+        (sealed, tampered),
+        ({**sealed, "hashes": {}}, ciphertext),
+        ({**sealed, "hashes": None}, ciphertext),
+        ({**sealed, "hashes": "deadbeef"}, ciphertext),
+        ({**sealed, "key": {**sealed["key"], "alg": "A128CTR"}}, ciphertext),
+        ({**sealed, "key": {**sealed["key"], "k": None}}, ciphertext),
+        ({k: v for k, v in sealed.items() if k != "iv"}, ciphertext),
+    ):
+        with pytest.raises(crypto.FileHashMismatch):
+            crypto.open_file(sealed_file, body)
+
+
+def test_a_malformed_file_is_a_dropped_file_and_never_an_unhandled_error() -> None:
+    """Every field is a hostile sender's to choose, the whole object included.
+
+    It arrives as an event's `file`, so `{"msgtype": "m.image", "file": "gotcha"}` reaches this with
+    a string. A reader drops a file by catching `FileHashMismatch`, so a shape that escapes as
+    `AttributeError` or `KeyError` turns a dropped attachment into an unhandled exception in
+    whoever is reading the room."""
+    ciphertext, sealed = crypto.seal_file(b"a file")
+    for broken in (
+        "gotcha",
+        None,
+        42,
+        [],
+        {},
+        {**sealed, "hashes": None},
+        {**sealed, "hashes": "deadbeef"},
+        {**sealed, "hashes": {"sha256": "not base64 !!"}},
+        {**sealed, "key": None},
+        {**sealed, "key": {**sealed["key"], "k": None}},
+        {**sealed, "key": {**sealed["key"], "k": "c2hvcnQ="}},
+        {**sealed, "iv": crypto.encode(b"12345678")},
+        {k: v for k, v in sealed.items() if k != "iv"},
+    ):
+        with pytest.raises(crypto.FileHashMismatch):
+            crypto.open_file(broken, ciphertext)
+
+
+def test_a_file_naming_another_algorithm_is_refused() -> None:
+    """The algorithm is the sender's claim about what it sealed with. A file naming something else
+    is not opened under `A256CTR` on the assumption it meant that."""
+    ciphertext, sealed = crypto.seal_file(b"a file")
+    other = {**sealed, "key": {**sealed["key"], "alg": "A128CTR"}}
+    with pytest.raises(crypto.FileHashMismatch):
+        crypto.open_file(other, ciphertext)
