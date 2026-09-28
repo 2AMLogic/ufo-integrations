@@ -16,9 +16,10 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from ufo_ext_matrix.events import THREAD_RELATION
+from ufo_ext_matrix.events import REPLACE_RELATION, TEXT_MSGTYPE, THREAD_RELATION
 
 HTML_FORMAT = "org.matrix.custom.html"
+EDIT_PREFIX = "* "
 EVENT_LIMIT_BYTES = 65536
 PART_BUDGET_BYTES = 4096
 FENCE = "```"
@@ -74,6 +75,18 @@ def message_content(
     if relates_to:
         content["m.relates_to"] = dict(relates_to)
     return content
+
+
+def edit_content(text: str, event_id: str) -> dict[str, Any]:
+    """One message rewritten in place: the new words as `m.new_content`, and the same words marked
+    as an edit in the fallback a client that shows no edits renders instead."""
+    written = message_content(text, TEXT_MSGTYPE)
+    return {
+        **written,
+        "body": EDIT_PREFIX + written["body"],
+        "m.new_content": written,
+        "m.relates_to": {"rel_type": REPLACE_RELATION, "event_id": event_id},
+    }
 
 
 def file_content(

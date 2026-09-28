@@ -6,7 +6,8 @@ the people in it are members.
 The surface is durable, like Slack's. A bot user reads its rooms over the client-server `/sync`
 stream, and a turn answers in the room it came from: its reply as rich text under the message it
 answers, the files it shared as messages of their own, and the words it marks before it ends as they
-are marked.
+are marked. While it works, the room shows it working; when it ends in a question, the room answers
+by typing a label or tapping a poll.
 
 ## What it adds
 
@@ -16,13 +17,23 @@ turn:
 | Message | Turn |
 | --- | --- |
 | From a sender who resolves to no member | None, and no reply — unless it is a code proving that sender's MXID |
-| Mentions the bot, or is sent in a direct room (the bot and one other) | Founded |
+| Addressed to the bot, or sent in a direct room (the bot and one other) | Founded |
 | Unaddressed, in a room that already holds a conversation | Founded only if `ambient_reply_wanted` says the agent is wanted |
 | Unaddressed, in a room with no conversation yet | None |
 | The bot's own echo, an `m.notice`, an edit (`m.replace`), a redaction, a redacted or encrypted event | None |
 
+A message is addressed to the bot four ways, and each names the bot whole, so a mention of `@ufobot`
+addresses nobody named `@ufo`:
+
+| Addressed by | Read from |
+| --- | --- |
+| An intentional mention | `m.mentions.user_ids` |
+| A pill a client rendered instead | `https://matrix.to/#/<bot mxid>` in `formatted_body` |
+| The bot's MXID or display name in the words | `body`, whatever its case |
+| A reply to something the bot said | `m.in_reply_to` naming a message of the bot's |
+
 Unaddressed lines the agent did not take part in ride the next admitted message as room context, and
-the recent ones are the evidence the ambient decision reads.
+the recent 20 are the evidence the ambient decision reads.
 
 | Matrix | ufo |
 | --- | --- |
@@ -37,6 +48,10 @@ the recent ones are the evidence the ambient decision reads.
 | A shared file | `POST /_matrix/media/v3/upload`, then `m.image` / `m.video` / `m.audio` / `m.file` under the reply |
 | A detailed write-up | A link in the reply to the portal, never an upload |
 | Words marked mid-turn | One message each, under `ufo-say-{reply_id}` |
+| A terminal `ask_user` | The words, then its questions as a labelled list in a message of their own under `ufo-question-{turn_id}`, and an `m.poll.start` where one question takes one choice |
+| A reply of labels, or a tap on the poll | The options it names, admitted under that event's id |
+| The answer that landed | An `m.replace` of the question's own message, marking what was chosen, under `ufo-answered-{event_id}` |
+| A turn that is running | `POST .../receipt/m.read/{eventId}`, then `PUT .../typing/{userId}` refreshed until the turn ends |
 
 A direct room is a room like any other, so a room's audience only ever narrows: once anyone who is
 not a member joins, the room is foreign for good, whoever leaves after.
@@ -45,8 +60,8 @@ The transaction id is the turn's, so a retried delivery is the same transaction 
 answers it with the event it already sent. Each file is sent under `ufo-file-{turn_id}-{artifact_id}`
 and each mid-turn reply under `ufo-say-{reply_id}`, so a delivery recovered after a crash re-sends
 none of them. A turn whose whole answer is silence sends nothing. A question is written out with
-numbered options; a connect or credential handoff points at the workspace, since a room carries
-neither. A cancelled turn posts the reason core gave — an archived conversation, a removed seat — or,
+numbered options, apart from the words, and `matrix_ext_asking` records which message carries it; a
+connect or credential handoff points at the workspace, since a room carries neither. A cancelled turn posts the reason core gave — an archived conversation, a removed seat — or,
 with none, that it was stopped.
 
 A whole event weighs at most 65536 bytes and a reply carries its words twice, so a reply over 4096
@@ -55,7 +70,12 @@ The first part's event id is the reference core records, and every part relates 
 
 Which room message a turn answers is stored per turn in `matrix_ext_answering`: a writeback names the
 turn, the room, and the member, so admission records the event id every later message of that turn
-relates to.
+relates to. An answer is a message like any other, so the turn it founds answers the answer, and its
+reply lands under that.
+
+The typing indicator runs off `tail(turn_id)` and stops on the turn's terminal or parked frame. The
+`PUT` carries the homeserver's own timeout and is refreshed under it, so a stream that drops leaves
+the indicator to the server's clock rather than leaving a room typing.
 
 The `/sync` position is stored per workspace in `matrix_ext_since`, a table the extension's
 migration owns, after each batch is delivered. A restart resumes from it; a batch replayed after a
@@ -90,6 +110,21 @@ An admin unlinks an MXID with `matrix_unlink_account`. From then on it speaks fo
 domain-matched MXID included — until someone proves it again with a code. Claims and unlinks live in
 `matrix_ext_claim` and `matrix_ext_link`, the extension's own tables; the link itself is core's.
 
+## How a room answers a question
+
+A room has no buttons, so a question is a numbered list, and a reply that is nothing but labels is the
+answer. Anything else is words — which is how a member answers a question that asked for words, and
+how they say something that merely starts with a number.
+
+| Ask | Labels | Answered by |
+| --- | --- | --- |
+| One question | `1`, `2` | `2`, or `1, 3` where the question takes several |
+| Up to four questions | `1a`, `2b` | `1a 2b`, one label per question |
+
+A question that takes one choice keeps the first label its reply names. `answerable_question` is the
+only gate on who may answer what: a question already answered, one past the ask's own range, and one
+put to another member are each refused there, and the reply is admitted as the words it is.
+
 ## Install
 
 ```bash
@@ -123,6 +158,20 @@ workspace's to know.
 
 ## Traps
 
+- **A reply of labels is an answer, and one label with a word is not.** `1` answers; `1 more thing`
+  is words. A member who means the first option and says so in a sentence is heard as a sentence,
+  which is the reading that never puts words the agent invented in their mouth.
+- **A question put to one member does not silence the others.** Another member's `1` is admitted as
+  the words it is, the question stays open, and only the member it names answers it.
+- **Only the question is rewritten.** The mark lands on the message `post` recorded as the turn's
+  question, whatever the answer replied to — the words the question came with, or any older line of
+  the bot's, stay as the room read them. A question too long for one event is answered and left
+  unmarked, since rewriting its first part would strand the rest.
+- **A poll carries one question and one choice.** An ask of several questions, or one that takes
+  several answers, reaches the room as the labelled list alone.
+- **Typing is not delivery.** The hub is lossy, so a frame that never arrives costs the room an
+  indicator and never the turn's answer — and a reporter the stream cancels leaves the indicator to
+  the homeserver's timeout rather than sending a last stop.
 - **An unlisted bot is bound but deaf.** The listener runs only the MXIDs `UFO_MATRIX_BOTS` names;
   binding one the deploy does not list admits nothing until it does.
 - **Encrypted rooms are silent.** The surface reads unencrypted rooms only. In an encrypted room it
@@ -172,11 +221,12 @@ workspace's to know.
 pytest extensions/matrix
 ```
 
-`test_matrix_contracts.py` needs only `pytest`: the import gate, which events may found a turn, and
-the HTML, splitting, and relations the surface writes. `test_matrix_surface.py` drives the listener
-and the three delivery handlers against a fake homeserver, `test_matrix_linking.py` drives a claim
-through its proof the same way, and `test_matrix_registry.py` loads the installed entry point
-through ufo's loader and applies the migrations; all three skip where `ufo` is absent.
+`test_matrix_contracts.py` needs only `pytest`: the import gate, which events may found a turn, who a
+line addresses, the labels a question is answered by, and the HTML, splitting, and relations the
+surface writes. `test_matrix_surface.py` drives the listener and the three delivery handlers against
+a fake homeserver, `test_matrix_linking.py` drives a claim through its proof the same way, and
+`test_matrix_registry.py` loads the installed entry point through ufo's loader and applies the
+migrations; all three skip where `ufo` is absent.
 
 `test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
 collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite

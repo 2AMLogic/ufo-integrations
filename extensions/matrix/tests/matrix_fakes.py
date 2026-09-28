@@ -3,7 +3,10 @@ record what the surface asked core to do. The extension's own tables are real: a
 `transaction` yields an in-memory SQLite connection holding them, so where a turn stands, which
 message it answers, and what a member proved are read back the way a deploy reads them. So is the
 audience rule: `conversation_for` narrows through core's own `narrow_audience`, and raises where
-core raises."""
+core raises.
+
+A question is real too: `answerable_question` answers the ask the workspace holds for exactly the
+indexes it left open, to exactly the member it names, so the surface's gate is core's gate."""
 
 import asyncio
 import functools
@@ -26,8 +29,17 @@ from ufo.runtime.turns.audience import (
     parse_audience,
 )
 from ufo.sdk.audience import Audience
-from ufo.sdk.surfaces import Admitted, AmbientMessage, CredentialSlotUnset, SharedArtifact
+from ufo.sdk.hub import Activity, LiveFrame, Terminal
+from ufo.sdk.surfaces import (
+    Admitted,
+    AmbientMessage,
+    AskUserInput,
+    CredentialSlotUnset,
+    SharedArtifact,
+    TerminalFrame,
+)
 from ufo_ext_matrix.answering import ANSWERING_TABLE
+from ufo_ext_matrix.asking import ASKING_TABLE
 from ufo_ext_matrix.client import MEDIA_PATH
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
@@ -55,6 +67,39 @@ def text(event_id: str, sender: str, body: str, **content: object) -> dict[str, 
 
 def mention(event_id: str, sender: str, body: str) -> dict[str, Any]:
     return text(event_id, sender, body, **{"m.mentions": {"user_ids": [BOT]}})
+
+
+def reply(event_id: str, sender: str, body: str, to: str) -> dict[str, Any]:
+    """One message sent as a rich reply to another, which is how a member answers a question."""
+    return text(event_id, sender, body, **{"m.relates_to": {"m.in_reply_to": {"event_id": to}}})
+
+
+def tap(event_id: str, sender: str, poll_id: str, *answers: str) -> dict[str, Any]:
+    """One member's tap on a poll, as their client sends it."""
+    return {
+        "type": "m.poll.response",
+        "event_id": event_id,
+        "sender": sender,
+        "content": {
+            "m.relates_to": {"rel_type": "m.reference", "event_id": poll_id},
+            "m.poll.response": {"answers": list(answers)},
+        },
+    }
+
+
+def asking(title: str, *questions: dict[str, Any], target: UUID | None = None) -> AskUserInput:
+    """One `ask_user` as a terminal frame carries it."""
+    return AskUserInput.model_validate(
+        {"title": title, "questions": list(questions), "target_member_id": target}
+    )
+
+
+def question(text_: str, *options: str, multi_select: bool = False) -> dict[str, Any]:
+    return {
+        "question": text_,
+        "options": [{"label": option} for option in options],
+        "multi_select": multi_select,
+    }
 
 
 def batch(token: str, rooms: Mapping[str, list[dict[str, Any]]] | None = None) -> dict[str, Any]:
@@ -85,6 +130,10 @@ class Homeserver:
     uploaded: list[tuple[str, bytes]] = field(default_factory=list)
     refused_uploads: set[str] = field(default_factory=set)
     limited_uploads: set[str] = field(default_factory=set)
+    refused_sends: set[str] = field(default_factory=set)
+    typing: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
+    receipts: list[tuple[str, str]] = field(default_factory=list)
+    display_name: str = "ufo"
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -116,10 +165,23 @@ class Homeserver:
             case "GET", ["rooms", room, "messages"]:
                 start = request.url.params.get("from", "")
                 return httpx.Response(200, json=self.history.get((room, start), {"chunk": []}))
-            case "PUT", ["rooms", room, "send", "m.room.message", txn]:
+            case "GET", ["profile", _user, "displayname"]:
+                return httpx.Response(200, json={"displayname": self.display_name})
+            case "PUT", ["rooms", room, "typing", user]:
+                self.typing.append((room, user, json.loads(request.content)))
+                return httpx.Response(200, json={})
+            case "POST", ["rooms", room, "receipt", "m.read", event_id]:
+                self.receipts.append((room, event_id))
+                return httpx.Response(200, json={})
+            case "PUT", ["rooms", room, "send", event_type, txn] if (
+                event_type in self.refused_sends
+            ):
+                return httpx.Response(403, json={"errcode": "M_FORBIDDEN"})
+            case "PUT", ["rooms", room, "send", event_type, txn]:
                 if txn not in self.sent:
                     self.sent[txn] = {
                         "room": room,
+                        "type": event_type,
                         "event_id": f"$sent{len(self.sent)}",
                         **json.loads(request.content),
                     }
@@ -142,6 +204,18 @@ class Homeserver:
         """Every message sent under a transaction id starting `prefix`, in the order it was sent."""
         return [sent for txn, sent in self.sent.items() if txn.startswith(prefix)]
 
+    def edits(self) -> list[dict[str, Any]]:
+        """Every event sent as an edit of another, in the order it was sent."""
+        return [
+            sent
+            for sent in self.sent.values()
+            if sent.get("m.relates_to", {}).get("rel_type") == "m.replace"
+        ]
+
+    def typing_said(self) -> list[bool]:
+        """Whether each typing call said the bot was typing, in the order the calls were made."""
+        return [bool(body["typing"]) for _room, _user, body in self.typing]
+
     def since_asked(self) -> list[str | None]:
         return [r.url.params.get("since") for r in self.requests if r.url.path.endswith("/sync")]
 
@@ -150,7 +224,7 @@ async def extension_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SINCE_TABLE, ANSWERING_TABLE, CLAIM_TABLE, LINK_TABLE):
+    for table in (SINCE_TABLE, ANSWERING_TABLE, ASKING_TABLE, CLAIM_TABLE, LINK_TABLE):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
@@ -194,6 +268,16 @@ class Workspace:
     lost: dict[str, BaseException] = field(default_factory=dict)
     blob: Blob = field(default_factory=Blob)
     portal: bool = True
+    question: AskUserInput | None = None
+    # Which question indexes are still open, None meaning all of them. Core keeps this record behind
+    # `answerable_question` and closes an index when an answer lands; here a test sets it outright,
+    # and an admitted answer closes nothing, so a redelivery is gated by the admission key alone.
+    open_questions: frozenset[int] | None = None
+    frames: tuple[LiveFrame, ...] = (Activity(text="reading the week"),)
+    endless: bool = False
+    tailed: list[UUID] = field(default_factory=list)
+    read: list[str] = field(default_factory=list)
+    refused: list[tuple[int, UUID]] = field(default_factory=list)
 
     async def credential(self, slot: str) -> str:
         if slot not in self.credentials:
@@ -290,6 +374,55 @@ class Workspace:
         )
         return Admitted(turn_id=turn_id, opened_run=True)
 
+    async def latest_turn(self, conversation_id: UUID) -> UUID | None:
+        """The last turn admitted to a conversation, which is the one that may hold a question."""
+        for entry in reversed(self.admitted):
+            if entry["conversation_id"] == conversation_id:
+                return UUID(str(entry["turn_id"]))
+        return None
+
+    async def answerable_question(
+        self, conversation_id: UUID, turn_id: UUID, question_index: int, member_id: UUID
+    ) -> AskUserInput | None:
+        """The ask this workspace holds, where that turn asked it, the index is one it left open, and
+        the member is the one it was put to."""
+        if self.question is None or await self.latest_turn(conversation_id) != turn_id:
+            return None
+        open_indexes = self.open_questions
+        if open_indexes is None:
+            open_indexes = frozenset(range(len(self.question.questions)))
+        target = self.question.target_member_id
+        if question_index not in open_indexes or target not in (None, member_id):
+            self.refused.append((question_index, member_id))
+            return None
+        return self.question
+
+    async def admitted_body(self, idempotency_key: str) -> str | None:
+        for entry in self.admitted:
+            if entry["key"] == idempotency_key:
+                return str(entry["body"])
+        return None
+
+    @asynccontextmanager
+    async def tail(self, turn_id: UUID, since: str = "") -> AsyncIterator[Any]:
+        """One turn's frames, each recorded as it is read, so a reader that stops at the terminal
+        frame is told apart from one the end of the script stopped. `endless` is a turn still
+        running: the stream holds after its script, the way a live tail does."""
+        self.tailed.append(turn_id)
+
+        async def frames() -> AsyncIterator[tuple[str, LiveFrame]]:
+            for cursor, frame in enumerate(self.frames):
+                self.read.append(str(cursor))
+                yield str(cursor), frame
+            if self.endless:
+                await asyncio.Event().wait()
+
+        yield frames()
+
+
+def terminal_frame(text_: str = "done") -> Terminal:
+    return Terminal(frame=TerminalFrame(status="done", text=text_))
+
 
 @dataclass
 class Listener:
@@ -307,6 +440,14 @@ class Listener:
         yield self.workspace_ctx if installation_id in self.bound else None
 
 
+async def settle() -> None:
+    """End every reporter a test left running, so none of them outlives the database it reads."""
+    running = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in running:
+        task.cancel()
+    await asyncio.gather(*running, return_exceptions=True)
+
+
 def on_loop(test: Callable[..., Awaitable[None]]) -> Callable[..., None]:
     """Run an async test on its own loop with a fresh `Workspace` passed as `workspace`, so the
     suite needs no async pytest plugin and every engine lives and dies on the loop that made it."""
@@ -319,6 +460,7 @@ def on_loop(test: Callable[..., Awaitable[None]]) -> Callable[..., None]:
             try:
                 await test(*args, workspace=Workspace(engine=engine), **kwargs)
             finally:
+                await settle()
                 await engine.dispose()
 
         asyncio.run(scenario())
