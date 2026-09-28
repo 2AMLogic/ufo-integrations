@@ -83,9 +83,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v6
-      - name: Install ufo and run every test
+      - name: Install ufo and the crypto extra, and run every test
         run: |
-          uv run --python 3.12 \
+          uv run --python 3.12 --extra matrix-e2ee \
             --with pytest --with pyyaml --with pytest-xdist \
             --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
             pytest extensions -v -rs --junitxml=pytest-report.xml
@@ -106,4 +106,65 @@ jobs:
               print("::error::the registry test did not run")
               sys.exit(1)
           print(f"{len(cases)} tests ran, {len(registry)} of them against the registry, none skipped")
+          PY
+
+  without-the-crypto-extra:
+    name: against ufo without the crypto extra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      # ufo declares `Requires-Dist: cryptography>=49.0.0`, so `cryptography` is present in this lane
+      # whatever this project asks for, and `vodozemac` alone is what the extra adds here. A lane that
+      # quietly held both would pass every check below while testing nothing it claims to.
+      - name: vodozemac is absent here and cryptography is present
+        run: |
+          uv run --python 3.12 \
+            --with pytest --with pyyaml --with pytest-xdist \
+            --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
+            python - <<'PY'
+          import sys
+          from importlib.util import find_spec
+
+          if find_spec("vodozemac") is not None:
+              print("::error::vodozemac is installed, so this is not the lane without the extra")
+              sys.exit(1)
+          if find_spec("cryptography") is None:
+              print("::error::cryptography is absent, so ufo is not installed and neither is the lane")
+              sys.exit(1)
+          print("vodozemac absent, cryptography present: the extra is what is missing, and only it")
+          PY
+      - name: Install ufo alone and run every test
+        run: |
+          uv run --python 3.12 \
+            --with pytest --with pyyaml --with pytest-xdist \
+            --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
+            pytest extensions -v -rs --junitxml=pytest-report.xml
+      - name: Only test_matrix_crypto skipped, and it did skip
+        run: |
+          python3 - pytest-report.xml <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          # A module-level `pytest.importorskip` skips collection, and junitxml reports that as
+          # `classname=''` with the module's dotted path in `name` — the opposite placement from a
+          # skipped test function, which names its module in `classname`. Reading the pair as one
+          # string is what lets this gate bless the one skip it exists for; matching `classname`
+          # alone called that skip a stray and turned the step red.
+          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
+          named = [
+              f"{c.get('classname', '')}::{c.get('name', '')}"
+              for c in cases
+              if c.find("skipped") is not None
+          ]
+          stray = [where for where in named if "test_matrix_crypto" not in where]
+          if stray:
+              print("::error::the crypto extra's absence may silence only the crypto tests")
+              print("\n".join(stray))
+              sys.exit(1)
+          if not named:
+              print("::error::the crypto tests did not skip, so the extra was installed after all")
+              sys.exit(1)
+          print(f"{len(cases)} tests ran, {len(named)} skipped, all of test_matrix_crypto:")
+          print("\n".join(named))
           PY

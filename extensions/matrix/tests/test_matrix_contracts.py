@@ -16,6 +16,7 @@ import pytest
 import yaml
 
 from ufo_ext_matrix.addressed import Bot, addresses
+from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
@@ -74,7 +75,9 @@ SKILLS_ROOT = PACKAGE / "skills"
 SKILL_NAMES = ("matrix-setup",)
 DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
+E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
+PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -110,12 +113,44 @@ def imported_modules(path: Path) -> list[str]:
 )
 def test_imports_only_the_sdk(path: Path) -> None:
     """Upstream gates extensions on `ufo.sdk`; a reach past it breaks on the next release."""
+    allowed = sys.stdlib_module_names | THIRD_PARTY | E2EE_THIRD_PARTY | {"ufo_ext_matrix"}
     for name in imported_modules(path):
         top = name.split(".")[0]
         if top == "ufo":
             assert name == "ufo.sdk" or name.startswith("ufo.sdk."), name
         else:
-            assert top in sys.stdlib_module_names | THIRD_PARTY | {"ufo_ext_matrix"}, name
+            assert top in allowed, name
+
+
+def guarded_modules(tree: ast.AST) -> set[str]:
+    """The top-level names imported inside a `try` that handles `ImportError`."""
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Try):
+            continue
+        if not any(
+            isinstance(h.type, ast.Name) and h.type.id == "ImportError" for h in node.handlers
+        ):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Import):
+                found |= {alias.name.split(".")[0] for alias in inner.names}
+            elif isinstance(inner, ast.ImportFrom) and inner.module:
+                found.add(inner.module.split(".")[0])
+    return found
+
+
+@pytest.mark.parametrize(
+    "path", sorted(PACKAGE.rglob("*.py")), ids=lambda p: str(p.relative_to(PACKAGE))
+)
+def test_the_e2ee_libraries_are_imported_under_a_guard(path: Path) -> None:
+    """`vodozemac` and `cryptography` ship in the `matrix-e2ee` extra, so a module that reads one
+    reads it inside a `try`/`except ImportError` and the package imports without either."""
+    guarded = guarded_modules(ast.parse(path.read_text()))
+    for name in imported_modules(path):
+        top = name.split(".")[0]
+        if top in E2EE_THIRD_PARTY:
+            assert top in guarded, f"{path.name} imports {top} outside an ImportError guard"
 
 
 @pytest.mark.parametrize("module", PURE)
@@ -132,6 +167,35 @@ def test_the_package_declares_its_entry_point_and_client() -> None:
     project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
     assert project["entry-points"]["ufo.extension"]["matrix"] == "ufo_ext_matrix.manifest:manifest"
     assert any(dep.startswith("httpx") for dep in project["dependencies"])
+
+
+def test_the_e2ee_libraries_are_an_extra_and_not_baseline() -> None:
+    """One distribution ships `pulse` beside this surface, so an install for the skill pack alone
+    pulls no native crypto: the two libraries are the `matrix-e2ee` extra's and nothing else's."""
+    project = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    extra = project["optional-dependencies"][EXTRA]
+    assert {dep.split(">")[0] for dep in extra} == set(E2EE_THIRD_PARTY)
+    for dep in extra:
+        assert not any(base.startswith(dep.split(">")[0]) for base in project["dependencies"]), dep
+
+
+def test_only_one_seam_puts_a_message_on_the_wire() -> None:
+    """`MatrixSurface.send` is where an event meets `outbound`, so a room that is encrypted takes
+    ciphertext whichever handler is speaking and whatever type it is speaking in — a reply, a shared
+    file's message, a poll, a proof answer, the rewrite that marks an answer. A handler calling the
+    client's own send instead would reach the room in the clear, and nothing in the type system says
+    so — only this."""
+    tree = ast.parse((PACKAGE / "surface.py").read_text())
+    callers = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr in ("send_message", "send_event")
+    }
+    assert callers == {"send"}, f"a message leaves outside the seam, from {sorted(callers)}"
 
 
 def test_deploy_keys_are_bare_names_core_prefixes() -> None:
@@ -165,9 +229,15 @@ def test_deploy_keys_are_bare_names_core_prefixes() -> None:
     ids=lambda p: str(p.relative_to(EXTENSION)),
 )
 def test_no_transition_language(path: Path) -> None:
+    """Every file reads as if designed this way from the start.
+
+    `PROTOCOL_NAMES` is struck out before the search, deliberately scoped to a dotted Matrix event
+    or algorithm name — `m.olm.v1.curve25519-aes-sha2` and `m.megolm.v1.aes-sha2` carry a protocol
+    version that is a wire identifier, not transition language. It needs a standalone dotted token,
+    so a bare `v1` in prose still fails; widening it is a visible choice, not a side effect."""
     if path.name == "test_matrix_contracts.py":
         return
-    assert TRANSITION_WORDS.search(path.read_text()) is None
+    assert TRANSITION_WORDS.search(PROTOCOL_NAMES.sub("", path.read_text())) is None
 
 
 def test_readme_matches_the_pack_shape() -> None:
@@ -213,12 +283,30 @@ def test_a_skill_closes_with_traps(name: str) -> None:
     assert "## Traps" in body
 
 
+SILENCES = (
+    '[pack] name = "assistant"',
+    "matrix_store_key",
+    "matrix.crypto_no_keys",
+    "matrix-e2ee",
+    "matrix.crypto_extra_missing",
+    "matrix.crypto_store_locked",
+    "second client",
+    "same user",
+    "never invited",
+)
+
+
 def test_setup_names_every_silence_a_misconfigured_bot_answers_with() -> None:
-    """Each of the four presents only as the agent not answering, so a reader who has one of them and
-    not this list has nothing to go on."""
+    """Every one of these presents only as the agent not answering, so a reader who has one of them
+    and not this list has nothing to go on. An encrypted room is four of them: the store-key slot
+    unfilled, the crypto extra absent from the deploy, the store key changed under a device that had
+    keys, and the bot's token in a second client publishing over its device. The first three name the
+    log line that tells them apart, so a reader with a log has something to match; the fourth has no
+    line of its own, because a second client publishing over the bot's device is the homeserver
+    answering another caller and nothing this bot sees."""
     traps = (SKILLS_ROOT / "matrix-setup" / "SKILL.md").read_text().split("## Traps", 1)[1]
-    for tell in ('[pack] name = "assistant"', "m.room.encrypted", "same user", "never invited"):
-        assert tell in traps
+    for tell in SILENCES:
+        assert tell in traps, tell
 
 
 def test_a_plain_text_message_is_a_member_message() -> None:

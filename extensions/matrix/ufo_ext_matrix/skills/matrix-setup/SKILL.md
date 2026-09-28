@@ -6,8 +6,8 @@ metadata:
 ---
 # Connect Matrix, in chat
 
-Connecting is three things in order: the bot's own account on a homeserver, the two credential slots,
-and the connect action on the `matrix` surface. None of it is a setting a member edits; each step is a
+Connecting is three things in order: the bot's own account on a homeserver, the credential slots, and
+the connect action on the `matrix` surface. None of it is a setting a member edits; each step is a
 turn in this conversation.
 
 ## The bot needs an account of its own
@@ -17,15 +17,20 @@ by. Register a fresh account for it on the homeserver and take that account's ac
 another bot or a person already syncs as is the one setup mistake with no visible symptom — both
 readers receive the same stream, and each treats the other's messages as its own.
 
-## Ask for the two slots, never for the token itself
+## Ask for the slots, never for the token itself
 
-| Slot | Holds |
-| --- | --- |
-| `matrix_homeserver` | The homeserver's base URL, e.g. `https://matrix.example.org` |
-| `matrix_access_token` | The bot account's access token |
+| Slot | Holds | Needed for |
+| --- | --- | --- |
+| `matrix_homeserver` | The homeserver's base URL, e.g. `https://matrix.example.org` | Every room |
+| `matrix_access_token` | The bot account's access token | Every room |
+| `matrix_store_key` | At least 32 random characters, e.g. from `openssl rand -base64 32` | An encrypted room |
 
-Call `request_credentials` for both. The admin fills them where the transcript cannot see them, so the
-token is never typed into the conversation and never repeated back.
+Call `request_credentials` for them. The admin fills them where the transcript cannot see them, so
+neither the token nor the store key is ever typed into the conversation or repeated back.
+
+`matrix_store_key` seals the bot's encryption keys at rest, and it is the one slot with a value the
+admin keeps: the keys sealed under it are unreadable under any other value, so a store key that
+changes strands the device that was using it.
 
 ## Connect, and read what the homeserver says
 
@@ -61,8 +66,21 @@ reasoning back from the silence.
   so the surface never activates and no listener runs. A throwaway local pack listing the assistant
   set and `matrix` is the way through. A lockfile pinning the set reaches it only with `[pack] name`
   unset, because the pack narrows the active set after the lockfile has filled it.
-- **The room is encrypted.** The listener reads an encrypted room's events as `m.room.encrypted`, with
-  no body to hear, and founds nothing. Turn encryption off for that room, or use an unencrypted one.
+- **The room is encrypted and `matrix_store_key` is empty.** An encrypted room is read and answered
+  as any other — but only with that slot filled. Empty, the bot has no device keys, logs
+  `matrix.crypto_no_keys` against the first batch that carries ciphertext, hears nothing it can read
+  there, and refuses to answer rather than answering in the clear. Fill the slot; the bot reads what
+  is sent after that, not what was sent before it had keys.
+- **The deploy has no `matrix-e2ee` extra.** The libraries that carry Olm and Megolm are an extra, so
+  a deploy installed without it serves unencrypted rooms and logs `matrix.crypto_extra_missing`
+  against the first encrypted event it meets. `pip install "ufo-integrations[matrix-e2ee]"` on the
+  deploy is the way through, and the store key alone does not substitute for it.
+- **The store key changed.** The keys sealed under the old value no longer open, the bot logs
+  `matrix.crypto_store_locked`, and its encrypted rooms go quiet. Restore the old value, or issue the
+  bot a new token — a new device — and let it start a fresh store.
+- **The bot's token is in a second client.** The device is the one the token is bound to, so another
+  client holding that token publishes its own keys over the bot's and members stop being able to read
+  it. One token, one client.
 - **Two readers share one account.** A token reused from another agent's bot makes both sync as the
   same user, and each reads the other's messages as its own. One account per workspace's agent.
 - **The bot was never invited.** Joining a room is a member's act, not the bot's. A room nobody invited

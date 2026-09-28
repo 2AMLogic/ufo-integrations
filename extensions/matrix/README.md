@@ -20,7 +20,8 @@ turn:
 | Addressed to the bot, or sent in a direct room (the bot and one other) | Founded |
 | Unaddressed, in a room that already holds a conversation | Founded only if `ambient_reply_wanted` says the agent is wanted |
 | Unaddressed, in a room with no conversation yet | None |
-| The bot's own echo, an `m.notice`, an edit (`m.replace`), a redaction, a redacted or encrypted event | None |
+| The bot's own echo, an `m.notice`, an edit (`m.replace`), a redaction, a redacted event | None |
+| An encrypted event the bot holds no key for | None until its key arrives, then as above |
 
 A message is addressed to the bot four ways, and each names the bot whole, so a mention of `@ufobot`
 addresses nobody named `@ufo`:
@@ -125,18 +126,73 @@ A question that takes one choice keeps the first label its reply names. `answera
 only gate on who may answer what: a question already answered, one past the ask's own range, and one
 put to another member are each refused there, and the reply is admitted as the words it is.
 
+## Encryption
+
+The bot reads and writes end-to-end encrypted rooms as one device: the one its access token is
+bound to, which `/account/whoami` names. A restart keeps that device, so members' clients see the
+same device they already know, not a new one on every boot. The libraries that carry it ship in the
+`matrix-e2ee` extra, so a deploy that wants them asks for them.
+
+| Direction | What happens |
+| --- | --- |
+| Inbound | Room keys arrive as Olm to-device events and are read before the timeline. Each `m.room.encrypted` event is decrypted into the event it carries and then heard exactly as a plain one: member gate, audience, ambient decision, admission. |
+| Key not yet here | The event is parked, its key is asked for with `m.room_key_request`, and it is heard once the key lands. After 10 minutes it is dropped with a warning. Ciphertext is never heard. |
+| Undecryptable | An event whose plaintext does not read as a Matrix event is dropped with `matrix.undecryptable`, named by error class, and the stream carries on past it. |
+| Outbound | A post into a room with `m.room.encryption` state is Megolm-encrypted. The session key goes first over Olm to every device of every joined member that lacks it. |
+| Rotation | A room's session is replaced when the room's rotation settings say it has served long enough (100 messages or 7 days by default), or when a device it was shared with has left. |
+| Trust | First use. The keys a device id first shows are pinned; a device that later shows other keys is sent no room key and not believed. |
+| No device keys | A batch carrying ciphertext to a bot with no device logs `matrix.crypto_no_keys` once and is heard whole apart from that ciphertext — the tell for a `matrix_store_key` slot left empty, which the device open itself passes over in silence. |
+
+The device's account, its Olm and Megolm sessions, the pinned device keys, and the parked events
+live in `matrix_ext_crypto`, a table the extension's migration owns — never in workspace files, a
+scoped store, or the sandbox. Every row is sealed with AES-256-GCM under a key derived from the
+`matrix_store_key` slot, bound to the row's address, and named by an HMAC, so the table shows only
+the bot's own user and device id. The account row is minted once per device by an insert that the
+table's primary key arbitrates, so two processes opening the device together agree on one account
+and publish one set of keys. A token bound to another device finds no rows, starts a new device, and
+logs `matrix.crypto_device_new`.
+
+### The `matrix-e2ee` extra
+
+`vodozemac` is a Rust extension module and `cryptography` builds on OpenSSL, and this distribution
+ships `pulse` alongside `matrix`, so neither is a baseline dependency: a `pip install
+ufo-integrations` for the skill packs alone pulls no native crypto. `pip install
+"ufo-integrations[matrix-e2ee]"` adds them. Without the extra the extension imports and serves
+unencrypted rooms as ever; an encrypted room is met with one sentence naming the extra —
+`matrix.crypto_extra_missing` on the listener, and a refusal to post rather than a post in the clear.
+
+Olm and Megolm come from [vodozemac](https://github.com/matrix-org/vodozemac), the Matrix.org
+Foundation's Rust implementation, through the PyPI package `vodozemac`, whose binding is
+[matrix-nio/vodozemac-python](https://github.com/matrix-nio/vodozemac-python) — the matrix-nio
+project's work, and where the trust sits for what holds the bot's long-lived keys:
+
+| Candidate | Why not, or why |
+| --- | --- |
+| `python-olm` | Wraps libolm, which the Matrix.org Foundation no longer maintains and has replaced with vodozemac. No macOS arm64 wheel. |
+| `mautrix` with its encryption extra | Builds on `python-olm`, and brings its own client, state store, and `aiohttp`. |
+| `matrix-nio[e2e]` | The same binding under it, so the crypto is the same choice; it keeps its state in its own SQLite file through `peewee`, outside the extension's tables, and brings a second HTTP client. |
+| `vodozemac` | The primitives alone, so the store and the wire stay this extension's. Around a hundred wheels at 0.10 — CPython 3.10 through 3.15 and PyPy 3.11, manylinux and musllinux across x86_64, aarch64, armv7l, ppc64le, s390x and i686, both macOS architectures, Windows amd64 and arm64 — and an sdist behind them. |
+
+The key exchange around the primitives — key upload, query and claim, to-device handling, room-key
+sharing — is `crypto.py`, and the store is `crypto_store.py`. Sealing uses `cryptography`, at the
+`>=49` floor ufo itself holds.
+
 ## Install
 
 ```bash
-pip install "ufo-integrations @ git+https://github.com/2AMLogic/ufo-integrations"
+pip install "ufo-integrations[matrix-e2ee] @ git+https://github.com/2AMLogic/ufo-integrations"
 ufoctl ext install matrix
 ```
+
+Drop `[matrix-e2ee]` for a deploy whose rooms are unencrypted, and the native crypto libraries stay
+out of the environment.
 
 | Setting | Where | Holds |
 | --- | --- | --- |
 | `UFO_MATRIX_BOTS` | Deploy environment | The bot MXIDs this deploy's listener runs, comma-separated |
 | `matrix_homeserver` | Workspace credential slot | The homeserver's base URL, e.g. `https://matrix.example.org` |
 | `matrix_access_token` | Workspace credential slot | The bot user's access token |
+| `matrix_store_key` | Workspace credential slot | At least 32 random characters sealing the bot's encryption keys, e.g. `openssl rand -base64 32` |
 
 ## Connect
 
@@ -174,8 +230,30 @@ workspace's to know.
   the homeserver's timeout rather than sending a last stop.
 - **An unlisted bot is bound but deaf.** The listener runs only the MXIDs `UFO_MATRIX_BOTS` names;
   binding one the deploy does not list admits nothing until it does.
-- **Encrypted rooms are silent.** The surface reads unencrypted rooms only. In an encrypted room it
-  hears nothing it can read, and admits nothing.
+- **An empty store key is a bot with no device keys.** Without `matrix_store_key` the bot hears
+  nothing it can read in an encrypted room, and a reply into one is refused rather than sent in
+  the clear.
+- **A deploy without the `matrix-e2ee` extra reads no encrypted room.** Unencrypted rooms are served
+  as ever; an encrypted one logs `matrix.crypto_extra_missing` naming the extra, and a reply into one
+  is refused with the same sentence. The store key does not substitute for the extra, nor the extra
+  for the store key.
+- **A shared file's bytes are not sealed, only its message.** In an encrypted room the event
+  carrying a file is Megolm ciphertext, so the filename, the subject and the `mxc://` stay off the
+  server's timeline — but the object the `mxc://` points at is stored as it was given. Only room
+  members learn that `mxc://`, which is a weaker guarantee than the room's own.
+- **An event that will not decrypt is a dropped event.** A plaintext that does not read as a Matrix
+  event is logged as `matrix.undecryptable` with its error class and skipped. It is never retried
+  into a stalled stream, so one malformed sender cannot silence a bot.
+- **A changed store key strands the device.** The store no longer opens, the bot logs
+  `matrix.crypto_store_locked`, and encrypted rooms go quiet. Restore the old value, or issue a new
+  token — a new device — to start a fresh store.
+- **The bot's device is the bot's alone.** Use its token in no other client: a client that shares the
+  device id publishes its own keys over the bot's, and peers stop reading the bot.
+- **Trust is first use.** The bot believes the keys a device first shows and never cross-signs or
+  verifies interactively; a member who wants the bot's device verified compares its keys by hand.
+- **An event older than its key's reach stays unread.** A parked event whose key does not arrive
+  within 10 minutes is dropped with `matrix.undecryptable_dropped`. The bot asks the sender for the
+  key once; whether the sender's client answers is its own policy.
 - **A new token is a new transaction scope.** Transaction ids are idempotent per access token, so a
   reply retried across a token rotation can land twice.
 - **A file is best effort.** One upload the homeserver refuses is logged by error class and its
@@ -223,10 +301,15 @@ pytest extensions/matrix
 
 `test_matrix_contracts.py` needs only `pytest`: the import gate, which events may found a turn, who a
 line addresses, the labels a question is answered by, and the HTML, splitting, and relations the
-surface writes. `test_matrix_surface.py` drives the listener and the three delivery handlers against
-a fake homeserver, `test_matrix_linking.py` drives a claim through its proof the same way, and
-`test_matrix_registry.py` loads the installed entry point through ufo's loader and applies the
-migrations; all three skip where `ufo` is absent.
+surface writes. The rest need `ufo` and skip without it.
+
+| Module | What it drives |
+| --- | --- |
+| `test_matrix_surface.py` | The listener and the three delivery handlers against a fake homeserver |
+| `test_matrix_linking.py` | A claim through its proof, the same way |
+| `test_matrix_without_the_extra.py` | What a deploy without `matrix-e2ee` meets, by switching the flag its absence sets |
+| `test_matrix_crypto.py` | Real Olm and Megolm between the bot and members' devices, through that same fake homeserver with key and to-device endpoints added. The one module that also skips without the extra |
+| `test_matrix_registry.py` | The installed entry point through ufo's loader, and the migrations applied |
 
 `test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
 collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite

@@ -1,7 +1,7 @@
 """The manifest against the real runtime: the installed entry point loads through ufo's own loader,
 the surface registers as durable with all three of its delivery handlers, the tools validate beside
 every builtin, the setup action addresses as the `matrix` surface row's own, the skill parses into
-the registry, and the migrations land the since, answering, asking, claim and link tables on a fresh
+the registry, and the migrations land the since, answering, asking, claim, link and crypto tables on
 database. Skipped where `ufo` is not installed."""
 
 import sqlite3
@@ -24,6 +24,7 @@ from ufo.host.kinds.surface_kind import registered_surfaces  # noqa: E402
 from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
 from ufo.sdk.objects import SURFACE_KIND  # noqa: E402
+from ufo_ext_matrix.crypto import STORE_KEY_SLOT  # noqa: E402
 from ufo_ext_matrix.manifest import (  # noqa: E402
     CONNECT_TOOL,
     LINK_TOOL,
@@ -54,7 +55,11 @@ def test_the_entry_point_declares_one_durable_listening_surface(manifest) -> Non
 
 
 def test_the_credentials_and_the_deploy_key(manifest) -> None:
-    assert {slot.name for slot in manifest.credentials} == {HOMESERVER_SLOT, TOKEN_SLOT}
+    assert {slot.name for slot in manifest.credentials} == {
+        HOMESERVER_SLOT,
+        TOKEN_SLOT,
+        STORE_KEY_SLOT,
+    }
     assert all(slot.injection is None for slot in manifest.credentials)
     assert manifest.deploy_keys == ("MATRIX_BOTS",)
     assert manifest.deploy_keys == (BOTS_ENV.removeprefix("UFO_"),)
@@ -137,5 +142,14 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "mxid",
             "member_id",
             "proved_by",
+            "updated_at",
+        ]
+        assert columns("matrix_ext_crypto") == [
+            "workspace_id",
+            "user_id",
+            "device_id",
+            "kind",
+            "name",
+            "value",
             "updated_at",
         ]

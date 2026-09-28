@@ -17,7 +17,9 @@ surface, so it is offered on that one surface row — `action:surface:matrix_con
 tool a turn holds everywhere, and `matrix-setup` is the skill that carries the order of the steps and
 the four silences a misconfigured bot answers with.
 
-The surface reads unencrypted rooms. An encrypted event, an edit, and a redaction found no turn."""
+In an encrypted room the bot's device decrypts what it is sent and encrypts what it posts; its keys
+live in the extension's own table, sealed under the `matrix_store_key` slot. An edit and a redaction
+found no turn."""
 
 from pathlib import Path
 
@@ -25,6 +27,7 @@ from ufo.sdk.manifest import CredentialSlot, Manifest, SkillSpec
 from ufo.sdk.objects import SURFACE_KIND
 from ufo.sdk.surfaces import SurfaceSpec
 from ufo.sdk.tools import ObjectBinding, ToolDef
+from ufo_ext_matrix.crypto import STORE_KEY_SLOT
 from ufo_ext_matrix.events import SURFACE
 from ufo_ext_matrix.linking import CLAIM_MINUTES, LinkInput, UnlinkInput
 from ufo_ext_matrix.surface import (
@@ -68,6 +71,14 @@ def manifest(surface: MatrixSurface | None = None) -> Manifest:
             CredentialSlot(
                 name=TOKEN_SLOT,
                 description="Access token of the Matrix bot user.",
+            ),
+            CredentialSlot(
+                name=STORE_KEY_SLOT,
+                description=(
+                    "At least 32 random characters that seal the Matrix bot's end-to-end "
+                    "encryption keys at rest. Empty, the bot neither reads nor posts in encrypted "
+                    "rooms; changed, it loses the keys sealed under the old value."
+                ),
             ),
         ),
         tools=(

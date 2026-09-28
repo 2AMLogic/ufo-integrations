@@ -5,7 +5,7 @@ exception message, or a `repr` — so no log line the surface writes can carry i
 endpoint, the HTTP status, and the Matrix `errcode`; the response body is the homeserver's text and
 is not repeated."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import TracebackType
 from typing import Any, Self
 from urllib.parse import quote
@@ -73,11 +73,17 @@ class MatrixClient:
         await self._http.aclose()
 
     async def whoami(self) -> str:
+        return (await self.identity())[0]
+
+    async def identity(self) -> tuple[str, str | None]:
+        """The user the access token belongs to, and the device it is bound to — None for a token
+        bound to no device."""
         answer = await self._call("GET", "/account/whoami", "whoami")
         user_id = answer.get("user_id")
         if not isinstance(user_id, str):
             raise MatrixError("whoami", 200, "M_BAD_JSON", None)
-        return user_id
+        device_id = answer.get("device_id")
+        return user_id, device_id if isinstance(device_id, str) and device_id else None
 
     async def sync(self, since: str | None) -> Mapping[str, Any]:
         """One long poll. The first sync of a stream (`since` None) returns at once: it only fixes
@@ -146,6 +152,46 @@ class MatrixClient:
         if not isinstance(content_uri, str):
             raise MatrixError("upload", 200, "M_BAD_JSON", None)
         return content_uri
+
+    async def encryption(self, room_id: str) -> Mapping[str, Any] | None:
+        """The room's `m.room.encryption` state, or None for a room that is not encrypted."""
+        path = f"/rooms/{quote(room_id, safe='')}/state/m.room.encryption/"
+        try:
+            answer = await self._call("GET", path, "encryption")
+        except MatrixError as error:
+            if error.status == 404:
+                return None
+            raise
+        return answer if answer.get("algorithm") else None
+
+    async def upload_keys(self, keys: Mapping[str, Any]) -> Mapping[str, int]:
+        """Publish device keys, one-time keys, or a fallback key, and return how many one-time
+        keys the homeserver holds for this device, by algorithm."""
+        answer = await self._call("POST", "/keys/upload", "keys_upload", json=keys)
+        counts = answer.get("one_time_key_counts")
+        return counts if isinstance(counts, Mapping) else {}
+
+    async def query_keys(self, users: Sequence[str]) -> Mapping[str, Any]:
+        """Every device each user has published keys for, as the homeserver lists them."""
+        body = {"device_keys": {user: [] for user in users}}
+        answer = await self._call("POST", "/keys/query", "keys_query", json=body)
+        devices = answer.get("device_keys")
+        return devices if isinstance(devices, Mapping) else {}
+
+    async def claim_keys(self, devices: Mapping[str, Sequence[str]]) -> Mapping[str, Any]:
+        """One signed one-time key (or fallback key) per device, to open an Olm session with."""
+        wanted = {user: dict.fromkeys(ids, "signed_curve25519") for user, ids in devices.items()}
+        answer = await self._call(
+            "POST", "/keys/claim", "keys_claim", json={"one_time_keys": wanted}
+        )
+        claimed = answer.get("one_time_keys")
+        return claimed if isinstance(claimed, Mapping) else {}
+
+    async def send_to_device(
+        self, event_type: str, txn_id: str, messages: Mapping[str, Mapping[str, Any]]
+    ) -> None:
+        path = f"/sendToDevice/{quote(event_type, safe='')}/{quote(txn_id, safe='')}"
+        await self._call("PUT", path, "send_to_device", json={"messages": messages})
 
     async def join(self, room_id: str) -> None:
         await self._call("POST", f"/join/{quote(room_id, safe='')}", "join", json={})
