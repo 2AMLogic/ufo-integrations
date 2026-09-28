@@ -29,34 +29,26 @@ rewritten to the carrier's workspace directory, never a path inside a script.
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _jsonl_pool import SLUG, append_row, dated_path  # noqa: E402
+from _jsonl_pool import read_rows as _read_rows  # noqa: E402
+
 SEEN_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 POOL_DIR = "pulse"
 DEFAULT_WITHIN_DAYS = 14
 
 
 def pool_path(series: str) -> Path:
-    if not SLUG.match(series):
-        raise ValueError(f"series must be a lowercase hyphenated slug, got {series!r}")
-    return Path(POOL_DIR) / f"{series}.seen.jsonl"
+    return dated_path(POOL_DIR, series, "seen.jsonl")
 
 
 def read_rows(series: str) -> list[dict]:
-    path = pool_path(series)
-    if not path.exists():
-        return []
-    rows = []
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
+    return _read_rows(pool_path(series))
 
 
 def record(series: str, seen: str, slug: str, title: str, url: str, source: str) -> Path:
@@ -65,10 +57,8 @@ def record(series: str, seen: str, slug: str, title: str, url: str, source: str)
     if not SLUG.match(slug):
         raise ValueError(f"slug must be a lowercase hyphenated slug, got {slug!r}")
     path = pool_path(series)
-    path.parent.mkdir(parents=True, exist_ok=True)
     row = {"seen": seen, "slug": slug, "title": title, "url": url, "source": source}
-    with path.open("a") as handle:
-        handle.write(json.dumps(row, sort_keys=True) + "\n")
+    append_row(path, row)
     return path
 
 

@@ -8,10 +8,17 @@ become the expiry the design rules out.
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 
 def test_an_unseen_series_reads_empty(seen) -> None:
     assert seen.read_rows("data-infra") == []
     assert seen.main(["history", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
+
+
+def test_a_series_name_cannot_escape_its_directory(seen) -> None:
+    with pytest.raises(ValueError):
+        seen.pool_path("../escape")
 
 
 def test_the_pool_lands_in_the_workspace_beside_the_ledger(seen, tmp_path, monkeypatch) -> None:
