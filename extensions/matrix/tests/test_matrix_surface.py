@@ -63,6 +63,7 @@ from ufo_ext_matrix.answering import Answering, read_answering  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient, MatrixError  # noqa: E402
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking  # noqa: E402
 from ufo_ext_matrix.events import (  # noqa: E402
+    RoomFile,
     POLL_START_TYPE,
     answer_txn_id,
     file_txn_id,
@@ -1605,3 +1606,63 @@ async def test_a_uri_that_is_not_an_mxc_never_reaches_the_homeserver(workspace: 
             with pytest.raises(MatrixError):
                 await client.download(uri)
         assert len(server.requests) == before
+
+
+def _shared(url: str = "", sealed: dict | None = None, size: int = 4) -> RoomFile:
+    return RoomFile(
+        room_id=ROOM,
+        event_id="$f",
+        sender=ALICE,
+        filename="chart.png",
+        media_type="image/png",
+        size_bytes=size,
+        url=url,
+        sealed=sealed,
+    )
+
+
+@on_loop
+async def test_a_member_file_is_fetched(workspace: Workspace) -> None:
+    """The plain case: the bytes the media repository holds are the bytes the turn gets."""
+    server = Homeserver()
+    installation = rig(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("chart.png", "image/png", b"\x89PNG")
+        got = await installation.fetched(client, _shared(url=uri))
+    assert got == b"\x89PNG"
+
+
+@on_loop
+async def test_a_file_larger_than_it_declared_is_dropped(workspace: Workspace) -> None:
+    """`info.size` is written by the sender, so the declared size saves a download and protects
+    nothing. A file arriving larger than it claimed is the case the cheap check misses, and the
+    fetched length is what decides."""
+    server = Homeserver()
+    installation = rig(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("chart.png", "image/png", b"x" * 64)
+        got = await installation.fetched(client, _shared(url=uri, size=1), limit=16)
+    assert got is None
+
+
+@on_loop
+async def test_a_file_declaring_too_much_is_never_fetched(workspace: Workspace) -> None:
+    """The cheap check earns its place by costing no request at all."""
+    server = Homeserver()
+    installation = rig(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        before = len(server.requests)
+        got = await installation.fetched(client, _shared(url="mxc://example.org/x", size=99), limit=8)
+        assert len(server.requests) == before
+    assert got is None
+
+
+@on_loop
+async def test_a_file_the_repository_does_not_hold_is_dropped_not_raised(workspace: Workspace) -> None:
+    """A member's attachment must not stop their room being read: the fetch failure costs that
+    file and the stream goes on."""
+    server = Homeserver()
+    installation = rig(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        got = await installation.fetched(client, _shared(url="mxc://example.org/never"))
+    assert got is None

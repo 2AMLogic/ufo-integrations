@@ -68,8 +68,10 @@ from ufo_ext_matrix.client import MatrixClient, MatrixError
 from ufo_ext_matrix.crypto import (
     UNOBSERVED,
     CryptoUnavailable,
+    FileHashMismatch,
     device_for,
     inbound,
+    open_file,
     outbound,
     seal_file,
 )
@@ -80,6 +82,7 @@ from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
     PollAnswer,
+    RoomFile,
     RoomMessage,
     answer_txn_id,
     file_txn_id,
@@ -131,6 +134,7 @@ AMBIENT_CONTEXT_LINES = 10
 ROSTER_LIMIT = 50
 BACKFILL_PAGES = 5
 CIPHERTEXT_TYPE = "application/octet-stream"
+INBOUND_LIMIT_BYTES = 25 * 1024 * 1024
 SPOKEN_MESSAGES = 50
 
 FAILED_LINE = "This turn failed before it could answer."
@@ -796,6 +800,45 @@ class Installation:
                 await self.deliver(ctx, client, batch, since)
                 await write_since(ctx, self.bot, next_batch(batch))
         return 0.0
+
+    async def fetched(
+        self, client: MatrixClient, shared: RoomFile, limit: int = INBOUND_LIMIT_BYTES
+    ) -> bytes | None:
+        """The bytes a member's file names, or None for a file this room does not deliver.
+
+        A dropped file is named in a log and costs that file. It never raises into the stream: a
+        member's attachment must not stop their room being read, which is the failure a bound that
+        propagates turns into an outage.
+
+        The bound is checked twice, and the first check is not the one that protects anything. A
+        sender writes `info.size` themselves, so the declared size is a courtesy that saves a
+        download; the fetched length is the one that decides. A file arriving larger than it
+        declared is exactly the case the cheap check misses.
+
+        In an encrypted room the ciphertext is checked against the file's own sha256 before
+        anything is decrypted, inside `open_file` — so bytes the media repository substituted are
+        refused rather than opened."""
+        if shared.size_bytes > limit:
+            log("matrix.file_declined", installation=self.bot, declared=shared.size_bytes)
+            return None
+        try:
+            body = await client.download(shared.url or (shared.sealed or {}).get("url", ""))
+        except MatrixError as error:
+            log("matrix.file_unfetched", installation=self.bot, status=error.status)
+            return None
+        if len(body) > limit:
+            log("matrix.file_oversize", installation=self.bot, fetched=len(body))
+            return None
+        if shared.sealed is None:
+            return body
+        try:
+            return open_file(shared.sealed, body)
+        except FileHashMismatch as mismatch:
+            log("matrix.file_unsealed", installation=self.bot, reason=str(mismatch))
+            return None
+        except CryptoUnavailable:
+            log("matrix.file_sealed_unreadable", installation=self.bot)
+            return None
 
     async def deliver(
         self,
