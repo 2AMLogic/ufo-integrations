@@ -20,6 +20,7 @@ POLL_START_TYPE = "m.poll.start"
 POLL_RESPONSE_TYPE = "m.poll.response"
 ENCRYPTED_TYPE = "m.room.encrypted"
 TEXT_MSGTYPE = "m.text"
+FILE_MSGTYPES = frozenset({"m.file", "m.image", "m.audio", "m.video"})
 NOTICE_MSGTYPE = "m.notice"
 REPLACE_RELATION = "m.replace"
 REFERENCE_RELATION = "m.reference"
@@ -135,6 +136,74 @@ def poll_txn_id(turn_id: UUID) -> str:
 
 def permalink(room_id: str, event_id: str) -> str:
     return f"https://matrix.to/#/{quote(room_id, safe='!:')}/{quote(event_id, safe='$:')}"
+
+
+@dataclass(frozen=True)
+class RoomFile:
+    """One file a member sent into a room.
+
+    `sealed` is the `EncryptedFile` an encrypted room carries a file by, and `url` the `mxc://` a
+    plain one names. Exactly one of them is set: a message offering both is refused rather than
+    resolved, because the two disagree about whether the bytes are sealed and picking either lets a
+    sender decide which."""
+
+    room_id: str
+    event_id: str
+    sender: str
+    filename: str
+    media_type: str
+    size_bytes: int
+    url: str = ""
+    sealed: Mapping[str, Any] | None = None
+
+
+def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
+    """The event as a file a member shared, or None when it is not one.
+
+    The same refusals `room_message` makes — a redaction, an edit, a state event — and then a
+    msgtype naming a file rather than words. In an encrypted room this reads the event the device
+    already decrypted, so a sealed file and a plain one arrive here the same shape apart from which
+    of `file` and `url` they carry."""
+    if event.get("type") != MESSAGE_TYPE or event.get("state_key") is not None:
+        return None
+    unsigned = event.get("unsigned")
+    if isinstance(unsigned, Mapping) and "redacted_because" in unsigned:
+        return None
+    content = event.get("content")
+    if not isinstance(content, Mapping) or content.get("msgtype") not in FILE_MSGTYPES:
+        return None
+    relates = content.get("m.relates_to")
+    if isinstance(relates, Mapping) and relates.get("rel_type") == REPLACE_RELATION:
+        return None
+    if "m.new_content" in content:
+        return None
+    event_id, sender = event.get("event_id"), event.get("sender")
+    if not isinstance(event_id, str) or not isinstance(sender, str):
+        return None
+    url, sealed = content.get("url"), content.get("file")
+    plain = isinstance(url, str) and bool(url)
+    encrypted = isinstance(sealed, Mapping)
+    if plain == encrypted:
+        return None
+    body = content.get("body")
+    named = content.get("filename")
+    filename = named if isinstance(named, str) and named else body
+    if not isinstance(filename, str) or not filename.strip():
+        return None
+    info = content.get("info")
+    info = info if isinstance(info, Mapping) else {}
+    media_type = info.get("mimetype")
+    size = info.get("size")
+    return RoomFile(
+        room_id=room_id,
+        event_id=event_id,
+        sender=sender,
+        filename=filename,
+        media_type=media_type if isinstance(media_type, str) else "",
+        size_bytes=size if isinstance(size, int) and size >= 0 else 0,
+        url=url if plain else "",
+        sealed=sealed if encrypted else None,
+    )
 
 
 def room_message(room_id: str, event: Mapping[str, Any]) -> RoomMessage | None:
