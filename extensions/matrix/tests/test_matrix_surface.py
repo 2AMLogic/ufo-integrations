@@ -1702,3 +1702,26 @@ async def test_a_file_the_workspace_refuses_costs_the_file_and_not_the_turn(
     assert member_message_attachments(body) == ()
     assert workspace.delivered == []
     assert workspace.member_files == []
+
+
+@on_loop
+async def test_a_member_cannot_name_a_path_out_of_the_uploads_directory(
+    workspace: Workspace,
+) -> None:
+    """The filename is the sender's to choose and it reaches a workspace path, so it is a name and
+    never a path. `../notes.md` landing as `uploads/../notes.md` resolves to the workspace root — in
+    bounds, and still an arbitrary write chosen by whoever is in the room."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        uri = await client.upload("x", "image/png", b"\x89PNG")
+    escape = shared_file("$f3", ALICE, "a caption", uri)
+    escape["content"]["filename"] = "../../notes.md"
+    server.syncs["s1"] = batch("s2", {DIRECT: [escape]})
+    assert await installation.step() == 0.0
+
+    [(_, _, rel)] = workspace.delivered
+    assert rel == "uploads/notes.md"
+    assert ".." not in rel
+    body = await workspace.admitted_body("$f3")
+    assert body is not None and member_message_attachments(body) == ("uploads/notes.md",)

@@ -142,6 +142,11 @@ def permalink(room_id: str, event_id: str) -> str:
 class RoomFile:
     """One file a member sent into a room.
 
+    `caption` is what the member said and `filename` is what the file is called. A file sent with
+    words carries both — the caption in `body` and the name in `filename` — and one sent bare
+    carries its name in `body` alone, so a caption that exists is never the name and the name is
+    never lost.
+
     `sealed` is the `EncryptedFile` an encrypted room carries a file by, and `url` the `mxc://` a
     plain one names. Exactly one of them is set: a message offering both is refused rather than
     resolved, because the two disagree about whether the bytes are sealed and picking either lets a
@@ -153,6 +158,7 @@ class RoomFile:
     filename: str
     media_type: str
     size_bytes: int
+    caption: str = ""
     url: str = ""
     sealed: Mapping[str, Any] | None = None
     mentions: frozenset[str] = frozenset()
@@ -202,6 +208,7 @@ def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
         event_id=event_id,
         sender=sender,
         filename=filename,
+        caption=body if isinstance(body, str) else filename,
         media_type=media_type if isinstance(media_type, str) else "",
         size_bytes=size if isinstance(size, int) and size >= 0 else 0,
         url=url if plain else "",

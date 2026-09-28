@@ -39,6 +39,7 @@ from ufo.sdk.http import Request
 from ufo.sdk.o11y import log, warn
 from ufo.sdk.surfaces import (
     ATTACHED_FILES_CLAUSE,
+    inbox_name,
     AMBIENT_CONTEXT_ELEMENT,
     AMBIENT_HISTORY_MESSAGES,
     NOTHING_DELIVERED,
@@ -871,7 +872,9 @@ class Installation:
         except ValueError as refused:
             log("matrix.file_unstored", installation=self.bot, reason=str(refused))
             return ()
-        rel = f"{INBOUND_DIR}/{shared.filename}"
+        # The name is the sender's to choose, so it is a name and not a path: core's own
+        # sanitiser drops components, collapses separators, and numbers a name already used.
+        rel = f"{INBOUND_DIR}/{inbox_name(shared.filename, set())}"
         try:
             await ctx.deliver_attachment(conversation_id, key, rel)
         except ValueError as refused:
@@ -913,7 +916,7 @@ class Installation:
                     room_id=shared.room_id,
                     event_id=shared.event_id,
                     sender=shared.sender,
-                    body=shared.filename,
+                    body=shared.caption,
                     formatted_body="",
                     mentions=shared.mentions,
                     thread_root=shared.thread_root,
