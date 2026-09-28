@@ -52,6 +52,8 @@ class E2EHomeserver(Homeserver):
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("authorization") != f"Bearer {TOKEN}":
             return super().handle(request)
+        if not request.url.path.startswith("/_matrix/client/v3"):
+            return super().handle(request)
         path = request.url.path.removeprefix("/_matrix/client/v3").split("/")[1:]
         body = json.loads(request.content) if request.content else {}
         match request.method, path:

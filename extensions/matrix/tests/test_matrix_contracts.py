@@ -213,6 +213,23 @@ def test_the_migrations_are_one_chain_from_one_base() -> None:
     assert len(set(declared) - set(parents)) == 1, "more than one head"
 
 
+def test_only_one_seam_puts_a_message_on_the_wire() -> None:
+    """`MatrixSurface.send` is where a message meets `outbound`, so a room that is encrypted takes
+    ciphertext whichever handler is speaking. A handler calling the client's own send instead would
+    reach the room in the clear, and nothing in the type system says so — only this."""
+    tree = ast.parse((PACKAGE / "surface.py").read_text())
+    callers = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef)
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr in ("send_message", "send_event")
+    }
+    assert callers == {"send"}, f"a message leaves outside the seam, from {sorted(callers)}"
+
+
 def test_deploy_keys_are_bare_names_core_prefixes() -> None:
     """Core prefixes `UFO_` onto each deploy key itself (`ufo/cli.py` `_missing_deploy_keys`), so a
     key already carrying the prefix doubles — `ufoctl init` would name a `UFO_UFO_...` nobody

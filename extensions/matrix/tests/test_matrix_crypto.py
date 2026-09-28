@@ -18,7 +18,13 @@ import sqlalchemy as sa  # noqa: E402
 import vodozemac as vz  # noqa: E402
 from crypto_fakes import BOT_DEVICE, MEGOLM, STORE_KEY, E2EHomeserver, Peer  # noqa: E402
 from matrix_fakes import ALICE, BOB, BOT, DIRECT, ROOM, Listener, Workspace, batch, on_loop  # noqa: E402
-from ufo.sdk.surfaces import SurfaceDeliveryError, TerminalFrame, Writeback  # noqa: E402
+from ufo.sdk.surfaces import (  # noqa: E402
+    MidTurnReply,
+    SharedArtifact,
+    SurfaceDeliveryError,
+    TerminalFrame,
+    Writeback,
+)
 from ufo_ext_matrix import crypto  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient  # noqa: E402
 from ufo_ext_matrix.crypto import STORE_KEY_SLOT, device_for  # noqa: E402
@@ -96,7 +102,9 @@ async def test_an_encrypted_direct_room_round_trips(workspace: Workspace) -> Non
     assert room_key["type"] == "m.room_key" and room_key["sender"] == BOT
     payload = alice.decrypt(sent)
     assert payload["room_id"] == DIRECT
-    assert payload["content"] == {"msgtype": "m.text", "body": "Standup at ten."}
+    assert payload["content"]["msgtype"] == "m.text"
+    assert payload["content"]["body"] == "Standup at ten."
+    assert payload["content"]["formatted_body"] == "<p>Standup at ten.</p>"
 
 
 @on_loop
@@ -353,7 +361,7 @@ async def test_a_mint_that_loses_reads_the_winners_account(workspace: Workspace)
     lied: list[bool] = []
 
     async def blind(self: Rows, kind: str, *key: str, lock: bool = False) -> object:
-        """The stale read: the account row is there, and this caller's first look does not see it."""
+        """The stale read: the account row is there and this caller's first look does not see it."""
         if kind == "account" and not lied:
             lied.append(True)
             return None
@@ -402,6 +410,66 @@ async def test_a_parked_event_that_will_not_decrypt_is_dropped_rather_than_retri
     assert [a["key"] for a in workspace.admitted] == ["$m2"]
     assert await read_since(workspace, BOT) == "s3"  # type: ignore[arg-type]
     assert await pending(workspace) == []
+
+
+@on_loop
+async def test_every_delivery_handler_encrypts_what_it_sends(workspace: Workspace) -> None:
+    """A room's words leave by three handlers — the terminal reply, a shared file, and a mid-turn
+    reply — and an encrypted room takes ciphertext from all three. A handler that sent its own
+    message rather than going through the surface's one seam would put a filename, a subject or a
+    mid-turn line on the server's timeline in the clear."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    surface = MatrixSurface(transport=server.transport, environ={})
+
+    chart = SharedArtifact(
+        id=uuid4(),
+        blob_key="blob-chart",
+        filename="chart.png",
+        media_type="image/png",
+        size_bytes=4,
+        subject="Last week",
+        role="file",
+    )
+    workspace.blob.objects = {chart.blob_key: b"\x89PNG"}
+    wb = Writeback(
+        turn_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_id=uuid4(),
+        queue_key=DIRECT,
+        terminal=TerminalFrame(status="done", text="Standup at ten."),
+        artifacts=(chart,),
+    )
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    said = MidTurnReply(
+        id=uuid4(),
+        turn_id=wb.turn_id,
+        conversation_id=wb.conversation_id,
+        agent_id=wb.agent_id,
+        queue_key=DIRECT,
+        message_ref=None,
+        text="Halfway through.",
+    )
+    await surface.speak(workspace, said)  # type: ignore[arg-type]
+
+    assert len(server.sent) == 3
+    for event in server.sent.values():
+        assert event["type"] == "m.room.encrypted"
+        assert event["algorithm"] == MEGOLM
+    for leak in ("Standup at ten.", "Halfway through.", "chart.png", "Last week", "mxc://"):
+        assert leak not in str(server.sent), leak
+
+    assert [event["type"] for event in alice.read_inbox()] == ["m.room_key"]
+    bodies = [alice.decrypt(event)["content"] for event in server.sent.values()]
+    said_bodies = [body.get("body", "") for body in bodies]
+    for expected in ("Standup at ten.", "Halfway through.", "Last week"):
+        assert any(expected in body for body in said_bodies), expected
+    [picture] = [body for body in bodies if body["msgtype"] == "m.image"]
+    assert picture["filename"] == "chart.png"
+    assert picture["url"].startswith("mxc://")
 
 
 def test_a_short_store_key_is_refused() -> None:
