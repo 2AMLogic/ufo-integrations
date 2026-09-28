@@ -60,12 +60,14 @@ from ufo.sdk.surfaces import (  # noqa: E402
     Writeback,
 )
 from ufo_ext_matrix.answering import Answering, read_answering  # noqa: E402
+from ufo_ext_matrix.asking import Asking, read_asking, write_asking  # noqa: E402
 from ufo_ext_matrix.events import (  # noqa: E402
     POLL_START_TYPE,
     answer_txn_id,
     file_txn_id,
     part_txn_id,
     poll_txn_id,
+    question_txn_id,
     room_key,
     say_txn_id,
     txn_id,
@@ -76,7 +78,7 @@ from ufo_ext_matrix.messages import (  # noqa: E402
     PART_BUDGET_BYTES,
     reply_relation,
 )
-from ufo_ext_matrix.questions import LABELLED_HINT, ONE_HINT  # noqa: E402
+from ufo_ext_matrix.questions import LABELLED_HINT, ONE_HINT, question_block  # noqa: E402
 from ufo_ext_matrix.since import read_since, write_since  # noqa: E402
 from ufo_ext_matrix.surface import (  # noqa: E402
     CANCELLED_LINE,
@@ -91,6 +93,7 @@ from ufo_ext_matrix.surface import (  # noqa: E402
     Installation,
     MatrixSurface,
     ROSTER_LIMIT,
+    asked_questions,
     installations,
 )
 
@@ -159,6 +162,8 @@ BOTH = asking(
 )
 FRUIT = asking("Fruit", question("Which?", "Apples", "Pears", "Plums", multi_select=True))
 ASKED = "$asked"
+SAID = "$said"
+OLDER = "$older"
 
 
 async def open_question(
@@ -166,22 +171,30 @@ async def open_question(
     workspace: Workspace,
     ask: object = ROLLOUT,
     target: UUID | None = None,
+    recorded: bool = True,
 ) -> Installation:
-    """An installation whose room holds one turn that ended in a question, and the message the bot
-    asked it in. The bot's own message is heard the way every message is, so a reply to it is a
-    reply to something the bot said."""
+    """An installation whose room holds one turn that ended in a question: an older line of the
+    bot's, the member's message, the bot's reply, and the question as a message of its own, recorded
+    as the one that turn asked in. Every bot message is heard the way every message is, so a reply
+    to any of them is a reply to something the bot said."""
     workspace.question = ask.model_copy(update={"target_member_id": target})  # type: ignore[attr-defined]
+    written = question_block(workspace.question.title, asked_questions(workspace.question))
     server.syncs["s1"] = batch(
         "s2",
         {
             ROOM: [
+                text(OLDER, BOT, "Last week's numbers are in."),
                 mention("$m1", ALICE, "should we ship?"),
-                text(ASKED, BOT, "Rollout"),
+                text(SAID, BOT, "Here is where the rollout stands."),
+                text(ASKED, BOT, written),
             ]
         },
     )
     installation = await primed(server, workspace)
     assert await installation.step() == 0.0
+    if recorded:
+        turn = UUID(str(workspace.admitted[-1]["turn_id"]))
+        await write_asking(workspace, turn, Asking(ROOM, ASKED))
     return installation
 
 
@@ -1172,6 +1185,9 @@ async def test_a_tap_on_a_poll_answers_the_question_it_carries(workspace: Worksp
     await installation.step()
     assert [a["key"] for a in workspace.admitted] == ["$m1", "$tap"]
     assert "Hold" in workspace.admitted[-1]["body"]
+    [edit] = server.edits()
+    assert edit["m.relates_to"]["event_id"] == ASKED
+    assert "Hold \u2713" in edit["m.new_content"]["body"]
 
 
 @on_loop
@@ -1251,13 +1267,94 @@ async def test_words_keep_answering_a_question(workspace: Workspace) -> None:
 
 
 @on_loop
-async def test_a_reply_to_a_member_rewrites_nothing(workspace: Workspace) -> None:
+async def test_an_answer_replying_to_a_member_marks_the_question(workspace: Workspace) -> None:
     server = Homeserver()
     installation = await open_question(server, workspace)
     server.syncs["s2"] = batch("s3", {ROOM: [reply("$a1", ALICE, "1", "$m1")]})
     await installation.step()
     assert "Ship it" in workspace.admitted[-1]["body"]
+    assert [edit["m.relates_to"]["event_id"] for edit in server.edits()] == [ASKED]
+
+
+@on_loop
+async def test_an_answer_that_replies_to_nothing_marks_the_question(workspace: Workspace) -> None:
+    server = Homeserver()
+    installation = await open_question(server, workspace)
+    server.syncs["s2"] = batch("s3", {ROOM: [text("$a1", ALICE, "2")]})
+    await installation.step()
+    assert "Hold" in workspace.admitted[-1]["body"]
+    assert [edit["m.relates_to"]["event_id"] for edit in server.edits()] == [ASKED]
+
+
+async def answered_under(workspace: Workspace, replied: str) -> list[str]:
+    """The messages rewritten when a member answers `1` as a reply to `replied`."""
+    server = Homeserver()
+    installation = await open_question(server, workspace)
+    server.syncs["s2"] = batch("s3", {ROOM: [reply("$a1", ALICE, "1", replied)]})
+    await installation.step()
+    assert "Ship it" in workspace.admitted[-1]["body"]
+    return [edit["m.relates_to"]["event_id"] for edit in server.edits()]
+
+
+@on_loop
+async def test_an_answer_replying_to_an_older_bot_message_leaves_it_as_it_was(
+    workspace: Workspace,
+) -> None:
+    """The bot's other lines are words the room still reads, so an answer sent as a reply to one
+    answers the question and rewrites the question alone."""
+    assert await answered_under(workspace, OLDER) == [ASKED]
+
+
+@on_loop
+async def test_an_answer_replying_to_the_reply_leaves_the_reply_as_it_was(
+    workspace: Workspace,
+) -> None:
+    assert await answered_under(workspace, SAID) == [ASKED]
+
+
+@on_loop
+async def test_a_question_no_message_was_recorded_for_is_answered_and_left_unmarked(
+    workspace: Workspace,
+) -> None:
+    server = Homeserver()
+    installation = await open_question(server, workspace, recorded=False)
+    server.syncs["s2"] = batch("s3", {ROOM: [reply("$a1", ALICE, "1", ASKED)]})
+    await installation.step()
+    assert "Ship it" in workspace.admitted[-1]["body"]
     assert server.edits() == []
+
+
+@on_loop
+async def test_the_reply_a_question_came_with_survives_its_answer(workspace: Workspace) -> None:
+    """End to end: `post` sends the reply and the question apart and records the question, the bot
+    hears both, and a member answering by replying to the reply rewrites the question alone."""
+    server = Homeserver()
+    workspace.question = ROLLOUT
+    installation = await primed(server, workspace)
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "should we ship?")]})
+    await installation.step()
+    turn = UUID(str(workspace.admitted[-1]["turn_id"]))
+    wb = writeback(
+        TerminalFrame(status="done", text="Here is where the rollout stands.", question=ROLLOUT),
+        turn_id=turn,
+    )
+    reference = await installation.surface.post(workspace, wb)  # type: ignore[arg-type]
+    [said] = server.sent_under(txn_id(turn))
+    [asked] = server.sent_under(question_txn_id(turn))
+    assert reference == said["event_id"] != asked["event_id"]
+    assert said["body"] == "Here is where the rollout stands."
+    heard = [
+        text(said["event_id"], BOT, said["body"]),
+        text(asked["event_id"], BOT, asked["body"]),
+        reply("$a1", ALICE, "1", said["event_id"]),
+    ]
+    server.syncs["s2"] = batch("s3", {ROOM: heard})
+    await installation.step()
+    [edit] = server.edits()
+    assert edit["m.relates_to"]["event_id"] == asked["event_id"]
+    assert "Ship it \u2713" in edit["m.new_content"]["body"]
+    assert "rollout stands" not in edit["m.new_content"]["body"]
+    assert server.sent_under(txn_id(turn)) == [said]
 
 
 @on_loop
@@ -1280,11 +1377,13 @@ async def test_a_question_reaches_the_room_as_a_numbered_list_and_a_poll(
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
     wb = writeback(TerminalFrame(status="done", text="Ready.", question=ROLLOUT))
-    await surface.post(workspace, wb)  # type: ignore[arg-type]
-    [message] = server.sent_under(txn_id(wb.turn_id))
+    reference = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    [said] = server.sent_under(txn_id(wb.turn_id))
+    assert reference == said["event_id"] and said["body"] == "Ready."
+    [message] = server.sent_under(question_txn_id(wb.turn_id))
+    recorded = await read_asking(workspace, wb.turn_id)  # type: ignore[arg-type]
+    assert recorded == Asking(ROOM, message["event_id"])
     assert message["body"].splitlines() == [
-        "Ready.",
-        "",
         "Rollout",
         "",
         "Ship it?",
@@ -1305,10 +1404,24 @@ async def test_an_ask_of_several_questions_reaches_the_room_without_a_poll(
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
     wb = writeback(TerminalFrame(status="done", question=BOTH))
-    await surface.post(workspace, wb)  # type: ignore[arg-type]
-    [message] = server.sent_under(txn_id(wb.turn_id))
+    reference = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert server.sent_under(txn_id(wb.turn_id)) == []
+    [message] = server.sent_under(question_txn_id(wb.turn_id))
+    assert reference == message["event_id"]
     assert "1a. Ship it" in message["body"] and message["body"].endswith(LABELLED_HINT)
     assert server.sent_under(poll_txn_id(wb.turn_id)) == []
+
+
+@on_loop
+async def test_a_failed_turn_asks_nothing(workspace: Workspace) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="failed", question=ROLLOUT))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert [m["body"] for m in server.sent_under(txn_id(wb.turn_id))] == [FAILED_LINE]
+    assert server.sent_under(question_txn_id(wb.turn_id)) == []
+    assert server.sent_under(poll_txn_id(wb.turn_id)) == []
+    assert await read_asking(workspace, wb.turn_id) is None  # type: ignore[arg-type]
 
 
 @on_loop

@@ -39,6 +39,7 @@ from ufo.sdk.surfaces import (
     TerminalFrame,
 )
 from ufo_ext_matrix.answering import ANSWERING_TABLE
+from ufo_ext_matrix.asking import ASKING_TABLE
 from ufo_ext_matrix.client import MEDIA_PATH
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
@@ -223,7 +224,7 @@ async def extension_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SINCE_TABLE, ANSWERING_TABLE, CLAIM_TABLE, LINK_TABLE):
+    for table in (SINCE_TABLE, ANSWERING_TABLE, ASKING_TABLE, CLAIM_TABLE, LINK_TABLE):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
@@ -268,6 +269,9 @@ class Workspace:
     blob: Blob = field(default_factory=Blob)
     portal: bool = True
     question: AskUserInput | None = None
+    # Which question indexes are still open, None meaning all of them. Core keeps this record behind
+    # `answerable_question` and closes an index when an answer lands; here a test sets it outright,
+    # and an admitted answer closes nothing, so a redelivery is gated by the admission key alone.
     open_questions: frozenset[int] | None = None
     frames: tuple[LiveFrame, ...] = (Activity(text="reading the week"),)
     endless: bool = False

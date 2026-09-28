@@ -48,9 +48,9 @@ the recent 20 are the evidence the ambient decision reads.
 | A shared file | `POST /_matrix/media/v3/upload`, then `m.image` / `m.video` / `m.audio` / `m.file` under the reply |
 | A detailed write-up | A link in the reply to the portal, never an upload |
 | Words marked mid-turn | One message each, under `ufo-say-{reply_id}` |
-| A terminal `ask_user` | The words, its questions as a labelled list, and an `m.poll.start` where one question takes one choice |
+| A terminal `ask_user` | The words, then its questions as a labelled list in a message of their own under `ufo-question-{turn_id}`, and an `m.poll.start` where one question takes one choice |
 | A reply of labels, or a tap on the poll | The options it names, admitted under that event's id |
-| The answer that landed | An `m.replace` of the question, marking what was chosen, under `ufo-answered-{event_id}` |
+| The answer that landed | An `m.replace` of the question's own message, marking what was chosen, under `ufo-answered-{event_id}` |
 | A turn that is running | `POST .../receipt/m.read/{eventId}`, then `PUT .../typing/{userId}` refreshed until the turn ends |
 
 A direct room is a room like any other, so a room's audience only ever narrows: once anyone who is
@@ -60,8 +60,8 @@ The transaction id is the turn's, so a retried delivery is the same transaction 
 answers it with the event it already sent. Each file is sent under `ufo-file-{turn_id}-{artifact_id}`
 and each mid-turn reply under `ufo-say-{reply_id}`, so a delivery recovered after a crash re-sends
 none of them. A turn whose whole answer is silence sends nothing. A question is written out with
-numbered options; a connect or credential handoff points at the workspace, since a room carries
-neither. A cancelled turn posts the reason core gave — an archived conversation, a removed seat — or,
+numbered options, apart from the words, and `matrix_ext_asking` records which message carries it; a
+connect or credential handoff points at the workspace, since a room carries neither. A cancelled turn posts the reason core gave — an archived conversation, a removed seat — or,
 with none, that it was stopped.
 
 A whole event weighs at most 65536 bytes and a reply carries its words twice, so a reply over 4096
@@ -163,9 +163,10 @@ workspace's to know.
   which is the reading that never puts words the agent invented in their mouth.
 - **A question put to one member does not silence the others.** Another member's `1` is admitted as
   the words it is, the question stays open, and only the member it names answers it.
-- **A question is marked by the stream that heard it asked.** The rewrite needs the message the bot
-  asked in, which the stream learns by hearing the bot's own line; a stream restarted between the
-  question and its answer admits the answer and leaves the list unmarked.
+- **Only the question is rewritten.** The mark lands on the message `post` recorded as the turn's
+  question, whatever the answer replied to — the words the question came with, or any older line of
+  the bot's, stay as the room read them. A question too long for one event is answered and left
+  unmarked, since rewriting its first part would strand the rest.
 - **A poll carries one question and one choice.** An ask of several questions, or one that takes
   several answers, reaches the room as the labelled list alone.
 - **Typing is not delivery.** The hub is lossy, so a frame that never arrives costs the room an

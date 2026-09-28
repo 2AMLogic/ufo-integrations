@@ -1,7 +1,7 @@
 """The manifest against the real runtime: the installed entry point loads through ufo's own loader,
 the surface registers as durable with all three of its delivery handlers, the tools validate beside
 every builtin, the setup action addresses as the `matrix` surface row's own, the skill parses into
-the registry, and the migrations land the since, answering, claim and link tables on a fresh
+the registry, and the migrations land the since, answering, asking, claim and link tables on a fresh
 database. Skipped where `ufo` is not installed."""
 
 import sqlite3
@@ -115,6 +115,13 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "room_id",
             "event_id",
             "thread_root",
+            "created_at",
+        ]
+        assert columns("matrix_ext_asking") == [
+            "workspace_id",
+            "turn_id",
+            "room_id",
+            "event_id",
             "created_at",
         ]
         assert columns("matrix_ext_claim") == [

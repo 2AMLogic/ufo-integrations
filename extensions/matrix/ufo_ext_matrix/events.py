@@ -118,6 +118,13 @@ def answer_txn_id(event_id: str) -> str:
     return f"ufo-answered-{event_id}"
 
 
+def question_txn_id(turn_id: UUID) -> str:
+    """The transaction id one turn's question is sent under, apart from its reply. A turn asks once,
+    so a repeated delivery reaches the homeserver as the transaction it already answered and gets
+    back the event id the question already carries."""
+    return f"ufo-question-{turn_id}"
+
+
 def poll_txn_id(turn_id: UUID) -> str:
     """The transaction id one turn's poll is sent under. A turn asks once, so a repeated delivery
     reaches the homeserver as the transaction it already answered."""
