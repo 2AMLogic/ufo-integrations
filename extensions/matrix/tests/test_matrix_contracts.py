@@ -244,10 +244,14 @@ def test_deploy_keys_are_bare_names_core_prefixes() -> None:
     ids=lambda p: str(p.relative_to(EXTENSION)),
 )
 def test_no_transition_language(path: Path) -> None:
+    """Every file reads as if designed this way from the start.
+
+    `PROTOCOL_NAMES` is struck out before the search, deliberately scoped to a dotted Matrix event
+    or algorithm name — `m.olm.v1.curve25519-aes-sha2` and `m.megolm.v1.aes-sha2` carry a protocol
+    version that is a wire identifier, not transition language. It needs a standalone dotted token,
+    so a bare `v1` in prose still fails; widening it is a visible choice, not a side effect."""
     if path.name == "test_matrix_contracts.py":
         return
-    """A Matrix algorithm name such as the Olm one carries its protocol version, which is a wire
-    identifier and not transition language."""
     assert TRANSITION_WORDS.search(PROTOCOL_NAMES.sub("", path.read_text())) is None
 
 
@@ -294,12 +298,25 @@ def test_a_skill_closes_with_traps(name: str) -> None:
     assert "## Traps" in body
 
 
+SILENCES = (
+    '[pack] name = "assistant"',
+    "matrix_store_key",
+    "matrix-e2ee",
+    "matrix.crypto_store_locked",
+    "second client",
+    "same user",
+    "never invited",
+)
+
+
 def test_setup_names_every_silence_a_misconfigured_bot_answers_with() -> None:
-    """Each of the four presents only as the agent not answering, so a reader who has one of them and
-    not this list has nothing to go on."""
+    """Every one of these presents only as the agent not answering, so a reader who has one of them
+    and not this list has nothing to go on. An encrypted room is four of them: the store-key slot
+    unfilled, the crypto extra absent from the deploy, the store key changed under a device that had
+    keys, and the bot's token in a second client publishing over its device."""
     traps = (SKILLS_ROOT / "matrix-setup" / "SKILL.md").read_text().split("## Traps", 1)[1]
-    for tell in ('[pack] name = "assistant"', "m.room.encrypted", "same user", "never invited"):
-        assert tell in traps
+    for tell in SILENCES:
+        assert tell in traps, tell
 
 
 def test_a_plain_text_message_is_a_member_message() -> None:

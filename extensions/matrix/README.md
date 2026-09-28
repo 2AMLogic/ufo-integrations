@@ -232,6 +232,13 @@ workspace's to know.
 - **An empty store key is a bot with no device keys.** Without `matrix_store_key` the bot hears
   nothing it can read in an encrypted room, and a reply into one is refused rather than sent in
   the clear.
+- **A deploy without the `matrix-e2ee` extra reads no encrypted room.** Unencrypted rooms are served
+  as ever; an encrypted one logs `matrix.crypto_extra_missing` naming the extra, and a reply into one
+  is refused with the same sentence. The store key does not substitute for the extra, nor the extra
+  for the store key.
+- **An event that will not decrypt is a dropped event.** A plaintext that does not read as a Matrix
+  event is logged as `matrix.undecryptable` with its error class and skipped. It is never retried
+  into a stalled stream, so one malformed sender cannot silence a bot.
 - **A changed store key strands the device.** The store no longer opens, the bot logs
   `matrix.crypto_store_locked`, and encrypted rooms go quiet. Restore the old value, or issue a new
   token — a new device — to start a fresh store.
