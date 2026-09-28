@@ -98,8 +98,9 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "workspace_id",
             "series",
             "conversation_id",
+            "revision",
+            "projected_revision",
             "updated_at",
-            "projected_at",
         ]
 
 
@@ -187,5 +188,15 @@ def test_the_job_asks_only_for_workspaces_holding_unprojected_work() -> None:
     select that named every workspace would start a container per pulse conversation per tick."""
     compiled = str(record.due_projections())
     assert "pulse_ext_series" in compiled
-    assert "projected_at" in compiled
+    assert "projected_revision" in compiled
     assert "sighting" not in compiled and "covered" not in compiled
+
+
+def test_dueness_is_decided_by_a_counter_and_never_by_a_clock() -> None:
+    """A wall-clock watermark is only as monotonic as the clock behind it. A write stamped earlier
+    than a recorded projection reads as older than the file, and its rows stay out of the file
+    permanently — reproduced before this changed. Pinned against the compiled select so a later
+    edit cannot quietly reintroduce a time comparison."""
+    compiled = str(record.due_projections())
+    assert "updated_at" not in compiled
+    assert "revision" in compiled

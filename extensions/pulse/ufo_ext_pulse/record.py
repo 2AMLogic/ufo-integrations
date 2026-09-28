@@ -2,10 +2,12 @@
 this extension's own migration owns.
 
 **Why a table and not the workspace file alone.** The file lives at a workspace-relative path, which
-resolves against the working directory the turn's carrier starts in. That directory is not one
-place: an attended CLI run starts in the deploy home, a scheduled fire starts in the conversation's
-sandbox root. So one series accumulated one ledger per carrier, each complete-looking and neither
-aware of the other. On the demo deploy the `agent-runtimes` series had two `covered.jsonl` files of
+resolves against the working directory the turn's carrier starts in — and that is not one place. A
+conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own machine in that
+directory; any other conversation gets `workspace_root/<conversation_id>`. So the axis is whether a
+conversation is bound to a terminal, not whether a human was watching: several terminal-bound
+conversations share one tree, and an unbound one has a tree of its own. One series accumulated one
+ledger per tree, each complete-looking and none aware of the others. On the demo deploy the `agent-runtimes` series had two `covered.jsonl` files of
 15 rows each whose 2026-09-28 editions shared **no story at all** — six rows in each, zero overlap.
 The no-repeat rule was being enforced against whichever half the running carrier could see.
 
@@ -89,8 +91,9 @@ SERIES_TABLE = sa.Table(
     sa.Column("workspace_id", sa.Uuid(), _workspace(), primary_key=True),
     sa.Column("series", sa.Text(), primary_key=True),
     sa.Column("conversation_id", sa.Uuid(), nullable=False),
+    sa.Column("revision", sa.BigInteger(), nullable=False),
+    sa.Column("projected_revision", sa.BigInteger(), nullable=True),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-    sa.Column("projected_at", sa.DateTime(timezone=True), nullable=True),
 )
 
 
@@ -230,9 +233,16 @@ async def _touch_series(
 ) -> None:
     """Mark this series advanced, inside the same transaction as the rows that advanced it.
 
-    `updated_at` moving past `projected_at` is the only thing that makes the projection job open a
-    sandbox, so stamping it anywhere but here would let a write land with no projection to follow —
+    `revision` moving past `projected_revision` is the only thing that makes the projection job open
+    a sandbox, so bumping it anywhere but here would let a write land with no projection to follow —
     or, worse, schedule one for a write that then rolled back.
+
+    It is a counter and not the clock, which is the fix for a real fault rather than a preference. A
+    wall-clock watermark is only as monotonic as the clock behind it, and a write stamped earlier
+    than an already-recorded projection reads as older than the file: its rows are in the record,
+    the series is not due, and nothing brings the projection back for them until some later write
+    happens to carry a larger stamp. Reproduced before this changed — two rows recorded, `due_series`
+    empty, the file holding neither.
 
     `conversation_id` is where the projection lands. It is carried on every write rather than set
     once, because a series is where it is currently being worked on: a member who moves a brief to a
@@ -242,7 +252,10 @@ async def _touch_series(
     where = sa.and_(
         SERIES_TABLE.c.workspace_id == ctx.workspace_id, SERIES_TABLE.c.series == series
     )
-    values: dict[str, Any] = {"updated_at": now}
+    values: dict[str, Any] = {
+        "revision": SERIES_TABLE.c.revision + 1,
+        "updated_at": now,
+    }
     if conversation_id is not None:
         values["conversation_id"] = conversation_id
     updated = await connection.execute(sa.update(SERIES_TABLE).where(where).values(**values))
@@ -257,8 +270,9 @@ async def _touch_series(
                 workspace_id=ctx.workspace_id,
                 series=series,
                 conversation_id=conversation_id,
+                revision=1,
+                projected_revision=None,
                 updated_at=now,
-                projected_at=None,
             )
         )
 
@@ -271,21 +285,26 @@ def due_projections() -> sa.Select:
     files nothing had changed — `ConversationFiles.write` opens a sandbox rather than reusing a live
     one, so an unconditional projection is not a cheap no-op.
     """
-    return sa.select(SERIES_TABLE.c.workspace_id).where(
-        sa.or_(
-            SERIES_TABLE.c.projected_at.is_(None),
-            SERIES_TABLE.c.projected_at < SERIES_TABLE.c.updated_at,
+    return (
+        sa.select(SERIES_TABLE.c.workspace_id)
+        .where(
+            sa.or_(
+                SERIES_TABLE.c.projected_revision.is_(None),
+                SERIES_TABLE.c.projected_revision < SERIES_TABLE.c.revision,
+            )
         )
-    ).distinct()
+        .distinct()
+    )
 
 
-async def due_series(ctx: Transactional) -> list[tuple[str, UUID, datetime]]:
-    """The bound workspace's series awaiting a projection, with where to land it and how far the
-    record had advanced when this read ran.
+async def due_series(ctx: Transactional) -> list[tuple[str, UUID, int]]:
+    """The bound workspace's series awaiting a projection, with where to land it and the revision
+    the record stood at when this read ran.
 
-    The `updated_at` read here is what the projection is later stamped with — never `now`. A write
-    landing while the files are being rendered would otherwise be marked projected by a run that
-    never saw it, and its rows would sit outside the file until something else moved the series.
+    That revision is what the projection is later stamped with — never the revision at marking
+    time. A write landing while the files are being rendered would otherwise be marked projected by
+    a run that never saw it, and its rows would sit outside the file until something else moved the
+    series.
     """
     async with ctx.transaction() as connection:
         rows = (
@@ -293,26 +312,27 @@ async def due_series(ctx: Transactional) -> list[tuple[str, UUID, datetime]]:
                 sa.select(
                     SERIES_TABLE.c.series,
                     SERIES_TABLE.c.conversation_id,
-                    SERIES_TABLE.c.updated_at,
+                    SERIES_TABLE.c.revision,
                 )
                 .where(
                     SERIES_TABLE.c.workspace_id == ctx.workspace_id,
                     sa.or_(
-                        SERIES_TABLE.c.projected_at.is_(None),
-                        SERIES_TABLE.c.projected_at < SERIES_TABLE.c.updated_at,
+                        SERIES_TABLE.c.projected_revision.is_(None),
+                        SERIES_TABLE.c.projected_revision < SERIES_TABLE.c.revision,
                     ),
                 )
                 .order_by(SERIES_TABLE.c.series)
             )
         ).all()
-    return [(r.series, _as_uuid(r.conversation_id), r.updated_at) for r in rows]
+    return [(r.series, _as_uuid(r.conversation_id), r.revision) for r in rows]
 
 
-async def mark_projected(ctx: Transactional, series: str, through: datetime) -> None:
-    """Record that the files carry this series' record as far as `through`.
+async def mark_projected(ctx: Transactional, series: str, through: int) -> None:
+    """Record that the files carry this series' record as far as revision `through`.
 
-    Guarded on `projected_at < through` so a slow run cannot drag the mark backwards past a newer
-    projection that already overtook it.
+    Guarded on `projected_revision < through` so a slow run cannot drag the mark backwards past a
+    newer projection that already overtook it — which would send the next tick to re-render a file
+    that was already current, forever, for as long as two runs kept overlapping.
     """
     async with ctx.transaction() as connection:
         await connection.execute(
@@ -321,11 +341,11 @@ async def mark_projected(ctx: Transactional, series: str, through: datetime) -> 
                 SERIES_TABLE.c.workspace_id == ctx.workspace_id,
                 SERIES_TABLE.c.series == series,
                 sa.or_(
-                    SERIES_TABLE.c.projected_at.is_(None),
-                    SERIES_TABLE.c.projected_at < through,
+                    SERIES_TABLE.c.projected_revision.is_(None),
+                    SERIES_TABLE.c.projected_revision < through,
                 ),
             )
-            .values(projected_at=through)
+            .values(projected_revision=through)
         )
 
 

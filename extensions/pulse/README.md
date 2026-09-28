@@ -49,8 +49,10 @@ without the writer or the contracts.
 The extension declares four skills, three tools, one job, and the migration behind them. The tools
 exist for one reason: **a brief's carriers do not share a working directory.** The ledger and the
 pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
-turn started in — the deploy home for an attended CLI run, the conversation's sandbox root for a
-scheduled fire. One series therefore grew one ledger per carrier, each looking complete.
+turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
+machine in that directory; any other conversation gets `workspace_root/<conversation_id>`. So the
+split is by *terminal binding*, not by whether a human was watching — on the demo deploy eight
+conversations share one `client:` tree and one `local:` conversation has its own.
 
 That is not a hypothesis. On the demo deploy the `agent-runtimes` series had two
 `covered.jsonl` files of 15 rows each, and for edition 2026-09-28 they shared **no story at all**:
@@ -240,11 +242,12 @@ series in either store.
 - **A workspace-relative path is not one place.** `bash`, `read` and `write` are core builtins
   (`host/tools/builtins.py`), present for every turn including a scheduled fire, and
   `ToolContext.sandbox` is non-optional — so a fire *can* run a script, and does. What differs is
-  where it starts: the deploy home under an attended CLI run, the conversation's sandbox root under
-  a fire. A store at `pulse/<series>.jsonl` is a different file in each. An earlier version of this
-  README said the opposite — that a fire had "no filesystem at all" — and that claim was wrong and
-  cost a whole design built on it. Check a ledger's row count from both trees before believing
-  either.
+  where it starts, and `conversation.sandbox_handle` is what says: `client:<cwd>` runs on the
+  member's machine in that directory, anything else under `workspace_root/<conversation_id>`. A
+  store at `pulse/<series>.jsonl` is a different file in each. An earlier version of this README
+  said the opposite — that a fire had "no filesystem at all" — and that claim was wrong and cost a
+  whole design built on it. `select id, sandbox_handle from conversation` is the check that settles
+  it.
 - **The tables are per workspace, the files are per conversation.** `pulse_recall` is the record;
   a file is a copy of it that lands where the series is being worked on. Moving a brief to a new
   conversation moves the file with it on the next projection and moves no rows, which is the

@@ -1,10 +1,11 @@
 """The three calls that keep a brief series' record in one place.
 
 Two write, one reads. They exist because the record used to be a file at a workspace-relative path,
-which resolves against whatever directory the turn's carrier started in — the deploy home for an
-attended CLI run, the conversation's sandbox root for a scheduled fire. One series therefore grew
-one ledger per carrier, each looking complete and none of them whole. These write to tables instead,
-keyed by workspace and series, which every turn in the workspace reaches identically.
+which resolves against whatever directory the turn's carrier started in: a conversation bound to a
+terminal (`sandbox_handle` of `client:<cwd>`) writes on the member's machine in that directory,
+and any other conversation writes under `workspace_root/<conversation_id>`. One series therefore
+grew one ledger per tree, each looking complete and none of them whole. These write to tables
+instead, keyed by workspace and series, which every turn in the workspace reaches identically.
 
 **Nothing here writes a file.** `ExtensionContext.files` is `None` in every extension tool handler —
 core wires that seam for the job runner and for surface contexts, and `turn_tools` does not wire it
@@ -110,8 +111,9 @@ async def record_sightings(ctx: ToolContext, args: RecordSightingsInput) -> Tool
     )
     return _said(
         f"recorded {written} sighting{'' if written == 1 else 's'} in {args.series}. "
-        f"The workspace copy at {record.seen_projection(args.series)} follows within minutes; "
-        "the record is already durable and pulse_recall reads it now."
+        f"The record is durable now and pulse_recall reads it. The workspace copy at "
+        f"{record.seen_projection(args.series)} is written separately by a job and may lag, or "
+        "wait — a conversation bound to a terminal takes a file only while that terminal is live."
     )
 
 
@@ -130,9 +132,10 @@ async def record_edition(ctx: ToolContext, args: RecordEditionInput) -> ToolResu
     )
     return _said(
         f"recorded {written} stor{'y' if written == 1 else 'ies'} in {args.series} "
-        f"edition {args.edition}. The workspace copy at "
-        f"{record.covered_projection(args.series)} follows within minutes; the record is already "
-        "durable and pulse_recall reads it now."
+        f"edition {args.edition}. The record is durable now and pulse_recall reads it. The "
+        f"workspace copy at {record.covered_projection(args.series)} is written separately by a "
+        "job and may lag, or wait — a conversation bound to a terminal takes a file only while "
+        "that terminal is live."
     )
 
 

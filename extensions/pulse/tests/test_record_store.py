@@ -185,10 +185,10 @@ async def test_the_record_does_not_depend_on_where_the_turn_started(
 ) -> None:
     """The regression test for the fault that motivated all of this.
 
-    A brief's carriers do not share a working directory: an attended CLI run starts in the deploy
-    home, a scheduled fire starts in the conversation's sandbox root. The record has to be the same
-    record from both. Reading it from two different directories is how that is asserted, because
-    that is exactly the difference the old store could not survive.
+    A brief's carriers do not share a working directory: a conversation bound to a terminal runs in
+    that terminal's own directory, one that is not runs under `workspace_root/<conversation_id>`.
+    The record has to be the same record from both. Reading it from two different directories is how
+    that is asserted, because that is exactly the difference the old store could not survive.
     """
     here, there = tmp_path / "deploy-home", tmp_path / "sandbox-root"
     here.mkdir()
@@ -420,6 +420,78 @@ async def test_a_write_landing_during_a_projection_stays_due(store: Store) -> No
     store.files = Files(on_write=landing_mid_render)
     await jobs.project(store)
     assert [series for series, _, _ in await record.due_series(store)] == [SERIES]
+
+
+@on_store
+async def test_a_write_stamped_before_the_last_projection_is_still_due(store: Store) -> None:
+    """The regression test for a series that went permanently unprojectable.
+
+    Dueness was `projected_at < updated_at`, both wall-clock. A write whose `now` preceded an
+    already-recorded projection — clock skew, a replayed job, two writers disagreeing about now —
+    read as older than the file. Its rows were in the record, the series was not due, and nothing
+    brought the projection back. Measured before the fix: two rows recorded, `due_series` empty,
+    the file holding neither. A counter cannot go backwards, so this asks for the worst case the
+    clock allowed and expects the series still due.
+    """
+    conversation = uuid4()
+    late = datetime(2026, 9, 28, 14, 0, tzinfo=UTC)
+    early = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-21", "acme-1-0")], late, conversation
+    )
+    await jobs.project(job_store(store))
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-22", "beta-2", url="https://x/2")], early, conversation
+    )
+    assert [series for series, _, _ in await record.due_series(store)] == [SERIES]
+    store.files = Files()
+    await jobs.project(store)
+    assert store.files.text("pulse/data-infra.seen.jsonl").count("\n") == 2
+
+
+@on_store
+async def test_a_slow_run_cannot_drag_the_mark_back_past_a_newer_projection(store: Store) -> None:
+    """Two projections overlapping: the later one finishes first and marks a higher revision, and
+    the straggler must not undo it. Without the guard the series reads as due forever, and every
+    tick re-renders a file that was already current."""
+    conversation = uuid4()
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "a-1")], NOW, conversation)
+    stale = (await record.due_series(store))[0][2]
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-22", "b-2", url="https://x/2")], NOW, conversation
+    )
+    current = (await record.due_series(store))[0][2]
+    assert current > stale
+
+    await record.mark_projected(store, SERIES, current)
+    await record.mark_projected(store, SERIES, stale)
+    assert await record.due_series(store) == []
+
+
+@on_store
+async def test_a_series_worked_on_elsewhere_moves_its_files_with_it(store: Store) -> None:
+    """The conversation is carried on every write rather than set once, so a brief a member moves
+    to a new conversation gets its files there rather than in the one they left. Documented in the
+    README, so it is asserted here rather than left to the reader to believe."""
+    first, second = uuid4(), uuid4()
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "a-1")], NOW, first)
+    await jobs.project(job_store(store))
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-22", "b-2", url="https://x/2")], NOW, second
+    )
+    assert [where for _, where, _ in await record.due_series(store)] == [second]
+
+
+@on_store
+async def test_a_write_that_does_not_know_its_conversation_leaves_the_binding(store: Store) -> None:
+    """The other half of the same rule: an unbound write advances the record without clearing
+    where the files go."""
+    bound = uuid4()
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "a-1")], NOW, bound)
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-22", "b-2", url="https://x/2")], NOW, None
+    )
+    assert [where for _, where, _ in await record.due_series(store)] == [bound]
 
 
 @on_store

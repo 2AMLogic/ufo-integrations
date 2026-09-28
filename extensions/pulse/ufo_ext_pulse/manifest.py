@@ -10,8 +10,9 @@ where nothing happened.
 
 **The store is this extension's own, and that is the whole of why it owns tools and a job.** The
 ledger and the pool began as workspace files at a workspace-relative path, which resolves against
-the directory the turn's carrier started in: the deploy home for an attended CLI run, the
-conversation's sandbox root for a scheduled fire. One series therefore grew one ledger per carrier.
+the directory the turn's carrier started in — the member's own machine for a conversation bound to a
+terminal, `workspace_root/<conversation_id>` for one that is not. One series therefore grew one
+ledger per tree.
 On the demo deploy the `agent-runtimes` series had two of them, 15 rows each, whose 2026-09-28
 editions shared no story at all — and the no-repeat rule was enforced against whichever half the
 running carrier could see. The rows now land in tables keyed by workspace and series, which every

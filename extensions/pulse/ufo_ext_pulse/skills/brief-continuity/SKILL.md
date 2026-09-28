@@ -14,8 +14,8 @@ published, written by the run that published it and read by the run after.
 
 **Write it with `pulse_record_edition` and read it with `pulse_recall`.** Both are tools, and that
 is forced rather than stylistic: a script writes to a path resolved against the directory the turn
-started in, and a brief's carriers do not share one. An attended run starts in the deploy home; a
-scheduled fire starts in the conversation's sandbox root. A series run from both grows **two**
+started in, and a brief's carriers do not share one. A conversation bound to a terminal runs in that
+terminal's directory; one that is not has a tree of its own. A series run from both grows **two**
 ledgers, each looking complete, and the no-repeat rule then governs whichever half happens to be
 visible. That is measured, not feared — one series on the demo deploy had two ledgers whose most
 recent edition shared no story at all. Never in memory either: `task-scheduling` keeps an

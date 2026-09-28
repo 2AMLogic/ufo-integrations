@@ -1,9 +1,10 @@
 """pulse's tables: the historical record a brief series builds, one row at a time.
 
 **Why a table.** The record used to be a JSON Lines file at a workspace-relative path, which
-resolves against the working directory the turn's carrier happens to start in — the deploy home for
-an attended CLI run, the conversation's sandbox root for a scheduled fire. So one series accumulated
-one ledger per carrier, and neither knew about the other. Measured on the demo deploy: the
+resolves against the working directory the turn's carrier happens to start in. A conversation whose
+`sandbox_handle` is `client:<cwd>` runs on the member's own machine in that directory; any other
+conversation gets `workspace_root/<conversation_id>`. So one series accumulated one ledger per tree,
+and none of them knew about the others. Measured on the demo deploy: the
 `agent-runtimes` series had two `covered.jsonl` files, 15 rows each, and for edition 2026-09-28 they
 shared **no story at all** — six rows in each, zero overlap. Both were plausible, and the no-repeat
 rule was enforced against whichever half the running carrier could see.
@@ -70,12 +71,16 @@ def upgrade() -> None:
         sa.Column("workspace_id", sa.Uuid(), nullable=False),
         sa.Column("series", sa.Text(), nullable=False),
         sa.Column("conversation_id", sa.Uuid(), nullable=False),
+        # A counter, not a clock. Dueness is `projected_revision < revision`, and a wall-clock
+        # watermark makes that comparison only as monotonic as the clock behind it: a write stamped
+        # earlier than an already-recorded projection reads as "older than the file", so its rows
+        # land in the record and the projection never comes back for them. `revision = revision + 1`
+        # cannot go backwards under skew, a replayed job, or two writers disagreeing about now.
+        sa.Column("revision", sa.BigInteger(), nullable=False),
+        # Null until the first projection lands; otherwise the revision the file was rendered from.
+        sa.Column("projected_revision", sa.BigInteger(), nullable=True),
+        # Informational only — for a human reading the table, never for dueness.
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        # Null until the first projection lands. A series whose `updated_at` is newer than this has
-        # rows the workspace file does not carry yet, and that comparison is the whole of what the
-        # projection job selects on: a job that woke for every series would open a container per
-        # conversation per tick to rewrite files nothing had changed.
-        sa.Column("projected_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["workspace_id"], ["workspace.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("workspace_id", "series"),
     )

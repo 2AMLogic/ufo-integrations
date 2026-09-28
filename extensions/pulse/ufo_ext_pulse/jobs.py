@@ -18,6 +18,11 @@ committed by the tool that wrote them. A conversation whose sandbox cannot be op
 a stale copy of a file, never a lost row, and the right response is to leave the mark unmoved and
 let the next tick try again. So one series' failure is logged and skipped rather than raised, which
 would abandon every series after it in the same workspace.
+
+This is an ordinary state rather than an alarm: a terminal-bound conversation takes a file only
+while that terminal is connected, so a brief whose member has closed their session stays due until
+they open one. That is why the failure is logged per series and the series left due, and why nothing
+here escalates on a run of them.
 """
 
 from __future__ import annotations

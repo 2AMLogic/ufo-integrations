@@ -120,8 +120,8 @@ spec:
     every candidate in the sightings pool with the pulse_record_sightings tool — everything seen,
     one row per sighting, each with its source, in one call. Use the tool and not a script: a
     script writes to a path resolved against this fire's own working directory, which is not the
-    one an attended run starts in, and a series recorded from both keeps two ledgers that each
-    look complete. Load coverage-honesty and set each source's state as its read returns,
+    one a terminal-bound conversation starts in, and a series recorded from both keeps two ledgers
+    that each look complete. Load coverage-honesty and set each source's state as its read returns,
     recording each one under today's date with brief-continuity's coverage.py: the edition that
     covers this window counts those rows, and a state nobody recorded here is a day it cannot
     account for. That store is still a workspace file and so still splits by carrier — record the
