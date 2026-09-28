@@ -36,6 +36,7 @@ import vodozemac as vz  # noqa: E402
 from crypto_fakes import MEGOLM, OLM, STORE_KEY, canonical, padded, unpadded  # noqa: E402
 from matrix_fakes import Workspace  # noqa: E402
 from test_matrix_integration import Api, on_loop, workspace_ctx, writeback  # noqa: E402
+from ufo_ext_matrix import crypto  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient  # noqa: E402
 from ufo_ext_matrix.crypto import (  # noqa: E402
     ROOM_KEY,
@@ -564,3 +565,43 @@ async def test_the_homeserver_announces_a_members_second_device(engine: Any, pai
             assert laptop.decrypt(answer["content"])["content"]["body"] == "The answer, in full."
         assert first != second
         assert phone.decrypt((await at_member.event(pair.room_id, second))["content"])
+
+
+@on_loop
+async def test_the_media_repository_holds_ciphertext_and_serves_it_where_we_ask(
+    engine: Any, pair: Pair
+) -> None:
+    """The two claims about sealed media that only a homeserver can answer.
+
+    **Where the bytes are served from.** `download` reads the authenticated client endpoint rather
+    than the media repository's own, because a homeserver holding `enable_authenticated_media` — the
+    Synapse default — does not serve authenticated media on the unauthenticated one.
+
+    The fake refuses the old endpoint too, so the fake suite catches a client that reverts to it.
+    What the fake cannot catch is the two of them being wrong together: its routing and the client's
+    path were written from one belief about which endpoint serves, so they agree by construction. A
+    fake cannot falsify the assumption it was built from. Only the homeserver can, and this asks it.
+
+    **What the repository holds.** An `EncryptedFile` is sealed before it is uploaded, so the object
+    behind the `mxc://` is ciphertext and not the file. A fake serves back whatever it stored, which
+    is true whether or not anything sealed it."""
+    plaintext = b"the quarterly numbers, in confidence" * 8
+    ciphertext, sealed = crypto.seal_file(plaintext)
+
+    async with MatrixClient(HOMESERVER, pair.bot_token) as client:
+        uri = await client.upload("q3.bin", "application/octet-stream", ciphertext)
+        fetched = await client.download(uri)
+
+    server, media_id = uri.removeprefix("mxc://").split("/", 1)
+    async with Api(pair.bot_token) as api:
+        unauthenticated = await api.get_status(
+            f"/_matrix/media/v3/download/{quote(server, safe='')}/{quote(media_id, safe='')}"
+        )
+
+    assert unauthenticated >= 400, (
+        "the unauthenticated media endpoint served authenticated media, so the endpoint "
+        "`download` reads is no longer the one that has to be read"
+    )
+    assert fetched == ciphertext
+    assert fetched != plaintext
+    assert crypto.open_file({**sealed, "url": uri}, fetched) == plaintext
