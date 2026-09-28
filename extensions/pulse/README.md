@@ -126,7 +126,8 @@ active, rather than this extension's.
 One JSON Lines file per series at `pulse/<series>.covered.jsonl` in the conversation workspace, one
 row per story per edition, append-only. The path is workspace-relative and resolves against the
 working directory a sandbox command starts in, so the file lands where the member can open it and
-where every carrier lets a command write.
+where a carrier that runs commands can write. A turn reaching the surface without one writes no
+ledger at all — see Traps.
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series data-infra --editions 5
@@ -160,6 +161,14 @@ story's history across the series.
 - **Recall is empty rather than unavailable.** With no `UFO_OPENAI_API_KEY` nothing reaches the
   index, and the silence a pulse turn's opening `memory_search` returns is the same silence a new
   field returns.
+- **A turn with no carrier writes no ledger, and says so only in the brief.** The file tools are
+  the client's, not an extension's: no manifest in the active set declares one, so a turn driven
+  straight at the `ufo` surface over HTTP — no client attached, no `--remote` sandbox — has no
+  filesystem at all. It still gathers, ranks and writes a full edition; it just cannot record what
+  it published. The edition opens with a line about not being able to save files and the ledger is
+  never created, so the next edition reads an empty ledger and repeats the last one. Drive a pulse
+  through the `ufo` client or a `--remote` sandbox; a brief that looks right is not evidence the
+  series does.
 
 ## Tests
 
