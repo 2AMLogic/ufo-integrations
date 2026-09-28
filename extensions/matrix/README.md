@@ -88,6 +88,33 @@ history back from the gap to where the stream stood, 100 messages a page for at 
 hears what it finds ahead of the timeline. A message that fails to admit is logged by error class and
 skipped, and one bot's failure backs that bot off without stopping the others.
 
+## Homeserver
+
+The bot lives on a homeserver, and the `matrix_homeserver` slot is the only thing that names which.
+Three answers are in use, and they differ in one place: whom the homeserver vouches for.
+
+| Mode | Who runs it | A member's MXID | Becomes a member by |
+| --- | --- | --- | --- |
+| Own | The deploy, one homeserver behind one workspace | `@bob:acme.example`, the workspace's own domain | First contact |
+| Shared | One homeserver behind many workspaces | `@bob:ufo.example`, a domain no workspace owns | A code |
+| Elsewhere | Somebody else: a public homeserver, or an organisation's existing one | `@bob:matrix.org` | A code |
+
+An MXID whose server name is the workspace's own domain is a member on first contact, because the
+homeserver serving that domain vouches for its users the way a mail server does for addresses. Every
+other MXID is nobody until the member proves it with a code. Own mode is the mode that rule was
+written for; the other two never reach it, and pay one code exchange per member instead.
+
+Which means the mailbox trap below is own mode's to answer, and only own mode's. A deploy that runs
+its own homeserver decides who registers on it and can hold its usernames to mail names. A homeserver
+shared with other ufo users is one whose registrations somebody else decides — so a workspace there
+takes a domain of its own, or none, and never the shared server's name.
+
+A workspace with no domain of its own vouches for nobody, whichever homeserver it uses.
+
+Federation is what a member elsewhere crosses. A room reaches the bot only where the two homeservers
+federate, so a homeserver closed to federation serves the accounts it hosts and no others, in every
+mode.
+
 ## Linking a Matrix ID
 
 A member whose MXID lives on another homeserver — a public one, say — links it by proving they hold
@@ -356,7 +383,9 @@ workspace's to know.
 - **A homeserver username is taken to be a mailbox.** First contact links `@alice:example.com` to
   the member `alice@example.com`, so the homeserver must hand out usernames only to the people who
   hold those mailboxes. Disable open registration on it, and keep its usernames equal to mail names —
-  anyone who can register `@alice` before Alice does speaks as her.
+  anyone who can register `@alice` before Alice does speaks as her. A homeserver shared with other ufo
+  users is one whose registrations somebody else decides, so no workspace on it takes that server's
+  name as its own domain.
 - **A room of more than 50 others is foreign, and stays foreign.** Every joined user is resolved
   to a member before a room reads internal memory, and past 50 the surface does not ask. A room's
   audience only narrows: one that went foreign — past 50, or through a non-member who has since
