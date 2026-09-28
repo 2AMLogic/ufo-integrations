@@ -64,8 +64,6 @@ def upgrade() -> None:
         # it, and one edition cannot carry a story twice.
         sa.PrimaryKeyConstraint("workspace_id", "series", "edition", "slug"),
     )
-
-
     op.create_table(
         "pulse_ext_series",
         sa.Column("workspace_id", sa.Uuid(), nullable=False),

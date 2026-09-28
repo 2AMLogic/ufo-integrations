@@ -100,11 +100,12 @@ def test_the_scheduled_task_gathers_and_nothing_else() -> None:
 
 
 def test_the_scheduled_task_records_through_a_tool_and_not_a_script() -> None:
-    """The armed row is the prompt certain to run from the sandbox root rather than the deploy home,
-    so it is the one that must not reach for a script. A row telling the fire to run `seen.py`
-    writes a second ledger for the series in the fire's own tree, which is the fault this whole
-    store replaced — measured on the demo deploy as two `agent-runtimes` ledgers whose most recent
-    edition shared no story at all.
+    """The armed row is the prompt least likely to run where a member's own session does, since
+    nothing binds a scheduled fire to the terminal a series was set up from. So it is the one that
+    must not reach for a script: a row telling the fire to run `seen.py` writes a second ledger for
+    the series in whichever tree that fire started in, which is the fault this whole store replaced
+    — measured on the demo deploy as two `agent-runtimes` ledgers whose most recent edition shared
+    no story at all.
 
     It asserts the tool and the *absence* of the script, not a phrase, because the reason belongs in
     prose that can be rewritten. The earlier version of this test pinned the phrase "no client

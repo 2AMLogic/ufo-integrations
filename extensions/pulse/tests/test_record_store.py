@@ -1,8 +1,14 @@
 """The record in the tables pulse owns, and the workspace files projected from it.
 
-The property every one of these exists for is the one #120 named: **a fire with no carrier still
-records.** So the carrier here is a thing that can be absent or broken, and the assertions about a
-row never depend on a file having landed.
+The property every one of these exists for is that **the record is one record**: the same rows from
+every turn in the workspace, whatever carrier ran it and whatever directory it started in. That is
+what a workspace-relative file could not be, and it is why no assertion here about a row depends on
+a file having landed — the file is a copy, and a carrier that cannot take one is ordinary.
+
+(This module used to be organised around #120's claim that a carrier-less fire recorded nothing.
+That claim was withdrawn: a fire records, it just recorded somewhere else. The tests were right
+about what to assert and wrong about why, which is worth saying once rather than leaving a retracted
+premise standing as a module's authority.)
 
 Skipped without `ufo`, whose distribution carries sqlalchemy; the file-shaped contract tests beside
 this one still run on a checkout that has neither.

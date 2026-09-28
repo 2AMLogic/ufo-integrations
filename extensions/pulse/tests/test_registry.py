@@ -199,4 +199,8 @@ def test_dueness_is_decided_by_a_counter_and_never_by_a_clock() -> None:
     edit cannot quietly reintroduce a time comparison."""
     compiled = str(record.due_projections())
     assert "updated_at" not in compiled
-    assert "revision" in compiled
+    # `projected_revision` contains "revision", so asserting the substring alone passes on a select
+    # that names only the projection mark. Both columns have to be there for the comparison to be
+    # the one described.
+    assert "pulse_ext_series.revision" in compiled
+    assert "pulse_ext_series.projected_revision" in compiled

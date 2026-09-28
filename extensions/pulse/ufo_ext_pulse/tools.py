@@ -31,6 +31,7 @@ RECORD_SIGHTINGS_TOOL = "pulse_record_sightings"
 RECORD_EDITION_TOOL = "pulse_record_edition"
 RECALL_TOOL = "pulse_recall"
 
+
 class SightingInput(BaseModel):
     seen: str = Field(description="The date this lead was seen, YYYY-MM-DD.")
     slug: str = Field(description="The lead's stable identity, lowercase and hyphenated.")
