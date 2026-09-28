@@ -11,7 +11,7 @@ from conftest import SKILL_NAMES, SKILLS_ROOT  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
 
 
-def test_manifest_declares_three_skills_and_the_search_seam() -> None:
+def test_manifest_declares_four_skills_and_the_search_seam() -> None:
     manifest = pulse_manifest.manifest()
     assert manifest.name == "pulse"
     assert [spec.path.name for spec in manifest.skills] == list(SKILL_NAMES)
@@ -33,6 +33,11 @@ def test_each_skill_parses(name: str) -> None:
 
 def test_the_runtime_sees_the_dependency_wiring() -> None:
     assert set(parse_skill(SKILLS_ROOT / "field-pulse").depends) == {
+        "field-report",
+        "brief-continuity",
+        "coverage-honesty",
+    }
+    assert set(parse_skill(SKILLS_ROOT / "field-report").depends) == {
         "brief-continuity",
         "coverage-honesty",
     }
