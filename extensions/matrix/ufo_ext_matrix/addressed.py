@@ -32,11 +32,17 @@ def addresses(message: RoomMessage, bot: Bot) -> bool:
     """Whether the sender addressed the bot rather than the room."""
     return (
         bot.mxid in message.mentions
-        or f"{PERMALINK_ROOT}{bot.mxid}" in message.formatted_body
+        or pills(message.formatted_body, bot.mxid)
         or names(message.body, bot.mxid)
         or (bool(bot.display_name) and names(message.body, bot.display_name))
         or message.replying_to in bot.said
     )
+
+
+def pills(formatted_body: str, mxid: str) -> bool:
+    """Whether the HTML links to `mxid` itself rather than to an MXID on a longer server name."""
+    pattern = rf"{re.escape(PERMALINK_ROOT + mxid)}(?=[\"'?/<>\s]|$)"
+    return re.search(pattern, formatted_body) is not None
 
 
 def names(body: str, name: str) -> bool:

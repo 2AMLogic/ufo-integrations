@@ -14,11 +14,11 @@ import logging
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 pytest.importorskip("ufo", reason="install ufo from git to run the surface tests")
 
+import httpx  # noqa: E402
 import sqlalchemy as sa  # noqa: E402
 
 from matrix_fakes import (  # noqa: E402

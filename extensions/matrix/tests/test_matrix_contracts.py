@@ -292,11 +292,20 @@ def test_what_addresses_the_bot(content: dict) -> None:
         {"body": "lunch?"},
         {"m.mentions": {"user_ids": ["@alice:example.org"]}},
         {"formatted_body": '<a href="https://matrix.to/#/@alice:example.org">alice</a>: hey'},
+        {"formatted_body": f'<a href="https://matrix.to/#/{BOT}.evil">ufo</a>: hey'},
         {"body": "@ufobot:example.org summarize the week"},
         {"body": "ufology is a field"},
         {"m.relates_to": {"m.in_reply_to": {"event_id": "$alice"}}},
     ],
-    ids=["nobody", "someone-else", "their-pill", "a-longer-mxid", "a-longer-word", "their-message"],
+    ids=[
+        "nobody",
+        "someone-else",
+        "their-pill",
+        "a-longer-server",
+        "a-longer-mxid",
+        "a-longer-word",
+        "their-message",
+    ],
 )
 def test_what_addresses_somebody_else(content: dict) -> None:
     assert not addressed(**content)
