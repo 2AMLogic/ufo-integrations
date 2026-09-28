@@ -21,7 +21,7 @@ from ufo.host.ext import loader  # noqa: E402
 from ufo.host.ext.loader import migration_locations, validate_ext_tools  # noqa: E402
 from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
-from ufo_ext_pulse import record  # noqa: E402
+from ufo_ext_pulse import agent, record  # noqa: E402
 from ufo_ext_pulse.agent import (  # noqa: E402
     AGENT_NAME,
     BUSINESS_KEY,
@@ -257,3 +257,18 @@ def test_dueness_is_decided_by_a_counter_and_never_by_a_clock() -> None:
     # the one described.
     assert "pulse_ext_series.revision" in compiled
     assert "pulse_ext_series.projected_revision" in compiled
+
+
+def test_the_agent_prompt_names_the_record_tools() -> None:
+    """The standing prompt is the only instruction present on every turn of this agent — a skill's
+    is there once it loads, and the armed row's is frozen at apply time.
+
+    A live fire on 2026-09-28 had `brief-continuity` loaded, had the tools, and recorded by running
+    `python seen.py record …` from its shell anyway. Its two published stories went to the projected
+    file and were pending erasure. Naming the tools where the agent always sees them is the cheapest
+    remaining lever after removing the subcommand; this pins that they are named.
+    """
+    prompt = agent.AGENT_PROMPT
+    for tool in (RECORD_SIGHTINGS_TOOL, RECORD_EDITION_TOOL, RECALL_TOOL):
+        assert tool in prompt, f"the agent's standing prompt never names {tool}"
+    assert "erased" in prompt

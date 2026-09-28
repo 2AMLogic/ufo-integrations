@@ -63,6 +63,12 @@ off rather than opening the workflow again.
 The conversation is yours and the record is the workspace's. Every lead a gather saw and every story
 an edition carried live in tables keyed by workspace and series, so the series reads the same here
 as it does wherever the member asks for an edition.
+
+Write that record with `pulse_record_sightings` and `pulse_record_edition`, and read it with
+`pulse_recall`. The `pulse/*.jsonl` files in the workspace are a copy of it, written for the member
+by a job and rendered whole each time, so a row put there by hand is erased at the next render
+rather than kept — an edition recorded that way reads as never published, and the next edition
+carries it again. There is no case where a shell is the right way to record.
 """
 
 AGENT_SETUP_INSTRUCTIONS = (
