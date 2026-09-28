@@ -1,9 +1,9 @@
 """Collection gates for the matrix surface tests.
 
 The integration tests drive a real homeserver, so they are collected only where one is named, and
-one env var names it for all of them. The jobs that run the whole suite never set the gate: what
-they collect is unchanged, and the registry job's no-skip rule holds. The gate and what it expects
-of the homeserver are documented in `extensions/matrix/README.md`."""
+one env var names it for all of them. Every job that leaves the gate unset collects what it always
+did, and the registry job's no-skip rule holds. The gate and what
+it expects of the homeserver are documented in `extensions/matrix/README.md`."""
 
 import os
 
