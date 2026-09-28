@@ -42,6 +42,17 @@ the recent past. Set each source's state as its read returns, per `coverage-hone
 lives by: what an edition may repeat, and what it may claim about a source it could not read. They are
 loaded, not optional.
 
+Record every candidate in the sightings pool before ranking, with `brief-continuity`'s `seen.py` —
+everything the gather surfaced, not only what is about to be published. A sighting is a fact at the
+moment the source returned it; whether it clears the bar is a separate judgement made after, and
+recording the two at the same moment is how a pool ends up holding only what an edition already
+carried.
+
+The business-relative bar below makes this more valuable rather than less. It rejects more than a
+field-relative one did, and every rejection is a lead rather than nothing: a story that changes
+nothing for this business today is exactly the one that may change something next month, and the
+pool is what lets a later edition tell it apart from a lead that has gone quiet for good.
+
 Rank what you found, against the business rather than the field. Importance is whether this changes
 a decision, a plan, a cost, a risk or a dependency for *this* business — not whether someone working
 in the field would find it notable. The business sentence that chose the field is the same sentence
@@ -104,10 +115,12 @@ spec:
     brief-continuity and read the covered ledger for series <series> before ranking anything — a
     story the last five editions published is ineligible without a material new development. Load
     research-assistant and find what changed across <the confirmed sources> since the previous
-    edition. Load coverage-honesty and set each source's state as it returns; name every unread
-    source in the footer. Load research-report and write <series>-<date>.md. Record the published
-    stories with brief-continuity. Reply with the brief; when nothing clears the bar, say the
-    window was quiet and never lower the bar to fill it.
+    edition, and record every candidate it surfaces in the sightings pool with brief-continuity's
+    seen.py before ranking — everything seen, not only what you publish. Load coverage-honesty and
+    set each source's state as it returns; name every unread source in the footer. Load
+    research-report and write <series>-<date>.md. Record the published stories with
+    brief-continuity. Reply with the brief; when nothing clears the bar, say the window was quiet
+    and never lower the bar to fill it.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a
@@ -138,6 +151,7 @@ on, and that every edition lands in this conversation.
 - Skipping the ledger record on the first edition, which leaves the second one no baseline.
 - Letting the schedule's prompt name the sources while the ledger series name is left as a placeholder.
 - Writing a headline in the source's words rather than the reader's.
+- Recording only what you publish, which leaves the pool blind to every lead the bar rejected.
 - Padding a thin window to reach a story count, which turns a brief about this business back into a
   brief about its field.
 - Calling a window quiet over sources that went unread, which is the one claim `coverage-honesty`
