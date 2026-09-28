@@ -162,7 +162,7 @@ def test_the_runtime_carries_the_coverage_script_as_a_skill_file() -> None:
     assert "_jsonl_pool.py" in files
 
 
-def test_the_projection_is_a_job_because_only_a_job_can_write_a_file() -> None:
+def test_the_projection_is_declared_as_a_job() -> None:
     """The projection is declared as a job, which is where `jobs.py` argues it belongs: the copy
     follows the series rather than the turn that recorded, no sandbox is opened per write, and a
     record that advanced with no workspace to take a file is rendered whole on a later tick."""

@@ -18,8 +18,9 @@ workspace, whatever ran it and wherever it started. That is the property the fil
 **Why the file survives anyway.** It is the half a member can open. So it stays, as a *projection*:
 rendered whole from the tables and landed in the series' own conversation by `jobs.py` — a job
 rather than a tool so that the copy follows the series rather than whichever turn last recorded, and
-so a record that advanced with no workspace to write to is rendered whole later instead of lost. Rendering whole rather than appending is what
-keeps the two from drifting: there is no state in the file that the tables do not hold.
+so a record that advanced with no workspace to write to is rendered whole later instead of lost.
+Rendering whole rather than appending is what keeps the two from drifting: there is no state in the
+file that the tables do not hold.
 
 **The row shapes are the file's, unchanged.** A projected line is byte-identical to the line the
 scripts used to append, because the scripts are still the reader a member and a sandbox command use,
