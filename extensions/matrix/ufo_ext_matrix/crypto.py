@@ -971,7 +971,7 @@ class Device:
         try:
             await self.client.send_to_device(KEY_REQUEST, uuid4().hex, {sender: {"*": request}})
         except MatrixError as error:
-            log("matrix.key_request_failed", status=error.status)
+            log("matrix.key_request_failed", http_status=error.status)
 
     async def retry(self) -> list[tuple[str, Mapping[str, Any]]]:
         """The parked events whose keys have since arrived, oldest first. An event parked longer
@@ -1184,7 +1184,7 @@ async def device_for(ctx: SurfaceContext, client: MatrixClient) -> Device | None
     except MatrixError as error:
         if error.status == 429 or error.status >= 500 or error.unauthorized:
             raise
-        warn("matrix.crypto_keys_refused", status=error.status, errcode=error.errcode)
+        warn("matrix.crypto_keys_refused", http_status=error.status, errcode=error.errcode)
     return None
 
 

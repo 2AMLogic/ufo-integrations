@@ -76,6 +76,6 @@ def _best_effort(event: str) -> Iterator[None]:
     try:
         yield
     except MatrixError as error:
-        warn(event, status=error.status, errcode=error.errcode)
+        warn(event, http_status=error.status, errcode=error.errcode)
     except httpx.HTTPError as error:
         warn(event, error_class=type(error).__name__)

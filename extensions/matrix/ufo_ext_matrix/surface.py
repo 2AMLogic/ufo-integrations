@@ -496,7 +496,7 @@ class MatrixSurface:
                         "matrix.file_undelivered",
                         media_type=artifact.media_type,
                         error_class=type(error).__name__,
-                        status=error.status,
+                        http_status=error.status,
                     )
                 except sa.exc.SQLAlchemyError:
                     raise
@@ -698,7 +698,7 @@ class Installation:
                         "matrix.sync_failed",
                         installation=self.bot,
                         error_class=type(error).__name__,
-                        status=getattr(error, "status", None),
+                        http_status=getattr(error, "status", None),
                         errcode=getattr(error, "errcode", None),
                     )
                 if wait:
@@ -830,7 +830,7 @@ class Installation:
         try:
             body = await client.download(shared.url or (shared.sealed or {}).get("url", ""))
         except MatrixError as error:
-            log("matrix.file_unfetched", installation=self.bot, status=error.status)
+            log("matrix.file_unfetched", installation=self.bot, http_status=error.status)
             return None
         if len(body) > limit:
             log("matrix.file_oversize", installation=self.bot, fetched=len(body))
@@ -971,7 +971,7 @@ class Installation:
                 except MatrixError as error:
                     if not _refused(error):
                         raise
-                    log("matrix.room_unreadable", installation=self.bot, status=error.status)
+                    log("matrix.room_unreadable", installation=self.bot, http_status=error.status)
                     joined[room_id] = frozenset()
             if not joined[room_id]:
                 continue
@@ -1048,7 +1048,7 @@ class Installation:
                 except MatrixError as error:
                     if not _refused(error):
                         raise
-                    log("matrix.backfill_refused", installation=self.bot, status=error.status)
+                    log("matrix.backfill_refused", installation=self.bot, http_status=error.status)
                     break
                 found.extend(events)
             if page is not None:
@@ -1070,7 +1070,7 @@ class Installation:
         except MatrixError as error:
             if not _refused(error):
                 raise
-            log("matrix.join_refused", installation=self.bot, status=error.status)
+            log("matrix.join_refused", installation=self.bot, http_status=error.status)
 
     async def _proved(
         self,
