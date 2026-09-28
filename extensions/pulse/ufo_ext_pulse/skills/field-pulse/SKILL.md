@@ -104,8 +104,8 @@ early in the member's morning, before they would think to ask for an edition, re
 `<context>` header's `time:` line and converted to UTC. Carry no `run_now`: this turn gathered the
 window already, so an immediate fire would spend a full gather re-reading it. The pool itself is
 safe — one series, one day, one lead, one address is one row, so a second recording of this window
-adds nothing — but the coverage rows are still files and would double, and the gather is the
-expensive half either way.
+adds nothing — but the coverage rows are still files and would double in the fire's own tree, and
+the gather is the expensive half either way.
 
 ```yaml
 kind: scheduled_task
@@ -118,16 +118,16 @@ spec:
     Gather the <field> window for series <series>. Load research-assistant and find what changed
     across <the confirmed sources> since yesterday, bounding every query to that window. Record
     every candidate in the sightings pool with the pulse_record_sightings tool — everything seen,
-    one row per sighting, each with its source, in one call. Use the tool and not a script: this
-    fire has no client attached and therefore no command tool to run one with, and a gather that
-    recorded nothing is a window no later edition can recover. Load coverage-honesty and set each
-    source's state as its read returns, recording each one under today's date with
-    brief-continuity's coverage.py: the edition that covers this window counts those rows, and a
-    state nobody recorded here is a day it cannot account for. That store is still a workspace
-    file, so this fire will most likely fail to write it — say so and name which sources went
-    unrecorded. Rank nothing, write no report file, and record nothing in the covered ledger: the
-    edition is written when the member asks for one. The pool is this fire's whole product, so
-    send no brief.
+    one row per sighting, each with its source, in one call. Use the tool and not a script: a
+    script writes to a path resolved against this fire's own working directory, which is not the
+    one an attended run starts in, and a series recorded from both keeps two ledgers that each
+    look complete. Load coverage-honesty and set each source's state as its read returns,
+    recording each one under today's date with brief-continuity's coverage.py: the edition that
+    covers this window counts those rows, and a state nobody recorded here is a day it cannot
+    account for. That store is still a workspace file and so still splits by carrier — record the
+    states, and say in the reply that they went to this fire's own tree. Rank nothing, write no
+    report file, and record nothing in the covered ledger: the edition is written when the member
+    asks for one. The pool is this fire's whole product, so send no brief.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a

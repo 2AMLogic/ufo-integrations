@@ -37,13 +37,9 @@ With no edition in the ledger yet, the pool's own fourteen days are the window. 
 read rather than assumed:
 
 Call `pulse_recall` with the series. One call answers both: the leads seen in the last fourteen
-days, and every story the last five editions carried. Use it rather than the scripts — an edition
-written on a fire with no client has no command tool to run them with, and a script that cannot run
-reads as a series with no history.
-
-Run both from the workspace root, which is where a command starts: the pool and the ledger are
-workspace-relative, so a run that changes directory first reads two empty files and publishes an
-edition with nothing behind it.
+days, and every story the last five editions carried. Use it rather than the scripts — a script
+reads whichever copy of the ledger happens to sit in the directory this turn started in, and that
+is one tree's half of the series, not the series.
 
 The reply states the window as a span, and says how much of it the pool holds rows from.
 

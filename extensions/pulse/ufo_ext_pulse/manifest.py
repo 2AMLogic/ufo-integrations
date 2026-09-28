@@ -8,13 +8,19 @@ covered ledger that makes the next brief carry what the last one did not, and th
 report reads; `coverage-honesty` keeps a window nobody could read from being published as a window
 where nothing happened.
 
-**The store is this extension's own, and that is the whole of why it owns tools.** The ledger and
-the pool began as workspace files, written by running a skill's script. A command tool belongs to
-the terminal client, so a scheduled fire — the path a recurring brief actually runs on — wrote
-nothing at all, and `brief-continuity`'s no-repeat rule governed a ledger no unattended edition had
-ever added to (#120). The rows now land in two tables the extension's migration owns, reachable on
-every fire; the files stay as a projection rendered from those tables, because a member can open a
-file and cannot open a table.
+**The store is this extension's own, and that is the whole of why it owns tools and a job.** The
+ledger and the pool began as workspace files at a workspace-relative path, which resolves against
+the directory the turn's carrier started in: the deploy home for an attended CLI run, the
+conversation's sandbox root for a scheduled fire. One series therefore grew one ledger per carrier.
+On the demo deploy the `agent-runtimes` series had two of them, 15 rows each, whose 2026-09-28
+editions shared no story at all — and the no-repeat rule was enforced against whichever half the
+running carrier could see. The rows now land in tables keyed by workspace and series, which every
+turn reaches identically.
+
+The file stays, because a member can open a file and cannot open a table — but as a projection
+written by `jobs.py`, not by the tools. `ExtensionContext.files` is `None` in every tool handler and
+wired for the job runner, so the job is not a preference; it is the only place in this extension
+that can write one.
 
 Gathering is still `research`'s, the recurring row still `scheduled_tasks`', and the feed entry
 still `report_digest`'s. `requires` names the one seam a brief cannot be written without: a deploy
@@ -24,6 +30,7 @@ from pathlib import Path
 
 from ufo.sdk.manifest import Manifest, SkillSpec
 from ufo.sdk.tools import ToolDef
+from ufo_ext_pulse.jobs import JOB
 from ufo_ext_pulse.tools import (
     RECALL_TOOL,
     RECORD_EDITION_TOOL,
@@ -79,6 +86,7 @@ def manifest() -> Manifest:
                 handler=recall,
             ),
         ),
+        jobs=(JOB,),
         skills=tuple(SkillSpec(path=SKILLS_ROOT / name) for name in SKILL_NAMES),
         requires=("search_providers",),
     )

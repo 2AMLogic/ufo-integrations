@@ -100,13 +100,19 @@ def test_the_scheduled_task_gathers_and_nothing_else() -> None:
 
 
 def test_the_scheduled_task_records_through_a_tool_and_not_a_script() -> None:
-    """The armed row is the one prompt that is certain to fire with no client attached, so it is the
-    one that must not reach for a command tool. A row telling the fire to run `seen.py` is a row
-    that gathers a full window at full cost and records none of it — which is what it did, and what
-    #120 measured at $1.41 a fire."""
+    """The armed row is the prompt certain to run from the sandbox root rather than the deploy home,
+    so it is the one that must not reach for a script. A row telling the fire to run `seen.py`
+    writes a second ledger for the series in the fire's own tree, which is the fault this whole
+    store replaced — measured on the demo deploy as two `agent-runtimes` ledgers whose most recent
+    edition shared no story at all.
+
+    It asserts the tool and the *absence* of the script, not a phrase, because the reason belongs in
+    prose that can be rewritten. The earlier version of this test pinned the phrase "no client
+    attached" — which described a mechanism that turned out not to exist."""
     prompt = scheduled_manifest()["spec"]["prompt"]
+    assert "pulse_record_sightings" in prompt
     assert "seen.py" not in prompt
-    assert "no client attached" in prompt
+    assert "covered.py" not in prompt
 
 
 def test_the_scheduled_gather_records_each_source_state() -> None:

@@ -3,6 +3,7 @@ tools validate beside the builtins, and the migration this extension ships lands
 real database. Skipped where `ufo` is not installed — it is not on PyPI, so a checkout without it
 still runs every contract test beside this one."""
 
+import inspect
 import sqlite3
 from pathlib import Path
 
@@ -15,9 +16,12 @@ from conftest import SKILL_NAMES, SKILLS_ROOT  # noqa: E402
 from cryptography.fernet import Fernet  # noqa: E402
 
 from ufo.db import apply_migrations  # noqa: E402
+from ufo.host.ext import loader  # noqa: E402
 from ufo.host.ext.loader import migration_locations, validate_ext_tools  # noqa: E402
 from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
+from ufo_ext_pulse import record  # noqa: E402
+from ufo_ext_pulse.jobs import JOB_NAME, SCHEDULE  # noqa: E402
 from ufo_ext_pulse.tools import (  # noqa: E402
     RECALL_TOOL,
     RECORD_EDITION_TOOL,
@@ -35,8 +39,8 @@ def test_manifest_declares_four_skills_and_the_search_seam() -> None:
 
 
 def test_the_three_record_tools_validate_beside_the_builtins() -> None:
-    """The extension owns tools because a scheduled fire carries no command tool to run a script
-    with, so the record has to be reachable through the manifest rather than through a client."""
+    """The extension owns tools because the record has to be one record: a script writes to a path
+    resolved against the turn's working directory, and a brief's carriers do not share one."""
     manifest = pulse_manifest.manifest()
     assert [tool.name for tool in manifest.tools] == [
         RECORD_SIGHTINGS_TOOL,
@@ -89,6 +93,13 @@ def test_the_migrations_create_the_extension_tables(tmp_path: Path) -> None:
             "title",
             "url",
             "recorded_at",
+        ]
+        assert [name for name, _ in info("pulse_ext_series")] == [
+            "workspace_id",
+            "series",
+            "conversation_id",
+            "updated_at",
+            "projected_at",
         ]
 
 
@@ -148,3 +159,33 @@ def test_the_runtime_carries_the_coverage_script_as_a_skill_file() -> None:
     files = dict(parse_skill(SKILLS_ROOT / "brief-continuity").files)
     assert "coverage.py" in files
     assert "_jsonl_pool.py" in files
+
+
+def test_the_projection_is_a_job_because_only_a_job_can_write_a_file() -> None:
+    """The load-bearing fact behind the whole shape: core wires `ExtensionContext.files` for the job
+    runner and for surface contexts, and `turn_tools` does not wire it at all. A projection written
+    from a tool handler is dead code on every deploy, so it lives in a job."""
+    manifest = pulse_manifest.manifest()
+    assert [job.name for job in manifest.jobs] == [JOB_NAME]
+    assert manifest.jobs[0].schedule == SCHEDULE
+    assert callable(manifest.jobs[0].candidates)
+
+
+def test_turn_tools_really_does_leave_a_tool_handler_without_the_file_seam() -> None:
+    """Pinned against core rather than asserted in prose, because the previous version of this
+    change projected from a tool and the test that "covered" it used a fake that could write.
+
+    `context_for` is the one builder, and `files` is `None` unless `sandboxes=` is passed. The whole
+    of `turn_tools` never passes it — so this reads the source rather than constructing a runtime.
+    """
+    source = inspect.getsource(loader.turn_tools)
+    assert "sandboxes" not in source
+
+
+def test_the_job_asks_only_for_workspaces_holding_unprojected_work() -> None:
+    """`ConversationFiles.write` opens a sandbox rather than reusing a live one, so a candidates
+    select that named every workspace would start a container per pulse conversation per tick."""
+    compiled = str(record.due_projections())
+    assert "pulse_ext_series" in compiled
+    assert "projected_at" in compiled
+    assert "sighting" not in compiled and "covered" not in compiled

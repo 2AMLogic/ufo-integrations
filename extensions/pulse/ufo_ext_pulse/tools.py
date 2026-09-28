@@ -1,20 +1,24 @@
-"""The three calls that make a brief's record survive a fire nobody is watching.
+"""The three calls that keep a brief series' record in one place.
 
-Two write, one reads. They exist because the skills' own scripts cannot run without a client
-carrying a command tool, and the fire a recurring brief actually runs on carries none — so every
-gather and every edition recorded nothing on the path the product is built around (#120).
+Two write, one reads. They exist because the record used to be a file at a workspace-relative path,
+which resolves against whatever directory the turn's carrier started in — the deploy home for an
+attended CLI run, the conversation's sandbox root for a scheduled fire. One series therefore grew
+one ledger per carrier, each looking complete and none of them whole. These write to tables instead,
+keyed by workspace and series, which every turn in the workspace reaches identically.
 
-Each write lands its rows in this extension's tables and then *projects* the whole series to the
-workspace file the scripts and the member read. The projection is best effort and says so in its
-own result line: a fire with no carrier attached has no workspace to land a file in, and that is
-the normal case rather than a failure. The table write is the one that must not fail quietly, so it
-is not wrapped — a broken store raises and the turn hears about it.
+**Nothing here writes a file.** `ExtensionContext.files` is `None` in every extension tool handler —
+core wires that seam for the job runner and for surface contexts, and `turn_tools` does not wire it
+at all — so a projection attempted here would be dead code that reported "no carrier" on a deploy
+where every carrier is present. `jobs.py` owns the workspace-file copy, as a job, for that reason.
+
+What each write does do is stamp the series row with the conversation it ran in and the moment it
+advanced, in the same transaction as the rows. That is what the projection job selects on, so a
+committed write always has a projection due behind it and a rolled-back one never does.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -25,9 +29,6 @@ from ufo_ext_pulse.record import Sighting, Story
 RECORD_SIGHTINGS_TOOL = "pulse_record_sightings"
 RECORD_EDITION_TOOL = "pulse_record_edition"
 RECALL_TOOL = "pulse_recall"
-
-NO_WORKSPACE = "no workspace file written: nothing is carrying one on this fire"
-
 
 class SightingInput(BaseModel):
     seen: str = Field(description="The date this lead was seen, YYYY-MM-DD.")
@@ -80,32 +81,19 @@ def _said(text: str, *, error: bool = False) -> ToolResult:
     return ToolResult(content=(TextContent(text=text),), is_error=error)
 
 
+def _lands_in(ctx: ToolContext):
+    """The conversation a workspace file belongs to. Core opens a sandbox against
+    `sandbox_conversation_id or conversation_id` (`runtime/queue.py`'s `_LateSandbox`), so a turn
+    sharing another conversation's sandbox must record that one — otherwise the projection lands
+    in a tree the agent never reads."""
+    return ctx.turn.sandbox_conversation_id or ctx.turn.conversation_id
+
+
 def _ext(ctx: ToolContext, tool: str):
     ext = ctx.ext
     if ext is None:
         raise RuntimeError(f"{tool} dispatched without its ExtensionContext")
     return ext
-
-
-async def _project(ctx: ToolContext, ext, series: str) -> str:
-    """Render both files whole from the tables and land them where a member can open them.
-
-    Whole rather than appended: the table is the only state, so a projection written after three
-    unwatched fires simply catches up, and there is no path by which the file and the table can
-    disagree about a row. A conversation with no live sandbox cannot take a file, which is exactly
-    what an unattended fire looks like — so that is reported, not raised.
-    """
-    if ext.files is None:
-        return NO_WORKSPACE
-    conversation_id: UUID = ctx.turn.conversation_id
-    seen = record.seen_lines(await record.read_sightings(ext, series))
-    covered = record.covered_lines(await record.read_covered(ext, series))
-    try:
-        await ext.files.write(conversation_id, record.seen_projection(series), seen.encode())
-        await ext.files.write(conversation_id, record.covered_projection(series), covered.encode())
-    except Exception as failure:  # noqa: BLE001 - the record is written; the copy of it is not
-        return f"no workspace file written ({type(failure).__name__}: {failure})"
-    return f"workspace files updated: {record.seen_projection(series)} and its covered ledger"
 
 
 async def record_sightings(ctx: ToolContext, args: RecordSightingsInput) -> ToolResult:
@@ -117,10 +105,13 @@ async def record_sightings(ctx: ToolContext, args: RecordSightingsInput) -> Tool
         Sighting(seen=s.seen, slug=s.slug, title=s.title, url=s.url, source=s.source)
         for s in args.sightings
     ]
-    written = await record.record_sightings(ext, args.series, rows, datetime.now(UTC))
+    written = await record.record_sightings(
+        ext, args.series, rows, datetime.now(UTC), _lands_in(ctx)
+    )
     return _said(
         f"recorded {written} sighting{'' if written == 1 else 's'} in {args.series}. "
-        f"{await _project(ctx, ext, args.series)}"
+        f"The workspace copy at {record.seen_projection(args.series)} follows within minutes; "
+        "the record is already durable and pulse_recall reads it now."
     )
 
 
@@ -135,11 +126,13 @@ async def record_edition(ctx: ToolContext, args: RecordEditionInput) -> ToolResu
         )
     rows = [Story(slug=s.slug, title=s.title, url=s.url) for s in args.stories]
     written = await record.record_covered(
-        ext, args.series, args.edition, rows, datetime.now(UTC)
+        ext, args.series, args.edition, rows, datetime.now(UTC), _lands_in(ctx)
     )
     return _said(
         f"recorded {written} stor{'y' if written == 1 else 'ies'} in {args.series} "
-        f"edition {args.edition}. {await _project(ctx, ext, args.series)}"
+        f"edition {args.edition}. The workspace copy at "
+        f"{record.covered_projection(args.series)} follows within minutes; the record is already "
+        "durable and pulse_recall reads it now."
     )
 
 

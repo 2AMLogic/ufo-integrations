@@ -15,8 +15,8 @@ import pytest
 
 pytest.importorskip("sqlalchemy", reason="install ufo from git to run the store tests")
 
-from pulse_fakes import Files, Store, on_store, tool_context  # noqa: E402
-from ufo_ext_pulse import record, tools  # noqa: E402
+from pulse_fakes import Files, Store, job_store, on_store, tool_context  # noqa: E402
+from ufo_ext_pulse import jobs, record, tools  # noqa: E402
 from ufo_ext_pulse.record import Sighting, Story  # noqa: E402
 
 NOW = datetime(2026, 9, 28, 13, 0, tzinfo=UTC)
@@ -176,6 +176,61 @@ async def test_reading_the_pool_never_changes_it(store: Store) -> None:
     assert await record.read_sightings(store, SERIES) == rows
 
 
+# --- the bug this replaced ------------------------------------------------------------------------
+
+
+@on_store
+async def test_the_record_does_not_depend_on_where_the_turn_started(
+    store: Store, tmp_path, monkeypatch
+) -> None:
+    """The regression test for the fault that motivated all of this.
+
+    A brief's carriers do not share a working directory: an attended CLI run starts in the deploy
+    home, a scheduled fire starts in the conversation's sandbox root. The record has to be the same
+    record from both. Reading it from two different directories is how that is asserted, because
+    that is exactly the difference the old store could not survive.
+    """
+    here, there = tmp_path / "deploy-home", tmp_path / "sandbox-root"
+    here.mkdir()
+    there.mkdir()
+
+    monkeypatch.chdir(here)
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "from-cli")], NOW)
+    monkeypatch.chdir(there)
+    await record.record_sightings(store, SERIES, [sighting("2026-09-22", "from-fire")], NOW)
+
+    for where in (here, there):
+        monkeypatch.chdir(where)
+        assert {row["slug"] for row in await record.read_sightings(store, SERIES)} == {
+            "from-cli",
+            "from-fire",
+        }
+
+
+def test_the_file_store_alone_would_have_split_under_the_same_move(seen, tmp_path, monkeypatch):
+    """The other half of the comparison, against the real script.
+
+    Two writes to one series from two directories leave two files that each look complete. This is
+    not a hypothetical: the demo deploy carried two `agent-runtimes.covered.jsonl` files whose
+    2026-09-28 editions had six rows each and no story in common.
+    """
+    here, there = tmp_path / "deploy-home", tmp_path / "sandbox-root"
+    here.mkdir()
+    there.mkdir()
+
+    monkeypatch.chdir(here)
+    seen.record(SERIES, "2026-09-21", "from-cli", "From the CLI", "https://x/1", "")
+    assert [row["slug"] for row in seen.read_rows(SERIES)] == ["from-cli"]
+
+    monkeypatch.chdir(there)
+    seen.record(SERIES, "2026-09-22", "from-fire", "From the fire", "https://x/2", "")
+    # The whole fault in one line: the second carrier sees a series with no history, and the
+    # no-repeat rule it enforces is a rule over half the record.
+    assert [row["slug"] for row in seen.read_rows(SERIES)] == ["from-fire"]
+    assert (here / "pulse" / f"{SERIES}.seen.jsonl").is_file()
+    assert (there / "pulse" / f"{SERIES}.seen.jsonl").is_file()
+
+
 # --- what is live --------------------------------------------------------------------------------
 
 
@@ -239,31 +294,11 @@ async def test_a_bad_edition_date_is_refused_and_writes_nothing(store: Store) ->
 
 
 @on_store
-async def test_a_write_projects_both_files_when_a_carrier_can_take_them(store: Store) -> None:
-    ctx = tool_context(store)
-    result = await tools.record_sightings(
-        ctx,
-        tools.RecordSightingsInput(
-            series=SERIES,
-            sightings=[
-                tools.SightingInput(
-                    seen="2026-09-21", slug="acme-1-0", title="Acme 1.0", url="https://x/1"
-                )
-            ],
-        ),
-    )
-    assert not result.is_error
-    files = store.files
-    assert set(files.written) == {"pulse/data-infra.seen.jsonl", "pulse/data-infra.covered.jsonl"}
-    assert '"slug": "acme-1-0"' in files.text("pulse/data-infra.seen.jsonl")
-
-
-@on_store
-async def test_a_fire_with_no_carrier_still_records(store: Store) -> None:
-    """The whole of #120 in one test. A scheduled fire has no client and therefore no workspace to
-    land a file in; the row goes to the table regardless, and the result says which half happened
-    rather than reporting a clean success over a record that was never written."""
-    store.files = None
+async def test_a_tool_writes_no_file_and_the_row_lands_anyway(store: Store) -> None:
+    """`ExtensionContext.files` is None in every tool handler — `turn_tools` never wires the
+    sandbox seam — so a tool that tried to project would be dead code. The record is what a write
+    is for, and it does not depend on a file having landed."""
+    assert store.files is None
     result = await tools.record_sightings(
         tool_context(store),
         tools.RecordSightingsInput(
@@ -276,15 +311,15 @@ async def test_a_fire_with_no_carrier_still_records(store: Store) -> None:
         ),
     )
     assert not result.is_error
-    assert tools.NO_WORKSPACE in result.content[0].text
     assert len(await record.read_sightings(store, SERIES)) == 1
 
 
 @on_store
-async def test_a_broken_carrier_loses_the_file_and_keeps_the_row(store: Store) -> None:
-    store.files = Files(breaks=True)
-    result = await tools.record_sightings(
-        tool_context(store),
+async def test_a_write_leaves_its_series_due_for_projection(store: Store) -> None:
+    """The stamp is what couples a committed write to the file that follows it."""
+    conversation = uuid4()
+    await tools.record_sightings(
+        tool_context(store, conversation),
         tools.RecordSightingsInput(
             series=SERIES,
             sightings=[
@@ -294,30 +329,136 @@ async def test_a_broken_carrier_loses_the_file_and_keeps_the_row(store: Store) -
             ],
         ),
     )
-    assert "no workspace file written" in result.content[0].text
-    assert len(await record.read_sightings(store, SERIES)) == 1
+    due = await record.due_series(store)
+    assert [(series, where) for series, where, _ in due] == [(SERIES, conversation)]
+
+
+@on_store
+async def test_a_shared_sandbox_is_where_the_projection_is_bound(store: Store) -> None:
+    """Core opens a sandbox against `sandbox_conversation_id or conversation_id`, so a turn sharing
+    another conversation's sandbox has to record that one — binding its own would land the file in
+    a tree the agent never reads."""
+    own, shared = uuid4(), uuid4()
+    await tools.record_sightings(
+        tool_context(store, own, sandbox_conversation_id=shared),
+        tools.RecordSightingsInput(
+            series=SERIES,
+            sightings=[
+                tools.SightingInput(
+                    seen="2026-09-21", slug="acme-1-0", title="Acme 1.0", url="https://x/1"
+                )
+            ],
+        ),
+    )
+    assert [where for _, where, _ in await record.due_series(store)] == [shared]
+
+
+@on_store
+async def test_a_series_name_with_a_trailing_newline_is_refused(store: Store) -> None:
+    """`.match` with a `$` anchor accepts one, and the name becomes a filename with a newline in
+    it. Every validator here full-matches instead."""
+    with pytest.raises(ValueError):
+        await record.read_sightings(store, "open-silicon\n")
+
+
+def test_a_date_written_in_non_ascii_digits_is_refused() -> None:
+    """`\\d` matches every Unicode decimal digit, so an Arabic-Indic date validated, stored, and
+    then sorted as text beside ASCII ones — which is how a lead reads as the newest thing in the
+    pool forever."""
+    assert record.DATE.fullmatch("٢٠٢٦-٠٩-٢١") is None
+    assert record.DATE.fullmatch("2026-09-21") is not None
+
+
+@on_store
+async def test_the_job_writes_both_files_and_clears_the_series(store: Store) -> None:
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4()
+    )
+    await jobs.project(job_store(store))
+    assert set(store.files.written) == {
+        "pulse/data-infra.seen.jsonl",
+        "pulse/data-infra.covered.jsonl",
+    }
+    assert '"slug": "acme-1-0"' in store.files.text("pulse/data-infra.seen.jsonl")
+    assert await record.due_series(store) == []
+
+
+@on_store
+async def test_the_job_skips_a_series_nothing_has_touched(store: Store) -> None:
+    """A projection opens a sandbox rather than reusing a live one, so a job that rewrote every
+    series each tick would start a container per conversation per tick for no change."""
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4()
+    )
+    await jobs.project(job_store(store))
+    store.files.written.clear()
+    await jobs.project(store)
+    assert store.files.written == {}
+
+
+@on_store
+async def test_a_write_landing_during_a_projection_stays_due(store: Store) -> None:
+    """The mark is the `updated_at` the run *read*, never `now`.
+
+    The interleaved write happens inside `Files.write`, so this exercises `jobs.project` itself
+    rather than `mark_projected` in isolation — an earlier version asserted the same property
+    against the helper directly and stayed green when the job was mutated to stamp `now()`,
+    which is the one mutation that survived the first pass.
+    """
+    conversation = uuid4()
+    early = datetime(2026, 9, 28, 12, 0, tzinfo=UTC)
+    late = datetime(2026, 9, 28, 14, 0, tzinfo=UTC)
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-21", "acme-1-0")], early, conversation
+    )
+
+    async def landing_mid_render(conversation_id, rel, content):
+        await record.record_sightings(
+            store, SERIES, [sighting("2026-09-22", "beta-2", url="https://x/2")], late, conversation
+        )
+
+    store.files = Files(on_write=landing_mid_render)
+    await jobs.project(store)
+    assert [series for series, _, _ in await record.due_series(store)] == [SERIES]
+
+
+@on_store
+async def test_a_failing_conversation_stays_due_and_does_not_strand_the_next_series(
+    store: Store,
+) -> None:
+    """The rows are already committed when the job runs, so a sandbox that will not open costs a
+    stale file and never a lost row — and one series' fault is not the next one's."""
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4())
+    await record.record_sightings(
+        store, "open-silicon", [sighting("2026-09-21", "beta-2")], NOW, uuid4()
+    )
+    store.files = Files(breaks_for={"pulse/data-infra.seen.jsonl"})
+    await jobs.project(store)
+    assert [series for series, _, _ in await record.due_series(store)] == [SERIES]
+    assert "pulse/open-silicon.seen.jsonl" in store.files.written
 
 
 @on_store
 async def test_a_projection_after_unwatched_fires_catches_the_whole_file_up(store: Store) -> None:
-    """Rendered whole rather than appended, so there is no path by which the file and the table can
-    disagree about a row — three fires nobody saw are three lines the next projection carries."""
-    store.files = None
+    """Rendered whole rather than appended, so there is no path by which the file and the tables can
+    disagree about a row — three fires nobody projected are three lines the next projection carries.
+    """
+    conversation = uuid4()
     for day in ("2026-09-21", "2026-09-22", "2026-09-23"):
-        await record.record_sightings(store, SERIES, [sighting(day, f"acme-{day[-2:]}")], NOW)
-    store.files = Files()
-    await tools.record_sightings(
-        tool_context(store),
-        tools.RecordSightingsInput(
-            series=SERIES,
-            sightings=[
-                tools.SightingInput(
-                    seen="2026-09-24", slug="acme-24", title="Acme", url="https://x/1"
-                )
-            ],
-        ),
-    )
-    assert store.files.text("pulse/data-infra.seen.jsonl").count("\n") == 4
+        await record.record_sightings(
+            store, SERIES, [sighting(day, f"acme-{day[-2:]}")], NOW, conversation
+        )
+    await jobs.project(job_store(store))
+    assert store.files.text("pulse/data-infra.seen.jsonl").count("\n") == 3
+
+
+@on_store
+async def test_the_job_without_the_file_seam_leaves_the_series_due(store: Store) -> None:
+    """A context with no `files` is a deploy wired differently, not an empty series. Marking it
+    projected would strand the file forever."""
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4())
+    await jobs.project(store)
+    assert [series for series, _, _ in await record.due_series(store)] == [SERIES]
 
 
 @on_store

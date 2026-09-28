@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
-from ufo_ext_pulse.record import COVERED_TABLE, SIGHTING_TABLE
+from ufo_ext_pulse.record import COVERED_TABLE, SERIES_TABLE, SIGHTING_TABLE
 
 
 async def store_engine() -> AsyncEngine:
@@ -32,7 +32,7 @@ async def store_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SIGHTING_TABLE, COVERED_TABLE):
+    for table in (SIGHTING_TABLE, COVERED_TABLE, SERIES_TABLE):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)
@@ -45,9 +45,15 @@ class Files:
 
     written: dict[str, bytes] = field(default_factory=dict)
     breaks: bool = False
+    breaks_for: frozenset[str] = field(default_factory=frozenset)
+    on_write: Callable[[UUID, str, bytes], Awaitable[None]] | None = None
+    """Runs before the bytes land — the seam a test uses to make something happen *during* a
+    projection, which is the only way to exercise what the job reads versus what it stamps."""
 
     async def write(self, conversation_id: UUID, rel: str, content: bytes) -> str:
-        if self.breaks:
+        if self.on_write is not None:
+            await self.on_write(conversation_id, rel, content)
+        if self.breaks or rel in self.breaks_for:
             raise RuntimeError("the conversation has no live sandbox")
         self.written[rel] = content
         return f"/workspace/{rel}"
@@ -58,12 +64,17 @@ class Files:
 
 @dataclass
 class Store:
-    """An `ExtensionContext` as the record module and the handlers use one: a workspace id, a
-    transaction, and a carrier that may or may not be able to take a file."""
+    """An `ExtensionContext` as the record module, the handlers and the job use one.
+
+    `files` defaults to **None**, because that is what core actually hands a tool handler: only the
+    job runner and surface contexts are built with the sandbox seam wired. A test that wants the
+    projection to be able to land says so, the way `job_store` does — the previous default was a
+    capability no tool has ever held, and it let a projection be "tested" where it could never run.
+    """
 
     engine: AsyncEngine
     workspace_id: UUID = field(default_factory=uuid4)
-    files: Files | None = field(default_factory=Files)
+    files: Files | None = None
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[AsyncConnection]:
@@ -71,11 +82,22 @@ class Store:
             yield connection
 
 
-def tool_context(store: Store, conversation_id: UUID | None = None) -> SimpleNamespace:
-    """What a handler reads off its `ToolContext`: the extension context and the conversation the
-    projection lands in. Nothing else on a real one is touched, and a stand-in that grew a field a
-    handler does not read would be a claim about core rather than about pulse."""
-    return SimpleNamespace(ext=store, turn=SimpleNamespace(conversation_id=conversation_id or uuid4()))
+def tool_context(
+    store: Store,
+    conversation_id: UUID | None = None,
+    sandbox_conversation_id: UUID | None = None,
+) -> SimpleNamespace:
+    """What a handler reads off its `ToolContext`: the extension context and the two conversation
+    ids core carries, because a turn can run in one conversation and share another's sandbox.
+    Nothing else on a real one is touched, and a stand-in that grew a field a handler does not read
+    would be a claim about core rather than about pulse."""
+    return SimpleNamespace(
+        ext=store,
+        turn=SimpleNamespace(
+            conversation_id=conversation_id or uuid4(),
+            sandbox_conversation_id=sandbox_conversation_id,
+        ),
+    )
 
 
 def on_store(test: Callable[..., Awaitable[None]]) -> Callable[..., None]:
@@ -96,3 +118,10 @@ def on_store(test: Callable[..., Awaitable[None]]) -> Callable[..., None]:
 
     run.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
     return run
+
+
+def job_store(store: Store) -> Store:
+    """The same workspace as a job sees it: `files` wired, the way `serve.py` builds the job
+    runner's context and unlike anything a tool is given."""
+    store.files = Files()
+    return store

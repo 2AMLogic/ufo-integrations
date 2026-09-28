@@ -13,16 +13,19 @@ The covered ledger is what makes the difference decidable: one row per story the
 published, written by the run that published it and read by the run after.
 
 **Write it with `pulse_record_edition` and read it with `pulse_recall`.** Both are tools, and that
-is deliberate — a script is run by a command tool, a command tool belongs to the client, and the
-scheduled fire a recurring brief runs on has no client. A ledger written by a script was therefore
-a ledger only an attended run ever added to, which is no ledger at all. Never in memory either:
-`task-scheduling` keeps an already-covered ledger out of memory facts because a per-run snapshot
-written as a memory fact is injected into unrelated later turns.
+is forced rather than stylistic: a script writes to a path resolved against the directory the turn
+started in, and a brief's carriers do not share one. An attended run starts in the deploy home; a
+scheduled fire starts in the conversation's sandbox root. A series run from both grows **two**
+ledgers, each looking complete, and the no-repeat rule then governs whichever half happens to be
+visible. That is measured, not feared — one series on the demo deploy had two ledgers whose most
+recent edition shared no story at all. Never in memory either: `task-scheduling` keeps an
+already-covered ledger out of memory facts because a per-run snapshot written as a memory fact is
+injected into unrelated later turns.
 
-The workspace files are still written, from the record, after each call: `pulse/<series>.covered.jsonl`
-and `pulse/<series>.seen.jsonl`, in the same shape the scripts below read. They are the copy the
-member opens. A fire with no carrier lands no file and says so; the record is kept regardless, and
-the next attended call catches the files up. Never treat a missing file as a missing record.
+The workspace files are still written, by a job, a few minutes behind the record:
+`pulse/<series>.covered.jsonl` and `pulse/<series>.seen.jsonl`, in the same shape the scripts below
+read. They are the copy the member opens, and they are always a copy. **Never treat a file as the
+record** — read it for a member, ask `pulse_recall` for a decision.
 
 ## Read the ledger before ranking, not after
 
@@ -39,9 +42,9 @@ tool and wants it on the terminal:
 python "$UFO_HOME/skills/brief-continuity/covered.py" recent --series <series> --editions 5
 ```
 
-Run that from the workspace root, which is where a command starts: the file path is relative, so a
-run that changes directory first reads an empty file. Never conclude from an empty file that the
-series has published nothing — ask `pulse_recall`, which reads the record itself.
+Treat what it prints as this tree's copy rather than as the series. A file that is empty, short, or
+a few minutes behind the record is all normal. Never conclude anything about eligibility from it —
+ask `pulse_recall`, which reads the record itself.
 
 The last five editions are the baseline. Older coverage has left the reader's head and may be
 carried again as new; five editions is the span a returning reader holds.
@@ -127,6 +130,13 @@ Recording the same sighting twice is safe. One series, one day, one lead, one ad
 a retried fire, a replayed batch, or a gather that surfaces a lead twice in one run adds nothing the
 second time. That is a property of the record, not of care taken at the call site.
 
+**That is also how a split ledger is repaired.** A series that ran before the record moved into
+tables has one file per tree — typically `pulse/<series>.covered.jsonl` where a member's session
+starts, and `workspaces/<conversation-id>/pulse/<series>.covered.jsonl` where a fire's did. Read
+each one and record its rows; because a repeat is not a second row, the files can be imported in
+either order, twice, or after an interruption. Do this before trusting a series that predates the
+tables, and say in the reply how many rows each file held.
+
 A url is required on every sighting, and whitespace does not count. The slug is this run's judgement of what a
 story is, so two runs need not agree on it. The url is the best external key a row carries: better
 than the title, which legitimately drifts between sightings, and than the source, which cannot tell
@@ -139,10 +149,10 @@ this check and identifies nothing: the next story from the same index carries th
 different stories reconcile as one. That failure is quieter than a missing url, because the row
 looks complete.
 
-Rows written into the old file before this was required are not rejected retroactively and stay
-readable by `stale` and `reconcile`. They are not in the record, though — nothing backfills the
-tables from a file — so a series with history from before this change reads its own past only
-through the file. `reconcile` is the tool for auditing those rows.
+Rows written into an old file before a url was required stay readable by `stale` and `reconcile`,
+and a url-less one cannot be imported — `pulse_record_sightings` refuses it. Repair it by hand from
+the title, or leave it in the file as history the record does not carry, and say which. Nothing
+backfills the tables on its own.
 
 `reconcile` reads the pool against itself and exits non-zero where rows cannot be told apart. It
 reports; it does not diagnose, and the difference is the point.
