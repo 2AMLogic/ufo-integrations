@@ -175,6 +175,13 @@ story's history across the series.
   re-points reporting to whichever conversation ran the re-apply, so adopting an edit means
   re-applying from the pulse's own conversation. Same family as #70's running `serve` process
   keeping the skills it booted with.
+- **A running `serve` answers from the skills it booted with.** `ufoctl serve` resolves the active
+  set at boot and materializes each skill into `$UFO_HOME/skills/<name>/`; every turn reads that
+  copy. Editing the source reaches none of it, an editable install included, where the source the
+  entry point resolves to is the working tree itself. The copy carries a recent mtime and reads as
+  current, so the deploy quotes the old rule back with nothing in the log to say so. A `serve`
+  restart picks the edit up and nothing else does. Same family as the armed row above (#66): a
+  durable copy of instructions a later edit does not reach.
 
 ## Tests
 
