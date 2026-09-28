@@ -99,6 +99,14 @@ Three answers are in use, and they differ in one place: whom the homeserver vouc
 | Shared | One homeserver behind many workspaces | `@bob:ufo.example`, a domain no workspace owns | A code |
 | Elsewhere | Somebody else: a public homeserver, or an organisation's existing one | `@bob:matrix.org` | A code |
 
+Which mode a deploy is in is decided by the homeserver's `server_name`, never by the URL
+`matrix_homeserver` holds. The two routinely differ — this repository's own encryption job runs a
+homeserver named `integration.test` at `http://127.0.0.1:8008` — and it is the name that ends up
+after the colon in every MXID the server issues. A deploy standing up its own homeserver sets
+`server_name` to the workspace's domain; a homeserver reached at `https://matrix.acme.example` and
+named `acme.example` is own mode, and the same host named anything else is not, however it is
+reached and whoever runs it.
+
 An MXID whose server name is the workspace's own domain is a member on first contact, because the
 homeserver serving that domain vouches for its users the way a mail server does for addresses. Every
 other MXID is nobody until the member proves it with a code. Own mode is the mode that rule was
