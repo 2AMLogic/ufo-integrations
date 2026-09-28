@@ -23,6 +23,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import UUID
 
@@ -872,9 +873,20 @@ class Installation:
         except ValueError as refused:
             log("matrix.file_unstored", installation=self.bot, reason=str(refused))
             return ()
-        # The name is the sender's to choose, so it is a name and not a path: core's own
-        # sanitiser drops components, collapses separators, and numbers a name already used.
-        rel = f"{INBOUND_DIR}/{inbox_name(shared.filename, set())}"
+        # The name is the sender's to choose, so it is a name and not a path: core's own sanitiser
+        # drops path components, collapses what is not a word character, and falls back for a name
+        # that is empty or nothing but dots. What it numbers against is the set it is handed, so the
+        # set is the directory's own contents rather than an empty one — a second `chart.png` lands
+        # beside the first as `chart-1.png`, whether it arrived in the same batch, an hour later, or
+        # from the other member in the room. Reading the directory rather than remembering it is
+        # what makes that hold across a restart.
+        listed = await ctx.list_workspace_files(conversation_id)
+        used = {
+            PurePosixPath(found.path).name
+            for found in listed
+            if PurePosixPath(found.path).parent == PurePosixPath(INBOUND_DIR)
+        }
+        rel = f"{INBOUND_DIR}/{inbox_name(shared.filename, used)}"
         try:
             await ctx.deliver_attachment(conversation_id, key, rel)
         except ValueError as refused:

@@ -16,6 +16,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -38,6 +39,7 @@ from ufo.sdk.surfaces import (
     CredentialSlotUnset,
     SharedArtifact,
     TerminalFrame,
+    WorkspaceFile,
 )
 from ufo_ext_matrix.answering import ANSWERING_TABLE
 from ufo_ext_matrix.asking import ASKING_TABLE
@@ -404,6 +406,7 @@ class Workspace:
 
     inbound_files: dict[str, bytes] = field(default_factory=dict)
     delivered: list[tuple[UUID, str, str]] = field(default_factory=list)
+    workspace: dict[UUID, dict[str, str]] = field(default_factory=dict)
     member_files: list[tuple[UUID, tuple[str, ...]]] = field(default_factory=list)
     write_limit_bytes: int | None = None
 
@@ -418,7 +421,25 @@ class Workspace:
         return key
 
     async def deliver_attachment(self, conversation_id: UUID, blob_key: str, rel: str) -> None:
+        """A workspace path is a place, and core writes to it rather than beside it: the sandbox
+        write this resolves to takes the last caller of a path and keeps nothing of the one before.
+        The fake holds both readings — `delivered` is every call in order, and `workspace` is what
+        a member would find, so a second file landing on a name the first used is a file the fake
+        loses exactly as the deploy loses it."""
         self.delivered.append((conversation_id, blob_key, rel))
+        self.workspace.setdefault(conversation_id, {})[rel] = blob_key
+
+    async def list_workspace_files(self, conversation_id: UUID) -> tuple[WorkspaceFile, ...]:
+        """What the conversation's workspace holds now, path-sorted, and empty for a conversation
+        with no sandbox yet — core answers a conversation it does not own the same way."""
+        return tuple(
+            WorkspaceFile(
+                path=rel,
+                size_bytes=len(self.inbound_files.get(key, b"")),
+                modified_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+            for rel, key in sorted(self.workspace.get(conversation_id, {}).items())
+        )
 
     async def attach_member_files(
         self, turn_id: UUID, blob_keys: tuple[str, ...], *, member_id: UUID | None

@@ -1725,3 +1725,58 @@ async def test_a_member_cannot_name_a_path_out_of_the_uploads_directory(
     assert ".." not in rel
     body = await workspace.admitted_body("$f3")
     assert body is not None and member_message_attachments(body) == ("uploads/notes.md",)
+
+
+@on_loop
+async def test_two_files_under_one_name_land_beside_each_other(workspace: Workspace) -> None:
+    """A workspace path is a place, so a second `chart.png` delivered to the path the first holds
+    replaces it — and the turn reading `uploads/chart.png` reads the wrong member's bytes under a
+    fence naming the right member's file. The sanitiser numbers a name against the ones already
+    there, and what it is handed is the directory rather than an empty set."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        first = await client.upload("chart.png", "image/png", b"\x89PNG-one")
+        second = await client.upload("chart.png", "image/png", b"\x89PNG-two")
+    mine = shared_file("$g1", ALICE, "the first chart", first)
+    mine["content"]["filename"] = "chart.png"
+    also = shared_file("$g2", ALICE, "the second chart", second)
+    also["content"]["filename"] = "chart.png"
+    server.syncs["s1"] = batch("s2", {DIRECT: [mine, also]})
+    assert await installation.step() == 0.0
+
+    rels = [rel for _, _, rel in workspace.delivered]
+    assert rels == ["uploads/chart.png", "uploads/chart-1.png"]
+    conversation = workspace.delivered[0][0]
+    assert sorted(workspace.workspace[conversation]) == sorted(rels)
+    for event, rel in (("$g1", "uploads/chart.png"), ("$g2", "uploads/chart-1.png")):
+        body = await workspace.admitted_body(event)
+        assert body is not None and member_message_attachments(body) == (rel,)
+
+
+@on_loop
+async def test_a_name_already_in_uploads_is_numbered_after_a_restart(
+    workspace: Workspace,
+) -> None:
+    """The set the sanitiser numbers against is read off the directory, not remembered, so a bot
+    that was restarted between the two files still lands the second beside the first."""
+    server = Homeserver()
+    installation = await primed(server, workspace)
+    async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
+        first = await client.upload("chart.png", "image/png", b"\x89PNG-one")
+        second = await client.upload("chart.png", "image/png", b"\x89PNG-two")
+    mine = shared_file("$h1", ALICE, "the first chart", first)
+    mine["content"]["filename"] = "chart.png"
+    server.syncs["s1"] = batch("s2", {DIRECT: [mine]})
+    assert await installation.step() == 0.0
+
+    restarted = await primed(server, workspace)
+    also = shared_file("$h2", ALICE, "the second chart", second)
+    also["content"]["filename"] = "chart.png"
+    server.syncs["s2"] = batch("s3", {DIRECT: [also]})
+    assert await restarted.step() == 0.0
+
+    assert [rel for _, _, rel in workspace.delivered] == [
+        "uploads/chart.png",
+        "uploads/chart-1.png",
+    ]
