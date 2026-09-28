@@ -1,7 +1,8 @@
-"""The manifest against the real runtime: the skills parse into the registry, the three record
-tools validate beside the builtins, and the migration this extension ships lands its two tables on a
-real database. Skipped where `ufo` is not installed — it is not on PyPI, so a checkout without it
-still runs every contract test beside this one."""
+"""The manifest against the real runtime: the skills parse into the registry, the agent provision
+validates under core's own rules, the three record tools validate beside the builtins, and the
+migration this extension ships lands its two tables on a real database. Skipped where `ufo` is not
+installed — it is not on PyPI, so a checkout without it still runs every contract test beside
+this one."""
 
 import inspect
 import sqlite3
@@ -21,6 +22,12 @@ from ufo.host.ext.loader import migration_locations, validate_ext_tools  # noqa:
 from ufo.runtime.access.credentials import CredentialStore  # noqa: E402
 from ufo.runtime.skills.runtime import parse_skill  # noqa: E402
 from ufo_ext_pulse import record  # noqa: E402
+from ufo_ext_pulse.agent import (  # noqa: E402
+    AGENT_NAME,
+    BUSINESS_KEY,
+    LOCAL_TIME_KEY,
+    REQUEST_KEY,
+)
 from ufo_ext_pulse.jobs import JOB_NAME, SCHEDULE  # noqa: E402
 from ufo_ext_pulse.tools import (  # noqa: E402
     RECALL_TOOL,
@@ -31,11 +38,57 @@ from ufo_ext_pulse.tools import (  # noqa: E402
 MIGRATIONS = Path(__file__).resolve().parents[1] / "ufo_ext_pulse" / "migrations"
 
 
-def test_manifest_declares_four_skills_and_the_search_seam() -> None:
+def test_manifest_declares_five_skills_and_the_search_seam() -> None:
     manifest = pulse_manifest.manifest()
     assert manifest.name == "pulse"
     assert [spec.path.name for spec in manifest.skills] == list(SKILL_NAMES)
     assert manifest.requires == ("search_providers",)
+
+
+def test_activation_is_what_creates_the_agent() -> None:
+    """The one provision, validated by `AgentProvision.__post_init__` on construction: the row comes
+    from core's own activation pass over the active extension set, so a deploy naming `pulse` in its
+    pack has the agent with no onboarding step and nothing created inside a member's turn."""
+    (provision,) = pulse_manifest.manifest().agents
+    assert provision.name == AGENT_NAME
+    assert provision.spec.prompt is not None and provision.spec.prompt.strip()
+    assert provision.spec.purpose is not None and provision.spec.purpose.strip()
+    assert not provision.main
+
+
+def test_the_row_is_workspace_visible_so_any_member_may_hand_a_field_over() -> None:
+    """A spawn of an ownerless row — which a provisioned one is — is refused to anyone but a
+    workspace admin unless the row is workspace-visible, and the default is `private`. Handing a
+    field over is the one path that matters and it is not an admin operation."""
+    (provision,) = pulse_manifest.manifest().agents
+    assert provision.spec.visibility == "workspace"
+
+
+def test_the_payload_carries_what_a_spawned_turn_cannot_read() -> None:
+    """A spawned turn's inbound is the bare payload with no `<context>` header, so the field and the
+    member's own clock travel in it and the contract refuses a handoff that dropped either. The
+    business is optional because `field-pulse` asks for one nothing supplied, and a required field
+    would make the handing turn invent it instead."""
+    (provision,) = pulse_manifest.manifest().agents
+    schema = provision.spec.input_schema
+    assert schema is not None
+    assert set(schema["properties"]) == {REQUEST_KEY, BUSINESS_KEY, LOCAL_TIME_KEY}
+    assert set(schema["required"]) == {REQUEST_KEY, LOCAL_TIME_KEY}
+
+
+def test_the_agent_holds_the_member_facing_tool_set() -> None:
+    """A gather searches through `research`'s tools and arms through `scheduled_tasks`', and an
+    allowlist is intersected with the live registry at turn load — so a tool name this extension
+    guessed wrong is not an error at boot but a gather that cannot search."""
+    (provision,) = pulse_manifest.manifest().agents
+    assert provision.tools is None
+
+
+def test_the_handoff_names_the_agent_the_manifest_ships() -> None:
+    """Two spellings of one name: the skill spawns `agent:<name>` and the provision creates it. A
+    rename on one side alone is a handoff that resolves to nothing."""
+    body = (SKILLS_ROOT / "pulse-handoff" / "SKILL.md").read_text()
+    assert f"agent:{AGENT_NAME}" in body
 
 
 def test_the_three_record_tools_validate_beside_the_builtins() -> None:

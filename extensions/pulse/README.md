@@ -1,7 +1,7 @@
 # ufo-ext-pulse
 
-A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): four skills that make a
-series of briefs behave like a series.
+A recurring field brief for [ufo](https://github.com/ufo-ai/ufo-core): an agent that runs one, and
+five skills that make a series of briefs behave like a series.
 
 `competitive-intel` watches a list of companies. A field pulse watches a domain, so a run may find a
 name nobody had heard of last month. That difference is why this is a separate skill, but it is not
@@ -35,18 +35,20 @@ field's cadence it delivers seven editions a week to someone who wanted two. So 
 gathers and records, and `field-report` writes an edition when it is asked for — from the pool, with
 no search in the request path, which is also what makes it fast enough to answer in the conversation.
 
-`field-pulse` sets a pulse up in chat, writes the first edition in that turn, and arms the daily
-gather. It carries the other three as `metadata.depends`, so a pulse run cannot load the workflow
-without the writer or the contracts.
+`field-pulse` runs the setup as `pulse`, writes the first edition in that turn, and arms the daily
+gather. It carries three of the others as `metadata.depends`, so a pulse run cannot load the
+workflow without the writer or the contracts.
 
 | Skill | Holds |
 | --- | --- |
+| `pulse-handoff` | Recognising the ask, and handing the field to the `pulse` agent |
 | `field-pulse` | Setting one up, the first edition, the daily gather |
 | `field-report` | An edition on demand, from the pool, with no fresh search |
 | `brief-continuity` | The covered ledger and the sightings pool; what an edition may repeat |
 | `coverage-honesty` | What a run may claim about a source it could not read |
 
-The extension declares four skills, three tools, one job, and the migration behind them. The tools
+The extension declares five skills, one agent, three tools, one job, and the migration behind them.
+The tools
 exist for one reason: **a brief's carriers do not share a working directory.** The ledger and the
 pool were workspace-relative paths, and a workspace-relative path resolves against the directory the
 turn started in. A conversation whose `sandbox_handle` is `client:<cwd>` runs on the member's own
@@ -80,6 +82,47 @@ still `report_digest`'s.
 | Job | Does |
 | --- | --- |
 | `pulse_project` | Writes the workspace-file copy of a series whose record has moved |
+
+## Who a pulse runs as
+
+A scheduled task is owned by the agent whose turn applied it: `scheduled_tasks` writes `agent_id`
+from the creating turn, and its manifest `spec` names no agent. So the daily gather is armed as
+whoever set the pulse up. Set up from a chat turn, it searches every morning as the assistant —
+under the assistant's prompt, model and tool scope — for the quarter the row lasts, and nothing
+anywhere says the series has an owner it was never meant to have.
+
+So the extension ships an agent. `pulse` is an `AgentProvision` on the manifest's `agents` point,
+which core's activation pass turns into an ordinary `agent` row the first time a workspace comes up
+with pulse active; from that moment the row is the workspace's own configuration and this extension
+stops writing it. There is no onboarding step to skip and nothing is created inside a member's turn.
+
+| Field | Value | Why |
+| --- | --- | --- |
+| `model` | `auto` | The only model a public extension can name; a pinned id the deploy does not serve fails every turn of the row |
+| `reasoning` | `high` | Ranking a field's week against one business is the judgement no script holds |
+| `internet_access_allowed` | `false` | A gather reaches its sources through `research`'s tools and the backend's own credential egress |
+| `visibility` | `workspace` | A spawn of an ownerless row is an admin's alone unless it is workspace-visible, and handing a field over is not an admin operation |
+| `tools` | The member-facing set | An allowlist is intersected with the live registry at turn load, so a tool name this extension guessed wrong is a gather that cannot search |
+
+The member never leaves their own conversation. `pulse-handoff` loads where they made the ask and
+spawns the agent, and an agent spawn talks back to the conversation that made it — so one sentence
+to an assistant is still the whole entry point, and the questions the setup asks arrive as ordinary
+messages there.
+
+A spawned turn's inbound is the bare payload its contract promises, with no `<context>` header in
+front of it, so the two things the setup would have read off that header travel in the payload
+instead — and the row's declared input schema is what refuses a handoff that dropped one.
+
+| Key | Holds | Missing |
+| --- | --- | --- |
+| `request` | The member's words, verbatim | The spawn is refused |
+| `business` | The business a story is ranked against | `field-pulse` asks for one |
+| `local_time` | The handing turn's own `time:` line | The spawn is refused |
+
+**One agent serves every series.** A series is separated by its name — the record is keyed by
+workspace and series, the row is named `<field>-gather`, and each handoff opens a conversation of
+its own — so a second agent row would duplicate a prompt that names no field while separating
+nothing that is not separated already.
 
 ## Install
 
@@ -244,10 +287,27 @@ series in either store.
   reinstalling the same content keeps it, and reinstalling changed content fails boot loud until
   the pin is rewritten.
 - **Recall is empty rather than unavailable.** With no `UFO_OPENAI_API_KEY` nothing reaches the
-  index, and the silence a pulse turn's opening `memory_search` returns is the same silence a new
-  field returns. This is a missing key, not a business the member never stated — `field-pulse`'s
-  step 1a only asks when the opening line *also* carries no business sentence; an unavailable index
-  next to a populated opening line is this trap, not that one.
+  index, and the silence a `memory_search` returns is the same silence a new field returns. This is
+  a missing key, not a business the member never stated — `pulse-handoff` reads the opening line
+  first and searches memory only where that line carries no business sentence, and `field-pulse`'s
+  step 1a asks only once the payload arrived with none. An unavailable index next to a populated
+  opening line is this trap, and the handoff hands the business over regardless.
+- **An agent named `pulse` that a member made keeps the name.** Activation identifies a shipped row
+  by the extension and the declared name rather than by the row's own, so a name already in use
+  sends the shipped agent to a free variant — nothing is overwritten and nothing is stuck. But
+  `pulse-handoff` names its target as `agent:pulse`, which resolves by name, so the handoff would
+  reach the member's agent and the setup would run under a prompt nobody wrote it for. A workspace
+  wanting an agent of its own by that name renames one of the two.
+- **The activation pass creates the row and stops owning it.** The workspace's copy is the live
+  configuration from that moment: a later version of this extension carrying a different prompt,
+  model or input schema reaches new workspaces only, and carries forward nothing but the purpose and
+  the setup it declares. A deploy adopting a changed row edits it, and `select provisioned_version
+  from agent` says which declaration the one it holds came from.
+- **The projection follows the last write.** A setup runs in the agent's own conversation, so the
+  first `pulse/<series>.*.jsonl` pair lands in that conversation's tree rather than in a terminal's
+  working directory. An edition written where the member asked re-binds the series and the next
+  projection lands with them. The record is unaffected either way — the rows are keyed by workspace
+  and series — so this decides where the readable copy is, never what it says.
 - **A workspace-relative path is not one place.** `bash`, `read` and `write` are core builtins
   (`host/tools/builtins.py`), present for every turn including a scheduled fire, and
   `ToolContext.sandbox` is non-optional — so a fire *can* run a script, and does. What differs is
