@@ -22,9 +22,8 @@ import pytest
 
 pytest.importorskip("ufo", reason="install ufo from git to run the integration tests")
 
-from matrix_fakes import Workspace, extension_engine  # noqa: E402
+from matrix_fakes import Credentials, Workspace, extension_engine  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
-    CredentialSlotUnset,
     MidTurnReply,
     SharedArtifact,
     SurfaceDeliveryError,
@@ -157,16 +156,6 @@ def homes() -> Homes:
             await api.aclose()
 
     return asyncio.run(provision())
-
-
-@dataclass
-class Credentials:
-    values: dict[str, str]
-
-    async def get(self, slot: str) -> str:
-        if slot not in self.values:
-            raise CredentialSlotUnset(slot)
-        return self.values[slot]
 
 
 @dataclass

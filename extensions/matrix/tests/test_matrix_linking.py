@@ -27,6 +27,7 @@ from matrix_fakes import (  # noqa: E402
     batch,
     mention,
     on_loop,
+    said,
     text,
 )
 from sqlalchemy.ext.asyncio import AsyncConnection  # noqa: E402
@@ -148,10 +149,6 @@ class Rig:
 
     def replies(self) -> list[tuple[str, str]]:
         return [(sent["room"], sent["body"]) for sent in self.server.sent.values()]
-
-
-def said(result: object) -> str:
-    return result.content[0].text  # type: ignore[attr-defined]
 
 
 def admitted(workspace: Workspace) -> list[tuple[str, UUID | None]]:
