@@ -106,9 +106,9 @@ def test_the_report_reads_the_coverage_store_by_script() -> None:
 
 def test_the_handoff_spawns_the_agent_and_not_a_profile() -> None:
     """`agent:pulse` resolves against the workspace's agent rows whatever else a deploy registered.
-    The bare name resolves across both namespaces, so the day a subagent profile takes it the
-    handoff runs the setup under this turn's own agent and the armed gather is the assistant's —
-    silently, because a profile spawn succeeds."""
+    The bare name is ambiguous once a `pulse` agent row exists — true from the first activation on —
+    and the runtime refuses it loudly, naming `profile:pulse` and `agent:pulse` in the error, rather
+    than silently handing the setup to this turn's own agent."""
     body = (SKILLS_ROOT / "pulse-handoff" / "SKILL.md").read_text()
     assert 'target="agent:pulse"' in body
 

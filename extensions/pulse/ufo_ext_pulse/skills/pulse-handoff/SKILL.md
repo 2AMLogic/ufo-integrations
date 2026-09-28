@@ -79,8 +79,11 @@ with no spawn in the request path.
   question is answered; a pulse is a standing order they have to want.
 - Handing over a list of named companies, which is `competitive-intel` and watches names rather than
   a domain.
-- Spawning `pulse` by its bare name, which resolves to a subagent profile of that name where a deploy
-  has one and runs the setup under this turn's own agent after all.
+- Spawning `pulse` by its bare name. Once a `pulse` agent row exists — true from the first time a
+  gather activated it — the runtime finds both a profile and an agent row for that name and refuses
+  the spawn outright, naming `profile:pulse` and `agent:pulse` in the error. Only in the narrow
+  window before any `pulse` agent row has been provisioned does the bare name resolve to the profile
+  and run the setup under this turn's own agent, silently.
 - Dropping `local_time`, which the contract refuses, and paraphrasing it, which arms the gather in
   the wrong half of the day.
 - Answering the agent's question instead of the member's, which confirms a source set nobody chose.
