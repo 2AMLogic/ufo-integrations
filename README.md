@@ -24,6 +24,34 @@ ufoctl ext install pulse
 
 The entry point registers the pack; the next `ufoctl serve` loads it.
 
+## Deploy notes
+
+**OpenRouter-only deploys need a boot-probe workaround.** `ufoctl serve`'s boot-time
+egress-key check (ufo-core's `model_rule_base`) only probes `ANTHROPIC_API_KEY` /
+`OPENAI_API_KEY`. A deploy whose only live model key is `OPENROUTER_API_KEY` — with no
+Anthropic or OpenAI key set — satisfies neither, so boot fails with:
+
+```
+RuntimeError: no model provider key set; the sandbox would have no egress route
+```
+
+even though the model itself runs fine through the `openrouter` extension, since those calls are
+host-side and never exercise the derived sandbox-egress rules. Until this is fixed upstream in
+`ufo-core`, an OpenRouter-only deploy can pass the boot probe by pointing the Anthropic key env at
+the OpenRouter key in `ufo.toml`:
+
+```toml
+[models]
+anthropic_api_key_env = "OPENROUTER_API_KEY"   # probe-only; never spent
+```
+
+This is a workaround for the boot probe, not a recommended permanent pattern, and not something a
+deploy with a real Anthropic or OpenAI key needs — it only applies to the OpenRouter-only case.
+The resulting Anthropic egress allow-rule is inert: nothing is ever spent against Anthropic,
+because OpenRouter calls never route through the sandbox egress proxy. Remove this note once
+[2AMLogic/ufo-integrations#34](https://github.com/2AMLogic/ufo-integrations/issues/34) is
+resolved upstream.
+
 ## Tests
 
 ```bash
