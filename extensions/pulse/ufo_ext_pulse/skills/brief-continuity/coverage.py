@@ -158,6 +158,10 @@ def _of(count: int, total: int) -> str:
     return f"all {total} gathers" if count == total else f"{count} of {total} gathers"
 
 
+def _items(count: int) -> str:
+    return f"{count} item" if count == 1 else f"{count} items"
+
+
 def state_line(aggregate: dict) -> str:
     """One source's state across the window, in the words a footer is written from.
 
@@ -169,13 +173,14 @@ def state_line(aggregate: dict) -> str:
         if states[NOT_READ]:
             return f"not read — {_reasons_of(aggregate)}"
         if states[READ]:
-            return f"read ({aggregate['items']} items)"
+            return f"read ({_items(aggregate['items'])})"
         return "read, nothing in it"
 
     segments = []
     answered = states[READ] + states[READ_EMPTY]
     if answered:
-        found = f" ({aggregate['items']} items)" if aggregate["items"] else ", nothing in them"
+        empty = ", nothing in it" if answered == 1 else ", nothing in them"
+        found = f" ({_items(aggregate['items'])})" if aggregate["items"] else empty
         segments.append(f"read on {_of(answered, total)}{found}")
     if states[NOT_READ]:
         segments.append(f"not read on {_of(states[NOT_READ], total)} — {_reasons_of(aggregate)}")
