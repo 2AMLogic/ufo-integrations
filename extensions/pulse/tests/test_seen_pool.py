@@ -218,3 +218,35 @@ def test_the_report_names_both_causes_and_picks_neither(seen, capsys) -> None:
     assert "renamed story" in printed
     assert "naming a page rather than a story" in printed
     assert "cannot be told apart" in printed
+
+
+def test_a_padded_legacy_url_is_the_url_it_names(seen, tmp_path) -> None:
+    """Rows predate the required url, and the guard before it tested `url.strip()` while storing
+    `url` raw. So one story can sit in the pool twice, once padded and once clean, and a reader
+    that compares raw strings calls that two stories under one lead — a wrong diagnosis, not an
+    unproven one, on exactly the rows this audits."""
+    pool = tmp_path / "pulse" / "legacy.seen.jsonl"
+    pool.parent.mkdir(parents=True, exist_ok=True)
+    pool.write_text(
+        '{"seen": "2026-09-20", "slug": "acme-1-0", "title": "A", "url": "  https://acme/1  ", "source": ""}\n'
+        '{"seen": "2026-09-25", "slug": "acme-1-0", "title": "A", "url": "https://acme/1", "source": ""}\n'
+    )
+    assert seen.unreconciled("legacy") == ([], [])
+    assert seen.main(["reconcile", "--series", "legacy"]) == 0
+
+
+def test_whitespace_only_legacy_urls_do_not_group(seen, tmp_path) -> None:
+    """A url of spaces is not a url. Truthy as a string, it survived the empty check and gathered
+    every other whitespace-only row under one address that names nothing.
+
+    Both rows carry the same blank so they would collide without the strip — an earlier draft used
+    different runs of spaces, which are different strings, so the test passed whether or not the
+    reader normalised."""
+    pool = tmp_path / "pulse" / "legacy.seen.jsonl"
+    pool.parent.mkdir(parents=True, exist_ok=True)
+    pool.write_text(
+        '{"seen": "2026-09-20", "slug": "ws-one", "title": "A", "url": " ", "source": ""}\n'
+        '{"seen": "2026-09-21", "slug": "ws-two", "title": "B", "url": " ", "source": ""}\n'
+    )
+    assert seen.unreconciled("legacy") == ([], [])
+    assert seen.main(["reconcile", "--series", "legacy"]) == 0
