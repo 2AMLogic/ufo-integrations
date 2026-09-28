@@ -150,7 +150,9 @@ def main(argv: list[str] | None = None) -> int:
             print("no leads seen in the window")
             return 0
         for slug, seen in live:
-            print(f"{seen}  {slug:<44}{_title_of(args.series, slug)}")
+            # Two spaces minimum: a slug exactly as long as the pad width would otherwise
+            # butt straight against its title, and real slugs reach it.
+            print(f"{seen}  {slug:<44}  {_title_of(args.series, slug)}")
         return 0
 
     seen = last_seen(args.series).get(args.slug)
