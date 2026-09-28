@@ -23,17 +23,18 @@ already-covered ledger out of memory facts because a per-run snapshot written as
 injected into unrelated later turns.
 
 The workspace files are still written, by a job, a few minutes behind the record:
-`pulse/<series>.covered.jsonl` and `pulse/<series>.seen.jsonl`, in the same shape the scripts below
-read. They are the copy the member opens, and they are always a copy. **Never treat a file as the
-record** — read it for a member, ask `pulse_recall` for a decision.
+`pulse/<series>.covered.jsonl`, `pulse/<series>.seen.jsonl` and `pulse/<series>.coverage.jsonl`, in
+the same shape the scripts below read. They are the copy the member opens, and they are always a
+copy. **Never treat a file as the record** — read it for a member, ask `pulse_recall` for a
+decision.
 
 **A row written into one of these files is erased, not kept.** The job renders the whole file from
 the record, so anything the file holds that the record does not is gone at the next render. This is
 not a warning about tidiness: a real fire appended two published stories to the file instead of
 calling `pulse_record_edition`, and both would have vanished at the next projection — the edition
 would have read as never published and the next one would have carried it again. There is no
-`record` subcommand on either script for this reason. If a row belongs in the series, it goes
-through the tool, and there is no second way to do it.
+`record` subcommand on any of the three scripts for this reason. If a row belongs in the series, it
+goes through the tool, and there is no second way to do it.
 
 ## Read the ledger before ranking, not after
 
@@ -202,16 +203,19 @@ appeared once.
 
 ## Coverage state is a third store, one row per source per gather
 
-`pulse/<series>.coverage.jsonl`, written by `coverage.py`, records what each source returned on each
-gather: read with items, read and empty, or not read for one of `coverage-honesty`'s four reasons.
-The ledger's subject is a story and the pool's is a lead; this one's is a source, which is why it
-carries no slug for a story and answers what neither of the others can.
+This store records what each source returned on each gather: read with items, read and empty, or not
+read for one of `coverage-honesty`'s four reasons. The ledger's subject is a story and the pool's is
+a lead; this one's is a source, which is why it carries no slug for a story and answers what neither
+of the others can.
+
+**Write it with `pulse_record_coverage`** — one call per gather, carrying every source it read or
+tried to read, each with its state, its item count if it answered, and its reason if it did not. The
+states are only writable while the reads are in front of the run, so the gather makes this call and
+no later turn can.
+
+The footer's own read has no tool and is run over the projected file, so it needs a carrier:
 
 ```bash
-python "$UFO_HOME/skills/brief-continuity/coverage.py" record \
-  --series <s> --gathered <date> --source <source-slug> --state read --items 11
-python "$UFO_HOME/skills/brief-continuity/coverage.py" record \
-  --series <s> --gathered <date> --source <source-slug> --state not-read --reason rate-limited
 python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
   --series <s> --since <date> --until <date>
 ```
@@ -224,9 +228,10 @@ The source slug is that source's durable address across gathers, exactly as a st
 editions. The footer names the source in the reader's words and the store keys it by the slug, which
 is what lets three days of one source aggregate as one source rather than as three.
 
-A retry inside one gather appends its own row, and the later row is that gather's answer: a source
-that rate-limited the first attempt and answered the second was read that day. Nothing is rewritten,
-and every read here is a pure read, exactly as in the pool.
+A retry inside one gather is that gather's answer: a source that rate-limited the first attempt and
+answered the second was read that day, so the second recording stands in place of the first. One
+series, one gather, one source is one row, which is why a replayed fire adds nothing. Every read
+here is a pure read, exactly as in the pool.
 
 ## Traps
 
@@ -245,4 +250,7 @@ and every read here is a pure read, exactly as in the pool.
   check for the same reason and identifies even less.
 - Deleting or rewriting a pool row to express staleness, rather than letting `stale` answer it.
 - Keying a source by the words one footer used, so one source across three gathers aggregates as three.
-- Rewriting a gather's coverage row when a retry succeeds, instead of appending the retry beside it.
+- Writing a coverage row into the projected file rather than calling `pulse_record_coverage`, which
+  leaves a state the next render erases and a gather no later edition can account for.
+- Leaving a source out of the call because it answered as expected, which makes a gather that read
+  it indistinguishable from one that never tried.

@@ -57,9 +57,9 @@ interrupted twice for a brief they have not read yet.
 
 Load `research-assistant` and find what changed across the confirmed sources, bounding every query to
 the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states,
-and record it under this gather's date with `brief-continuity`'s `coverage.py` — an edition covering
-more than one gather writes its footer from those rows, and the row is only writable while the read
-is in front of you.
+and record them under this gather's date with `pulse_record_coverage` — an edition covering more
+than one gather writes its footer from those rows, and a state is only writable while the read is in
+front of you.
 
 `field-report`, `brief-continuity` and `coverage-honesty` arrive with this skill: the first writes an
 edition from a pool, and the other two hold the contracts a series lives by — what an edition may
@@ -68,9 +68,9 @@ repeat, and what it may claim about a source it could not read. They are loaded,
 Record every candidate in the sightings pool with `pulse_record_sightings` — everything the gather
 surfaced, not only what looks publishable, in one call. A sighting is a fact at the moment the source
 returned it; whether it clears the bar is a separate judgement made after, and recording the two at
-the same moment is how a pool ends up holding only what an edition already carried. A coverage row
+the same moment is how a pool ends up holding only what an edition already carried. A record call
 that fails is named in the reply, per `field-report`'s rule on a write that did not land: a window
-whose states never reached the workspace is one every later edition has to read from silence.
+whose states never reached the record is one every later edition has to read from silence.
 
 `field-report`'s business-relative bar makes the pool more valuable rather than less. That bar
 rejects more than a field-relative one would, and every rejection is a lead rather than nothing: a
@@ -115,10 +115,10 @@ For a recurring answer, load `task-scheduling` and apply one manifest named `<fi
 row is this agent's because this turn applied it, which is the whole point of running the setup
 here. Fire early in the member's morning, before they would think to ask for an edition, read from
 the payload's `local_time` and converted to UTC. Carry no `run_now`: this turn gathered the
-window already, so an immediate fire would spend a full gather re-reading it. The pool itself is
-safe — one series, one day, one lead, one address is one row, so a second recording of this window
-adds nothing — but the coverage rows are still files and would double in the fire's own tree, and
-the gather is the expensive half either way.
+window already, so an immediate fire would spend a full gather re-reading it. The record itself is
+safe — one series, one day, one lead, one address is one row, and one series, one gather, one source
+is one row, so a second recording of this window adds nothing — but the gather is the expensive half
+and it would be paid for twice.
 
 ```yaml
 kind: scheduled_task
@@ -135,12 +135,11 @@ spec:
     script writes to a path resolved against this fire's own working directory, which is not the
     one a terminal-bound conversation starts in, and a series recorded from both keeps two ledgers
     that each look complete. Load coverage-honesty and set each source's state as its read returns,
-    recording each one under today's date with brief-continuity's coverage.py: the edition that
-    covers this window counts those rows, and a state nobody recorded here is a day it cannot
-    account for. That store is still a workspace file and so still splits by carrier — record the
-    states, and say in the reply that they went to this fire's own tree. Rank nothing, write no
-    report file, and record nothing in the covered ledger: the edition is written when the member
-    asks for one. The pool is this fire's whole product, so send no brief.
+    recording them under today's date with the pulse_record_coverage tool — every source tried, in
+    one call, and the tool again rather than a script for the same reason. The edition that covers
+    this window counts those rows, and a state nobody recorded here is a day it cannot account for.
+    Rank nothing, write no report file, and record nothing in the covered ledger: the edition is
+    written when the member asks for one. The pool is this fire's whole product, so send no brief.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a

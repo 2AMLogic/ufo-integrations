@@ -23,7 +23,7 @@ pytest.importorskip("sqlalchemy", reason="install ufo from git to run the store 
 
 from pulse_fakes import Files, Store, job_store, on_store, tool_context  # noqa: E402
 from ufo_ext_pulse import jobs, record, tools  # noqa: E402
-from ufo_ext_pulse.record import Sighting, Story  # noqa: E402
+from ufo_ext_pulse.record import Coverage, Sighting, Story  # noqa: E402
 
 NOW = datetime(2026, 9, 28, 13, 0, tzinfo=UTC)
 SERIES = "data-infra"
@@ -296,6 +296,219 @@ async def test_a_bad_edition_date_is_refused_and_writes_nothing(store: Store) ->
     assert await record.read_covered(store, SERIES) == []
 
 
+# --- the coverage state ---------------------------------------------------------------------------
+
+
+@on_store
+async def test_an_ungathered_series_has_no_coverage(store: Store) -> None:
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_a_source_state_is_read_back_whole(store: Store) -> None:
+    await record.record_coverage(
+        store, SERIES, "2026-09-24", [Coverage("releases", record.READ, 11)], NOW
+    )
+    assert await record.read_coverage(store, SERIES) == [
+        {
+            "gathered": "2026-09-24",
+            "source": "releases",
+            "state": "read",
+            "items": 11,
+            "reason": "",
+        }
+    ]
+
+
+@on_store
+async def test_the_same_state_recorded_twice_is_one_row(store: Store) -> None:
+    """A replayed fire lands one row. The file this projects to appends, so a gather recorded twice
+    would read as a gather with two answers from one source."""
+    for _ in range(3):
+        await record.record_coverage(
+            store, SERIES, "2026-09-24", [Coverage("releases", record.READ, 11)], NOW
+        )
+    assert len(await record.read_coverage(store, SERIES)) == 1
+
+
+@on_store
+async def test_a_retry_inside_one_gather_is_that_gathers_answer(store: Store) -> None:
+    """A source that rate-limited the first attempt and answered the second was read that day. The
+    file holds both rows and resolves them on read; this resolves them on write, and both surfaces
+    take the later one."""
+    await record.record_coverage(
+        store,
+        SERIES,
+        "2026-09-24",
+        [Coverage("filings-index", record.NOT_READ, reason="rate-limited")],
+        NOW,
+    )
+    await record.record_coverage(
+        store, SERIES, "2026-09-24", [Coverage("filings-index", record.READ, 6)], NOW
+    )
+    assert await record.read_coverage(store, SERIES) == [
+        {
+            "gathered": "2026-09-24",
+            "source": "filings-index",
+            "state": "read",
+            "items": 6,
+            "reason": "",
+        }
+    ]
+
+
+@on_store
+async def test_one_source_over_three_gathers_is_three_rows(store: Store) -> None:
+    """The distinction the store exists for: unread on one day and unread on all three are
+    different claims about the field, and only a row per gather can tell them apart."""
+    for day in ("2026-09-24", "2026-09-25", "2026-09-26"):
+        await record.record_coverage(
+            store,
+            SERIES,
+            day,
+            [Coverage("filings-index", record.NOT_READ, reason="unreachable")],
+            NOW,
+        )
+    rows = await record.read_coverage(store, SERIES)
+    assert [row["gathered"] for row in rows] == ["2026-09-24", "2026-09-25", "2026-09-26"]
+
+
+@on_store
+async def test_a_read_source_with_nothing_in_it_is_refused_as_read(store: Store) -> None:
+    """Zero items from a source that answered is `read-empty`, which is an answer. Filing it as the
+    other kind of zero is the one confusion `coverage-honesty` exists to prevent."""
+    with pytest.raises(ValueError, match="read-empty"):
+        await record.record_coverage(
+            store, SERIES, "2026-09-24", [Coverage("forums", record.READ, 0)], NOW
+        )
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_a_not_read_source_names_one_of_the_four(store: Store) -> None:
+    with pytest.raises(ValueError, match="unreachable, rate-limited"):
+        await record.record_coverage(
+            store, SERIES, "2026-09-24", [Coverage("filings-index", record.NOT_READ)], NOW
+        )
+    with pytest.raises(ValueError, match="unreachable, rate-limited"):
+        await record.record_coverage(
+            store,
+            SERIES,
+            "2026-09-24",
+            [Coverage("filings-index", record.NOT_READ, reason="slow")],
+            NOW,
+        )
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_a_whole_gather_is_refused_when_one_state_is_bad(store: Store) -> None:
+    """A gather never lands half of its states: a window missing one source reads as a source
+    nobody thought about, which is the claim the footer may not make."""
+    with pytest.raises(ValueError):
+        await record.record_coverage(
+            store,
+            SERIES,
+            "2026-09-24",
+            [Coverage("releases", record.READ, 4), Coverage("The Filings Index", record.READ, 1)],
+            NOW,
+        )
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_a_bad_gather_date_is_refused_and_writes_nothing(store: Store) -> None:
+    with pytest.raises(ValueError, match="gathered must be"):
+        await record.record_coverage(
+            store, SERIES, "Thursday", [Coverage("releases", record.READ, 4)], NOW
+        )
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_one_workspace_never_reads_anothers_coverage(store: Store) -> None:
+    other = Store(engine=store.engine, workspace_id=uuid4())
+    await record.record_coverage(
+        store, SERIES, "2026-09-24", [Coverage("releases", record.READ, 4)], NOW
+    )
+    await record.record_coverage(
+        other, SERIES, "2026-09-24", [Coverage("papers", record.READ, 1)], NOW
+    )
+    assert [row["source"] for row in await record.read_coverage(store, SERIES)] == ["releases"]
+    assert [row["source"] for row in await record.read_coverage(other, SERIES)] == ["papers"]
+
+
+@on_store
+async def test_the_coverage_state_does_not_depend_on_where_the_turn_started(
+    store: Store, tmp_path, monkeypatch
+) -> None:
+    """The regression test for this store's own half of the fault.
+
+    A gather's states and the edition that counts them are written by different conversations, and
+    those do not share a working directory. A footer built from the tree the reporting turn happened
+    to start in is a claim about part of the window, which is the claim `coverage-honesty` refuses.
+    """
+    here, there = tmp_path / "deploy-home", tmp_path / "sandbox-root"
+    here.mkdir()
+    there.mkdir()
+
+    monkeypatch.chdir(there)
+    await record.record_coverage(
+        store, SERIES, "2026-09-24", [Coverage("releases", record.READ, 4)], NOW
+    )
+    monkeypatch.chdir(here)
+    assert [row["source"] for row in await record.read_coverage(store, SERIES)] == ["releases"]
+
+
+@on_store
+async def test_a_tool_records_a_whole_gathers_states(store: Store) -> None:
+    result = await tools.record_coverage(
+        tool_context(store),
+        tools.RecordCoverageInput(
+            series=SERIES,
+            gathered="2026-09-24",
+            sources=[
+                tools.CoverageInput(source="releases", state="read", items=11),
+                tools.CoverageInput(source="forums", state="read-empty"),
+                tools.CoverageInput(
+                    source="filings-index", state="not-read", reason="rate-limited"
+                ),
+            ],
+        ),
+    )
+    assert not result.is_error
+    assert len(await record.read_coverage(store, SERIES)) == 3
+
+
+@on_store
+async def test_a_gather_with_no_sources_is_refused_rather_than_reported_as_a_write(
+    store: Store,
+) -> None:
+    """A gather that reached none of them records not-read rows naming why. Recording nothing is
+    the silence an edition cannot tell from a day nobody gathered."""
+    result = await tools.record_coverage(
+        tool_context(store),
+        tools.RecordCoverageInput(series=SERIES, gathered="2026-09-24", sources=[]),
+    )
+    assert result.is_error
+    assert await record.read_coverage(store, SERIES) == []
+
+
+@on_store
+async def test_a_coverage_write_leaves_its_series_due_for_projection(store: Store) -> None:
+    conversation = uuid4()
+    await tools.record_coverage(
+        tool_context(store, conversation),
+        tools.RecordCoverageInput(
+            series=SERIES,
+            gathered="2026-09-24",
+            sources=[tools.CoverageInput(source="releases", state="read", items=11)],
+        ),
+    )
+    due = await record.due_series(store)
+    assert [(series, where) for series, where, _ in due] == [(SERIES, conversation)]
+
+
 # --- the projection ------------------------------------------------------------------------------
 
 
@@ -376,16 +589,22 @@ def test_a_date_written_in_non_ascii_digits_is_refused() -> None:
 
 
 @on_store
-async def test_the_job_writes_both_files_and_clears_the_series(store: Store) -> None:
+async def test_the_job_writes_every_file_and_clears_the_series(store: Store) -> None:
+    conversation = uuid4()
     await record.record_sightings(
-        store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4()
+        store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, conversation
+    )
+    await record.record_coverage(
+        store, SERIES, "2026-09-21", [Coverage("releases", record.READ, 4)], NOW, conversation
     )
     await jobs.project(job_store(store))
     assert set(store.files.written) == {
         "pulse/data-infra.seen.jsonl",
         "pulse/data-infra.covered.jsonl",
+        "pulse/data-infra.coverage.jsonl",
     }
     assert '"slug": "acme-1-0"' in store.files.text("pulse/data-infra.seen.jsonl")
+    assert '"source": "releases"' in store.files.text("pulse/data-infra.coverage.jsonl")
     assert await record.due_series(store) == []
 
 
