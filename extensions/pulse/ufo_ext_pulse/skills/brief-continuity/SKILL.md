@@ -91,7 +91,7 @@ merged: a lead seen four times and never published is not a repeat, and a story 
 not a lead.
 
 ```bash
-python "$UFO_HOME/skills/brief-continuity/seen.py" record --series <s> --seen <date> --slug <slug> --title <t>
+python "$UFO_HOME/skills/brief-continuity/seen.py" record --series <s> --seen <date> --slug <slug> --title <t> --url <u>
 python "$UFO_HOME/skills/brief-continuity/seen.py" fresh   --series <s> --within-days 14
 python "$UFO_HOME/skills/brief-continuity/seen.py" stale   --series <s> --slug <slug>
 python "$UFO_HOME/skills/brief-continuity/seen.py" history --series <s> --slug <slug>
@@ -105,6 +105,22 @@ The pool is append-only and nothing is ever removed. Age is a reason not to purs
 reason to forget it: `stale` exits non-zero for a lead that has gone quiet, and the lead stays in
 the pool with its whole history, so when it moves again that history is still attached. A pool that
 expired it would have discarded it at exactly the moment it became interesting.
+
+`--url` is required, and whitespace does not count. The slug is this run's judgement of what a
+story is, so two runs need not agree on it. The url is the best external key a row carries: better
+than the title, which legitimately drifts between sightings, and than the source, which cannot tell
+two stories from one publisher apart. It is not the only external field and a thin row is not beyond
+manual repair — it is the one a reconciler cannot repair automatically, which is why `record`
+refuses it rather than storing a row that looks fine and answers nothing.
+
+Point it at the story, not at where the story was found. A blog index or a repository root passes
+this check and identifies nothing: the next story from the same index carries the same url, so two
+different stories reconcile as one. That failure is quieter than a missing url, because the row
+looks complete.
+
+Rows written before this was required are not rejected retroactively, and no read path reads `url`
+today — it is recorded for a reconciler that does not exist yet. So a url-less row is inert rather
+than broken, and stays readable by `fresh`, `stale` and `history`.
 
 **Staleness keys on the most recent sighting, not the first.** A lead first seen thirty days ago and
 seen again this morning is live. Asking when it first appeared answers a different question.
@@ -137,4 +153,6 @@ appeared once.
 - Saving the ledger as a memory fact, which pushes single-run snapshots into unrelated turns.
 - Reading more than five editions back and calling a genuinely old story ineligible forever.
 - Recording a sighting in the covered ledger, which marks an unpublished lead as already covered.
+- Recording a blog index or a repository root as a story's url, which reconciles two different
+  stories into one and looks correct while doing it.
 - Deleting or rewriting a pool row to express staleness, rather than letting `stale` answer it.
