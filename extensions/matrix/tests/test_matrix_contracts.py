@@ -22,6 +22,7 @@ from ufo_ext_matrix.events import (
     SURFACE,
     TEXT_MSGTYPE,
     media_parts,
+    room_file,
     answer_txn_id,
     file_txn_id,
     gaps,
@@ -997,3 +998,70 @@ def test_a_uri_carrying_a_path_of_its_own_is_not_a_media_id(uri: str) -> None:
     after the fact — so both parts are matched against what they may be rather than searched for
     what they may not."""
     assert media_parts(uri) is None
+
+
+def _file_event(**content: object) -> dict[str, object]:
+    base = {
+        "msgtype": "m.image",
+        "body": "chart.png",
+        "info": {"mimetype": "image/png", "size": 4},
+        "url": "mxc://example.org/AbC123",
+    }
+    return {
+        "type": "m.room.message",
+        "event_id": "$f",
+        "sender": "@alice:example.org",
+        "content": {**base, **content},
+    }
+
+
+def test_a_member_file_is_read_as_a_file() -> None:
+    """The plain form: a room that is not encrypted names the `mxc://` outright."""
+    shared = room_file(ROOM, _file_event())
+    assert shared is not None
+    assert (shared.filename, shared.media_type, shared.size_bytes) == ("chart.png", "image/png", 4)
+    assert shared.url == "mxc://example.org/AbC123"
+    assert shared.sealed is None
+
+
+def test_a_sealed_member_file_carries_its_key_and_no_url() -> None:
+    """The encrypted form, read after the device has decrypted the event: the `mxc://` moves inside
+    `file`, so an event naming a bare `url` is the plain case and this one is not."""
+    sealed = {"url": "mxc://example.org/AbC123", "key": {"alg": "A256CTR"}, "iv": "x"}
+    shared = room_file(ROOM, _file_event(url=None, file=sealed))
+    assert shared is not None
+    assert shared.url == ""
+    assert shared.sealed == sealed
+
+
+def test_a_file_offering_both_a_url_and_a_sealed_file_is_refused() -> None:
+    """The two disagree about whether the bytes are sealed. Resolving it either way lets the sender
+    choose, so neither is chosen."""
+    sealed = {"url": "mxc://example.org/x", "key": {"alg": "A256CTR"}, "iv": "x"}
+    assert room_file(ROOM, _file_event(file=sealed)) is None
+
+
+@pytest.mark.parametrize(
+    "content",
+    (
+        {"msgtype": "m.text"},
+        {"msgtype": "m.notice"},
+        {"url": None},
+        {"url": ""},
+        {"body": "", "filename": None},
+        {"m.new_content": {"msgtype": "m.image"}},
+        {"m.relates_to": {"rel_type": "m.replace", "event_id": "$a"}},
+    ),
+    ids=("text", "notice", "no-url", "empty-url", "unnamed", "edit", "replacement"),
+)
+def test_what_is_not_a_member_file(content: dict[str, object]) -> None:
+    """The same refusals `room_message` makes, plus a file naming neither a url nor a sealed one."""
+    assert room_file(ROOM, _file_event(**content)) is None
+
+
+def test_a_caption_names_the_file_and_the_body_is_the_caption() -> None:
+    """A file sent with words carries `filename` beside them; one sent bare is named by its body."""
+    named = room_file(ROOM, _file_event(body="last week's numbers", filename="q3.pdf"))
+    assert named is not None and named.filename == "q3.pdf"
+    bare = room_file(ROOM, _file_event(body="q3.pdf"))
+    assert bare is not None and bare.filename == "q3.pdf"
