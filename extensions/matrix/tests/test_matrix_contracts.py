@@ -79,6 +79,7 @@ THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
 PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
+WIRE_VERSIONS = re.compile(r'"v\d+"')
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -110,6 +111,22 @@ def imported_modules(path: Path) -> list[str]:
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             names.append(node.module)
     return names
+
+
+def searchable(text: str) -> str:
+    """`text` with the wire identifiers struck out, leaving the prose the ban is about.
+
+    Two carve-outs, each scoped to a version this repo does not get to rename. `PROTOCOL_NAMES` is a
+    dotted Matrix event or algorithm name — `m.olm.v1.curve25519-aes-sha2`, `m.megolm.v1.aes-sha2`.
+    `WIRE_VERSIONS` is a double-quoted version token, which is how an `EncryptedFile` names its own
+    format: `"v": "v2"`.
+
+    The boundary is the quoting, and it is honest about what that costs: a bare `v1` in a sentence
+    fails, a backticked `v2` fails, and a version someone puts in double quotes mid-sentence passes.
+    Reading a version out of a string literal is what writing the wire value looks like, and the
+    narrower rule — knowing every way a constant or a JSON field might be spelled — would fail on
+    the next spelling rather than on the next piece of transition language."""
+    return WIRE_VERSIONS.sub("", PROTOCOL_NAMES.sub("", text))
 
 
 @pytest.mark.parametrize(
@@ -310,15 +327,20 @@ def test_deploy_keys_are_bare_names_core_prefixes() -> None:
     ids=lambda p: str(p.relative_to(EXTENSION)),
 )
 def test_no_transition_language(path: Path) -> None:
-    """Every file reads as if designed this way from the start.
-
-    `PROTOCOL_NAMES` is struck out before the search, deliberately scoped to a dotted Matrix event
-    or algorithm name — `m.olm.v1.curve25519-aes-sha2` and `m.megolm.v1.aes-sha2` carry a protocol
-    version that is a wire identifier, not transition language. It needs a standalone dotted token,
-    so a bare `v1` in prose still fails; widening it is a visible choice, not a side effect."""
+    """Every file reads as if designed this way from the start. The wire identifiers `searchable`
+    strikes out are the one exception, and widening it is a visible choice, not a side effect."""
     if path.name == "test_matrix_contracts.py":
         return
-    assert TRANSITION_WORDS.search(PROTOCOL_NAMES.sub("", path.read_text())) is None
+    assert TRANSITION_WORDS.search(searchable(path.read_text())) is None
+
+
+def test_the_wire_carve_outs_do_not_launder_prose() -> None:
+    """A carve-out that grows quietly is a ban that stopped holding, so its edges are asserted
+    rather than described — the same lesson as the seam guard's reach."""
+    for source in ('sealed = {"v": "v2"}', 'ALGORITHM = "m.megolm.v1.aes-sha2"', 'KEY = "A256CTR"'):
+        assert TRANSITION_WORDS.search(searchable(source)) is None, source
+    for source in ("the v2 format", "the `v2` format", "kept for v1 readers", "a TODO here"):
+        assert TRANSITION_WORDS.search(searchable(source)) is not None, source
 
 
 def test_readme_matches_the_pack_shape() -> None:
