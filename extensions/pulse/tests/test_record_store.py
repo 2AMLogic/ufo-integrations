@@ -301,9 +301,11 @@ async def test_a_bad_edition_date_is_refused_and_writes_nothing(store: Store) ->
 
 @on_store
 async def test_a_tool_writes_no_file_and_the_row_lands_anyway(store: Store) -> None:
-    """`ExtensionContext.files` is None in every tool handler — `turn_tools` never wires the
-    sandbox seam — so a tool that tried to project would be dead code. The record is what a write
-    is for, and it does not depend on a file having landed."""
+    """`ExtensionContext.files` is None in every tool handler — `turn_tools` never wires that seam —
+    so these handlers do not reach for it. That is not the same as a tool being unable to write a
+    file: `ctx.sandbox.write_file` is always there, and `jobs.py` explains why the projection is not
+    done that way. What this asserts is the property that matters either way — the record is what a
+    write is for, and it does not depend on a file having landed."""
     assert store.files is None
     result = await tools.record_sightings(
         tool_context(store),

@@ -16,9 +16,9 @@ A row keyed by `(workspace_id, series, ...)` is reachable identically from every
 workspace, whatever ran it and wherever it started. That is the property the file lacks.
 
 **Why the file survives anyway.** It is the half a member can open. So it stays, as a *projection*:
-rendered whole from the tables and landed in the series' own conversation by `jobs.py`, which is a
-job rather than a tool because only a job's `ExtensionContext` carries `files` — a tool's is built
-by `turn_tools`, which never wires the sandbox seam. Rendering whole rather than appending is what
+rendered whole from the tables and landed in the series' own conversation by `jobs.py` — a job
+rather than a tool so that the copy follows the series rather than whichever turn last recorded, and
+so a record that advanced with no workspace to write to is rendered whole later instead of lost. Rendering whole rather than appending is what
 keeps the two from drifting: there is no state in the file that the tables do not hold.
 
 **The row shapes are the file's, unchanged.** A projected line is byte-identical to the line the

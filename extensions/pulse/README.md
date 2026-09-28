@@ -181,11 +181,16 @@ tables to `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl`, in the
 shape the scripts always appended, so the scripts below still read them and the member can still
 open them.
 
-It is a **job** and not part of the write, and that is forced rather than chosen: a workspace file
-is written through `ExtensionContext.files`, core wires that seam for the job runner and for surface
-contexts, and `host/ext/loader.py`'s `turn_tools` does not wire it at all. `ctx.ext.files` is
-therefore `None` in *every* extension tool handler, on every deploy. A projection attempted from a
-tool is not unreliable; it is dead code.
+It is a **job** and not part of the write. Not because a tool cannot write a file — it can, through
+`ctx.sandbox.write_file`, as `research` and `connectors` do. `ExtensionContext.files` is the seam for
+a writer with no turn and is indeed `None` in every tool handler; `ctx.sandbox` is the turn's own
+workspace and is always there.
+
+The job earns its place on where and when instead. The copy belongs in the series' conversation, not
+in whichever one happened to record — a tool writing its own turn's sandbox would leave a copy per
+conversation, which is the split this store exists to end. `ctx.sandbox` also opens a sandbox on
+first use, so projecting from every write would open one per call. And a record that advances while
+no workspace can take a file stays due, so the next tick renders it whole rather than losing it.
 
 The job wakes every five minutes and renders only series whose record has moved since their last
 projection, because `ConversationFiles.write` opens a sandbox rather than reusing a live one — an

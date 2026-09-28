@@ -19,9 +19,9 @@ running carrier could see. The rows now land in tables keyed by workspace and se
 turn reaches identically.
 
 The file stays, because a member can open a file and cannot open a table — but as a projection
-written by `jobs.py`, not by the tools. `ExtensionContext.files` is `None` in every tool handler and
-wired for the job runner, so the job is not a preference; it is the only place in this extension
-that can write one.
+written by `jobs.py`, not by the tools. A tool could write one, through `ctx.sandbox.write_file`;
+what it could not do is put the copy in the series' own conversation rather than its own turn's, or
+render a record that advanced while no workspace could take a file. `jobs.py` says why at length.
 
 Gathering is still `research`'s, the recurring row still `scheduled_tasks`', and the feed entry
 still `report_digest`'s. `requires` names the one seam a brief cannot be written without: a deploy

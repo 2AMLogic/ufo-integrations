@@ -7,10 +7,9 @@ and any other conversation writes under `workspace_root/<conversation_id>`. One 
 grew one ledger per tree, each looking complete and none of them whole. These write to tables
 instead, keyed by workspace and series, which every turn in the workspace reaches identically.
 
-**Nothing here writes a file.** `ExtensionContext.files` is `None` in every extension tool handler —
-core wires that seam for the job runner and for surface contexts, and `turn_tools` does not wire it
-at all — so a projection attempted here would be dead code that reported "no carrier" on a deploy
-where every carrier is present. `jobs.py` owns the workspace-file copy, as a job, for that reason.
+**Nothing here writes a file**, by choice rather than by inability. A tool can write one through
+`ctx.sandbox.write_file`; it would land in this turn's own conversation, which is the wrong place
+for a copy that belongs to the series. `jobs.py` owns the workspace-file copy and says why.
 
 What each write does do is stamp the series row with the conversation it ran in and the moment it
 advanced, in the same transaction as the rows. That is what the projection job selects on, so a
