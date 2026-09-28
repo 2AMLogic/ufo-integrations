@@ -203,3 +203,25 @@ def test_continuity_ships_its_coverage_script() -> None:
 def test_every_skill_closes_with_traps(name: str) -> None:
     """House shape: the failure modes are listed where a reader looks for them."""
     assert "## Traps" in (SKILLS_ROOT / name / "SKILL.md").read_text()
+
+
+def test_the_agent_prompt_does_not_forbid_what_a_skill_requires() -> None:
+    """The standing prompt is on every turn and a skill's text arrives only once it loads, so a
+    contradiction between them is resolved in the prompt's favour by construction.
+
+    #132 shipped one: the prompt said "there is no case where a shell is the right way to record"
+    while `field-pulse` tells the gather to record source states with `coverage.py`, from a shell,
+    because that store is the record rather than a projection of one (#123). The prompt would have
+    won, and the rows `coverage-honesty` reads would have stopped being written.
+
+    Pinned as a relationship between the two files rather than as a phrase, so it survives either
+    being rewritten.
+    """
+    prompt = (SKILLS_ROOT.parent / "agent.py").read_text()
+    gather = (SKILLS_ROOT / "field-pulse" / "SKILL.md").read_text()
+    if "coverage.py" not in gather:
+        return
+    assert "coverage.py" in prompt, (
+        "field-pulse records source states with coverage.py from a shell; the standing prompt has "
+        "to name that exception or it forbids it"
+    )

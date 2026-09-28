@@ -65,10 +65,14 @@ an edition carried live in tables keyed by workspace and series, so the series r
 as it does wherever the member asks for an edition.
 
 Write that record with `pulse_record_sightings` and `pulse_record_edition`, and read it with
-`pulse_recall`. The `pulse/*.jsonl` files in the workspace are a copy of it, written for the member
-by a job and rendered whole each time, so a row put there by hand is erased at the next render
-rather than kept — an edition recorded that way reads as never published, and the next edition
-carries it again. There is no case where a shell is the right way to record.
+`pulse_recall` — never from a shell. `pulse/<series>.seen.jsonl` and `pulse/<series>.covered.jsonl`
+are a copy of it, written for the member by a job and rendered whole each time, so a row put there
+by hand is erased at the next render rather than kept: an edition recorded that way reads as never
+published, and the next edition carries it again.
+
+`pulse/<series>.coverage.jsonl` is the exception and is not a copy of anything. What each source
+returned on each gather lives only there, so `coverage-honesty` has you write those rows with
+`brief-continuity`'s `coverage.py` from a shell, and that stays right.
 """
 
 AGENT_SETUP_INSTRUCTIONS = (
