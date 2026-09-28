@@ -12,6 +12,7 @@ import asyncio
 import functools
 import inspect
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -40,7 +41,7 @@ from ufo.sdk.surfaces import (
 )
 from ufo_ext_matrix.answering import ANSWERING_TABLE
 from ufo_ext_matrix.asking import ASKING_TABLE
-from ufo_ext_matrix.client import MEDIA_PATH
+from ufo_ext_matrix.client import AUTHENTICATED_MEDIA_PATH, MEDIA_PATH
 from ufo_ext_matrix.crypto_store import CRYPTO_TABLE
 from ufo_ext_matrix.linking import CLAIM_TABLE, LINK_TABLE
 from ufo_ext_matrix.since import SINCE_TABLE
@@ -48,6 +49,13 @@ from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
 
 BOT = "@ufo:example.org"
 HOMESERVER = "https://matrix.example.org"
+def media_id(filename: str) -> str:
+    """The id a media repository answers an upload with. A real one is opaque and carries none of
+    the filename's punctuation, so the fake mints one the media id grammar accepts rather than
+    handing back the filename and making every uri it produces unparseable."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", filename) or "media"
+
+
 TOKEN = "syt_secret_bot_token_value"
 ROOM = "!ops:example.org"
 DIRECT = "!direct:example.org"
@@ -149,6 +157,8 @@ class Homeserver:
             return self.failure
         if request.url.path == f"{MEDIA_PATH}/upload":
             return self.uploaded_media(request)
+        if request.url.path.startswith(f"{AUTHENTICATED_MEDIA_PATH}/download/"):
+            return self.downloaded_media(request)
         path = request.url.path.removeprefix("/_matrix/client/v3")
         match request.method, path.split("/")[1:]:
             case "GET", ["sync"]:
@@ -204,7 +214,16 @@ class Homeserver:
         if filename in self.limited_uploads:
             return httpx.Response(429, json={"errcode": "M_LIMIT_EXCEEDED", "retry_after_ms": 1500})
         self.uploaded.append((filename, request.content))
-        return httpx.Response(200, json={"content_uri": f"mxc://example.org/{filename}"})
+        return httpx.Response(200, json={"content_uri": f"mxc://example.org/{media_id(filename)}"})
+
+    def downloaded_media(self, request: httpx.Request) -> httpx.Response:
+        """What `upload` stored, addressed the way an `mxc://` addresses it: one media id, under
+        the server that answered the upload."""
+        asked = request.url.path.rsplit("/", 1)[-1]
+        for filename, content in self.uploaded:
+            if media_id(filename) == asked:
+                return httpx.Response(200, content=content)
+        return httpx.Response(404, json={"errcode": "M_NOT_FOUND"})
 
     def sent_under(self, prefix: str) -> list[dict[str, Any]]:
         """Every message sent under a transaction id starting `prefix`, in the order it was sent."""

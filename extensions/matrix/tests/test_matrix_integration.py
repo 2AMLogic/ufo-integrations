@@ -123,11 +123,8 @@ class Api:
         media where `enable_authenticated_media` holds, which is the Synapse default."""
         _, _, rest = mxc.partition("://")
         server, _, media_id = rest.partition("/")
-        # The contracts gate scans sources for transition-word patterns, so the endpoint's version
-        # segment is assembled rather than written out.
-        version = "v" + "1"
         answer = await self._http.get(
-            f"/_matrix/client/{version}/media/download/{server}/{quote(media_id, safe='')}"
+            f"/_matrix/client/v1/media/download/{server}/{quote(media_id, safe='')}"
         )
         assert answer.status_code == 200, answer.status_code
         return answer.content

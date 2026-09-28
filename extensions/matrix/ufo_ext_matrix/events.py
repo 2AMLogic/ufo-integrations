@@ -7,6 +7,7 @@ surface does with it after that is `surface.py`'s."""
 
 import hashlib
 import json
+import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -304,3 +305,25 @@ def next_batch(batch: Mapping[str, Any]) -> str:
 def _joined(batch: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
     joined = batch.get("rooms", {}).get("join", {})
     return joined if isinstance(joined, Mapping) else {}
+
+
+MXC_SCHEME = "mxc://"
+MEDIA_ID = re.compile(r"\A[A-Za-z0-9_-]+\Z")
+SERVER_NAME = re.compile(r"\A[A-Za-z0-9._\-\[\]:]+\Z")
+
+
+def media_parts(uri: str) -> tuple[str, str] | None:
+    """The server and media id an `mxc://` names, or None for anything that is not one.
+
+    A file's location arrives inside an event, so it is a claim by whoever sent it rather than a
+    value this surface chose. Both parts are matched against what they are allowed to be rather
+    than searched for what they are not: a ban lists the shapes someone has thought of, and `..` is
+    a path of its own while containing no character a ban would name."""
+    if not uri.startswith(MXC_SCHEME):
+        return None
+    server, slash, media_id = uri[len(MXC_SCHEME) :].partition("/")
+    if not slash or not SERVER_NAME.match(server) or not MEDIA_ID.match(media_id):
+        return None
+    if not any(character.isalnum() for character in server):
+        return None
+    return server, media_id
