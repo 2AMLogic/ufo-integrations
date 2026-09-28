@@ -194,11 +194,21 @@ def own_calls(node: ast.AST) -> Iterator[ast.Call]:
         yield from own_calls(child)
 
 
+def dotted(path: Path) -> str:
+    """A module's name for a failure to quote, qualified by the directories it sits in, so a
+    `client.py` under a subdirectory does not report under the transport's own name."""
+    return ".".join(path.relative_to(PACKAGE).with_suffix("").parts)
+
+
 def wire_callers(source: str, module: str) -> set[str]:
     """`module.Class.function` for every function in `source` that puts an event on the wire.
 
     Qualified by class, because a bare function name is ambiguous across a package: a second class
-    growing its own `send` would read as the seam itself and the equality below would hold."""
+    growing its own `send` would read as the seam itself and the equality below would hold.
+
+    The match is an attribute call on the method name, and that is the boundary of what this guard
+    claims: a send reached through an alias, a `getattr` lookup, or a lambda body is invisible to
+    it."""
     callers: set[str] = set()
 
     def walk(node: ast.AST, prefix: str) -> None:
@@ -231,32 +241,38 @@ def test_only_one_seam_puts_a_message_on_the_wire() -> None:
     callers = {
         caller
         for path in sorted(PACKAGE.rglob("*.py"))
-        if path.name != TRANSPORT
-        for caller in wire_callers(path.read_text(), path.stem)
+        if path != PACKAGE / TRANSPORT
+        for caller in wire_callers(path.read_text(), dotted(path))
     }
     assert callers == {SEAM}, f"a message leaves outside the seam, from {sorted(callers)}"
 
 
-@pytest.mark.parametrize("module", ("surface", "feedback"))
-def test_the_seam_guard_catches_a_bypass_in_any_module(module: str) -> None:
+def test_the_seam_guard_catches_a_bypass_wherever_it_is_written() -> None:
     """The guard earned its place on a rebase, where `poll` and `settled` reached the client
-    directly and only the combination of two branches showed it. Reading one module left the rest
-    uncovered — a bypass in `feedback.py` passed a green suite — so the guard's reach is asserted
-    here rather than assumed."""
+    directly and only the combination of two branches showed it. A bypass is caught in a class and
+    at module level alike, and each is named by where it sits, so a failure says which function to
+    open rather than that some module is wrong."""
     bypass = (
         "class Ear:\n"
         "    async def leak(self, client, room_id):\n"
         '        await client.send_event(room_id, "m.room.message", "txn", {})\n'
+        "\n\n"
+        "async def slip(client, room_id):\n"
+        '    await client.send_message(room_id, "txn", {})\n'
     )
-    assert wire_callers(bypass, module) == {f"{module}.Ear.leak"}
+    assert wire_callers(bypass, "feedback") == {"feedback.Ear.leak", "feedback.slip"}
 
 
 def test_the_seam_guard_reads_every_module_but_the_transport() -> None:
     """A glob matching nothing satisfies an equality against one name just as well as a clean
-    package does, so the reach itself is asserted: the modules that hold a client are among those
-    read, and the transport that is excluded does hold sends of its own."""
-    read = {path.name for path in PACKAGE.rglob("*.py") if path.name != TRANSPORT}
-    assert {"surface.py", "feedback.py"} <= read
+    package does, so the reach itself is asserted rather than described.
+
+    The exclusion is one path, not one filename. `client.py` names the transport by where it sits;
+    matching the name alone would skip a `client.py` in any subdirectory the package grows, and a
+    module holding a plaintext send would pass by virtue of where it was filed."""
+    assert sorted(PACKAGE.rglob(TRANSPORT)) == [PACKAGE / TRANSPORT]
+    read = {path for path in PACKAGE.rglob("*.py") if path != PACKAGE / TRANSPORT}
+    assert {PACKAGE / "surface.py", PACKAGE / "feedback.py"} <= read
     assert wire_callers((PACKAGE / TRANSPORT).read_text(), "client"), (
         "the transport is skipped because it is the wire; a transport holding no send means this "
         "exclusion now hides the seam"
