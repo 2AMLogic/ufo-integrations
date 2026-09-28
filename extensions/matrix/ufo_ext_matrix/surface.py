@@ -390,7 +390,7 @@ class MatrixSurface:
                         answering,
                     )
                 asked = await self.ask(ctx, client, writeback, answering)
-                await self.poll(client, writeback, answering)
+                await self.poll(ctx, client, writeback, answering)
                 reference = reference or asked
                 if reference is None:
                     return NOTHING_DELIVERED
@@ -418,7 +418,11 @@ class MatrixSurface:
         return sent
 
     async def poll(
-        self, client: MatrixClient, writeback: Writeback, answering: Answering | None
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        writeback: Writeback,
+        answering: Answering | None,
     ) -> None:
         """A tappable form of the question the reply wrote out, beside those words rather than
         instead of them: a client that draws no poll reads the numbered list, and a tap and a typed
@@ -433,11 +437,13 @@ class MatrixSurface:
         relation = (
             None if answering is None else reply_relation(answering.event_id, answering.thread_root)
         )
-        await client.send_event(
+        await self.send(
+            ctx,
+            client,
             writeback.queue_key,
-            POLL_START_TYPE,
             poll_txn_id(writeback.turn_id),
             poll_content(question.title, asked[0], relation),
+            event_type=POLL_START_TYPE,
         )
 
     async def attach(self, ctx: SurfaceContext, writeback: Writeback, reply_ref: str) -> None:
@@ -543,14 +549,15 @@ class MatrixSurface:
         room_id: str,
         txn: str,
         content: Mapping[str, Any],
+        event_type: str = MESSAGE_TYPE,
     ) -> str:
-        """One message into the room: itself in a plain room, Megolm ciphertext in an encrypted one.
-        Every message this surface sends leaves through here, so no delivery path puts a room's own
+        """One event into the room: itself in a plain room, Megolm ciphertext in an encrypted one.
+        Every event this surface sends leaves through here, so no delivery path puts a room's own
         words on the wire in the clear because it did not think to ask whether the room is
         encrypted. A room the bot has no device keys for raises `CryptoUnavailable` rather than
         falling back to cleartext."""
-        event_type, event = await outbound(ctx, client, room_id, content)
-        return await client.send_event(room_id, event_type, txn, event)
+        sealed, event = await outbound(ctx, client, room_id, event_type, content)
+        return await client.send_event(room_id, sealed, txn, event)
 
     async def say(
         self,
@@ -1124,10 +1131,10 @@ class Installation:
             settled_block(opened.question.title, opened.asked, chosen), asked_in.event_id
         )
         try:
-            await client.send_event(
-                answering.room_id, MESSAGE_TYPE, answer_txn_id(answering.event_id), content
+            await self.surface.send(
+                ctx, client, answering.room_id, answer_txn_id(answering.event_id), content
             )
-        except (MatrixError, httpx.HTTPError) as error:
+        except (MatrixError, httpx.HTTPError, CryptoUnavailable) as error:
             warn("matrix.answer_unmarked", installation=self.bot, error_class=type(error).__name__)
 
 

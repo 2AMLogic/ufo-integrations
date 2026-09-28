@@ -67,9 +67,10 @@ reasoning back from the silence.
   set and `matrix` is the way through. A lockfile pinning the set reaches it only with `[pack] name`
   unset, because the pack narrows the active set after the lockfile has filled it.
 - **The room is encrypted and `matrix_store_key` is empty.** An encrypted room is read and answered
-  as any other — but only with that slot filled. Empty, the bot has no device keys, hears nothing it
-  can read there, and refuses to answer rather than answering in the clear. Fill the slot; the bot
-  reads what is sent after that, not what was sent before it had keys.
+  as any other — but only with that slot filled. Empty, the bot has no device keys, logs
+  `matrix.crypto_no_keys` against the first batch that carries ciphertext, hears nothing it can read
+  there, and refuses to answer rather than answering in the clear. Fill the slot; the bot reads what
+  is sent after that, not what was sent before it had keys.
 - **The deploy has no `matrix-e2ee` extra.** The libraries that carry Olm and Megolm are an extra, so
   a deploy installed without it serves unencrypted rooms and logs `matrix.crypto_extra_missing`
   against the first encrypted event it meets. `pip install "ufo-integrations[matrix-e2ee]"` on the

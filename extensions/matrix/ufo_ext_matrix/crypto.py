@@ -37,7 +37,7 @@ from ufo.sdk.surfaces import CredentialSlotUnset, SurfaceContext
 from ufo_ext_matrix.client import MatrixClient, MatrixError
 from ufo_ext_matrix.crypto_store import SEALING, CryptoStore, Rows, Sealer, StoreLocked
 from ufo_ext_matrix.e2ee import EXTRA, INSTALL, CryptoUnavailable, ExtraMissing
-from ufo_ext_matrix.events import ENCRYPTED_TYPE, MESSAGE_TYPE, timeline
+from ufo_ext_matrix.events import ENCRYPTED_TYPE, timeline
 
 try:
     import vodozemac as vz
@@ -735,11 +735,20 @@ async def inbound(
 ) -> list[tuple[str, Mapping[str, Any]]]:
     """The batch's timeline as the surface hears it: encrypted events replaced by the plain events
     they carry, parked events whose keys have arrived ahead of them, and nothing still ciphertext.
-    Without a device the timeline is heard as it came, and an encrypted event founds nothing."""
+    Without a device the timeline is heard as it came, and an encrypted event founds nothing.
+
+    A batch that carried ciphertext to a bot with no device says so once, and says which of the two
+    reasons it was: the libraries are not installed, or they are and the device has no keys — the
+    `matrix_store_key` slot empty being the one cause of that which `device_for` passes over in
+    silence. A batch carrying no ciphertext is read without a word, so a deploy that encrypts
+    nothing and fills no slot logs nothing either."""
     events = list(timeline(batch, earlier))
     if device is None:
-        if not INSTALLED and any(e.get("type") == ENCRYPTED_TYPE for _, e in events):
-            warn("matrix.crypto_extra_missing", extra=EXTRA, install=INSTALL)
+        if any(e.get("type") == ENCRYPTED_TYPE for _, e in events):
+            if INSTALLED:
+                warn("matrix.crypto_no_keys", slot=STORE_KEY_SLOT)
+            else:
+                warn("matrix.crypto_extra_missing", extra=EXTRA, install=INSTALL)
         return events
     await device.receive(batch)
     heard = await device.retry()
@@ -764,13 +773,18 @@ async def inbound(
 
 
 async def outbound(
-    ctx: SurfaceContext, client: MatrixClient, room_id: str, content: Mapping[str, Any]
+    ctx: SurfaceContext,
+    client: MatrixClient,
+    room_id: str,
+    event_type: str,
+    content: Mapping[str, Any],
 ) -> tuple[str, Mapping[str, Any]]:
-    """The event type and content a message goes out as: itself in a plain room, Megolm
-    ciphertext in an encrypted one."""
+    """The event type and content an event goes out as: itself in a plain room, Megolm ciphertext
+    in an encrypted one. The type the room would have seen is sealed inside the ciphertext, so a
+    poll and a message reach an encrypted room as the same `m.room.encrypted` event."""
     settings = await client.encryption(room_id)
     if settings is None:
-        return MESSAGE_TYPE, content
+        return event_type, content
     if settings.get("algorithm") != MEGOLM:
         raise CryptoUnavailable(f"the room is encrypted with {settings.get('algorithm')}")
     if not INSTALLED:
@@ -778,4 +792,4 @@ async def outbound(
     device = await device_for(ctx, client)
     if device is None:
         raise CryptoUnavailable("the room is encrypted and the bot has no device keys")
-    return ENCRYPTED_TYPE, await device.encrypt(room_id, MESSAGE_TYPE, content, settings)
+    return ENCRYPTED_TYPE, await device.encrypt(room_id, event_type, content, settings)

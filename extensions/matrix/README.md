@@ -141,6 +141,7 @@ same device they already know, not a new one on every boot. The libraries that c
 | Outbound | A post into a room with `m.room.encryption` state is Megolm-encrypted. The session key goes first over Olm to every device of every joined member that lacks it. |
 | Rotation | A room's session is replaced when the room's rotation settings say it has served long enough (100 messages or 7 days by default), or when a device it was shared with has left. |
 | Trust | First use. The keys a device id first shows are pinned; a device that later shows other keys is sent no room key and not believed. |
+| No device keys | A batch carrying ciphertext to a bot with no device logs `matrix.crypto_no_keys` once and is heard whole apart from that ciphertext — the tell for a `matrix_store_key` slot left empty, which the device open itself passes over in silence. |
 
 The device's account, its Olm and Megolm sessions, the pinned device keys, and the parked events
 live in `matrix_ext_crypto`, a table the extension's migration owns — never in workspace files, a
@@ -300,12 +301,15 @@ pytest extensions/matrix
 
 `test_matrix_contracts.py` needs only `pytest`: the import gate, which events may found a turn, who a
 line addresses, the labels a question is answered by, and the HTML, splitting, and relations the
-surface writes. `test_matrix_surface.py` drives the listener and the three delivery handlers against
-a fake homeserver, `test_matrix_linking.py` drives a claim through its proof the same way,
-`test_matrix_crypto.py` runs real Olm and Megolm between the bot and members' devices through that
-same fake homeserver with key and to-device endpoints added, and `test_matrix_registry.py` loads the
-installed entry point through ufo's loader and applies the migrations; all four skip where `ufo` is
-absent, and the crypto test also skips without the `matrix-e2ee` extra.
+surface writes. The rest need `ufo` and skip without it.
+
+| Module | What it drives |
+| --- | --- |
+| `test_matrix_surface.py` | The listener and the three delivery handlers against a fake homeserver |
+| `test_matrix_linking.py` | A claim through its proof, the same way |
+| `test_matrix_without_the_extra.py` | What a deploy without `matrix-e2ee` meets, by switching the flag its absence sets |
+| `test_matrix_crypto.py` | Real Olm and Megolm between the bot and members' devices, through that same fake homeserver with key and to-device endpoints added. The one module that also skips without the extra |
+| `test_matrix_registry.py` | The installed entry point through ufo's loader, and the migrations applied |
 
 `test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
 collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite

@@ -135,6 +135,7 @@ class Homeserver:
     typing: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
     receipts: list[tuple[str, str]] = field(default_factory=list)
     display_name: str = "ufo"
+    encrypted: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -184,14 +185,15 @@ class Homeserver:
                         "room": room,
                         "type": event_type,
                         "event_id": f"$sent{len(self.sent)}",
-                        "type": event_type,
                         **json.loads(request.content),
                     }
                 return httpx.Response(200, json={"event_id": self.sent[txn]["event_id"]})
             case "POST", ["join", room]:
                 self.joined.append(room)
                 return httpx.Response(200, json={"room_id": room})
-            case "GET", ["rooms", _, "state", "m.room.encryption", ""]:
+            case "GET", ["rooms", room, "state", "m.room.encryption", ""]:
+                if room in self.encrypted:
+                    return httpx.Response(200, json=self.encrypted[room])
                 return httpx.Response(404, json={"errcode": "M_NOT_FOUND"})
         return httpx.Response(404, json={"errcode": "M_UNRECOGNIZED"})
 
@@ -228,7 +230,14 @@ async def extension_engine() -> AsyncEngine:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     metadata = sa.MetaData()
     sa.Table("workspace", metadata, sa.Column("id", sa.Uuid(), primary_key=True))
-    for table in (SINCE_TABLE, ANSWERING_TABLE, ASKING_TABLE, CLAIM_TABLE, LINK_TABLE, CRYPTO_TABLE):
+    for table in (
+        SINCE_TABLE,
+        ANSWERING_TABLE,
+        ASKING_TABLE,
+        CLAIM_TABLE,
+        LINK_TABLE,
+        CRYPTO_TABLE,
+    ):
         table.to_metadata(metadata)
     async with engine.begin() as connection:
         await connection.run_sync(metadata.create_all)

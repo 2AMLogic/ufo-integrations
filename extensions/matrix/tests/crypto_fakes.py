@@ -45,7 +45,6 @@ class E2EHomeserver(Homeserver):
     one_time_keys: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     fallback_keys: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     inbox: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
-    encrypted: dict[str, dict[str, Any]] = field(default_factory=dict)
     device_uploads: int = 0
     to_device_sent: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 

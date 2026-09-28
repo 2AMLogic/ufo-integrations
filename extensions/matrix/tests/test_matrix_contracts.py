@@ -180,9 +180,11 @@ def test_the_e2ee_libraries_are_an_extra_and_not_baseline() -> None:
 
 
 def test_only_one_seam_puts_a_message_on_the_wire() -> None:
-    """`MatrixSurface.send` is where a message meets `outbound`, so a room that is encrypted takes
-    ciphertext whichever handler is speaking. A handler calling the client's own send instead would
-    reach the room in the clear, and nothing in the type system says so — only this."""
+    """`MatrixSurface.send` is where an event meets `outbound`, so a room that is encrypted takes
+    ciphertext whichever handler is speaking and whatever type it is speaking in — a reply, a shared
+    file's message, a poll, a proof answer, the rewrite that marks an answer. A handler calling the
+    client's own send instead would reach the room in the clear, and nothing in the type system says
+    so — only this."""
     tree = ast.parse((PACKAGE / "surface.py").read_text())
     callers = {
         node.name
@@ -284,7 +286,9 @@ def test_a_skill_closes_with_traps(name: str) -> None:
 SILENCES = (
     '[pack] name = "assistant"',
     "matrix_store_key",
+    "matrix.crypto_no_keys",
     "matrix-e2ee",
+    "matrix.crypto_extra_missing",
     "matrix.crypto_store_locked",
     "second client",
     "same user",
@@ -296,7 +300,10 @@ def test_setup_names_every_silence_a_misconfigured_bot_answers_with() -> None:
     """Every one of these presents only as the agent not answering, so a reader who has one of them
     and not this list has nothing to go on. An encrypted room is four of them: the store-key slot
     unfilled, the crypto extra absent from the deploy, the store key changed under a device that had
-    keys, and the bot's token in a second client publishing over its device."""
+    keys, and the bot's token in a second client publishing over its device. The first three name the
+    log line that tells them apart, so a reader with a log has something to match; the fourth has no
+    line of its own, because a second client publishing over the bot's device is the homeserver
+    answering another caller and nothing this bot sees."""
     traps = (SKILLS_ROOT / "matrix-setup" / "SKILL.md").read_text().split("## Traps", 1)[1]
     for tell in SILENCES:
         assert tell in traps, tell
