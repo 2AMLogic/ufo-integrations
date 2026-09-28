@@ -252,6 +252,15 @@ def wire_callers(source: str, module: str) -> set[str]:
     return callers
 
 
+def guarded_paths() -> list[Path]:
+    """Every module the seam guard reads: the package, less the transport, which is the wire.
+
+    The guard and the test that asserts its reach call this one walk. Written twice — once in each
+    — the reach test asserts the reach of its own copy, so narrowing the guard's walk to
+    `PACKAGE.glob` left three seam tests green while `migrations/` stopped being read."""
+    return sorted(path for path in PACKAGE.rglob("*.py") if path != PACKAGE / TRANSPORT)
+
+
 def test_only_one_seam_puts_a_message_on_the_wire() -> None:
     """`MatrixSurface.send` is where an event meets `outbound`, so a room that is encrypted takes
     ciphertext whichever handler is speaking and whatever type it is speaking in — a reply, a shared
@@ -263,8 +272,7 @@ def test_only_one_seam_puts_a_message_on_the_wire() -> None:
     package, and `feedback.py` already carries a client of its own."""
     callers = {
         caller
-        for path in sorted(PACKAGE.rglob("*.py"))
-        if path != PACKAGE / TRANSPORT
+        for path in guarded_paths()
         for caller in wire_callers(path.read_text(), dotted(path))
     }
     assert callers == {SEAM}, f"a message leaves outside the seam, from {sorted(callers)}"
@@ -292,10 +300,18 @@ def test_the_seam_guard_reads_every_module_but_the_transport() -> None:
 
     The exclusion is one path, not one filename. `client.py` names the transport by where it sits;
     matching the name alone would skip a `client.py` in any subdirectory the package grows, and a
-    module holding a plaintext send would pass by virtue of where it was filed."""
+    module holding a plaintext send would pass by virtue of where it was filed.
+
+    Both this and the guard call `guarded_paths`, so what is asserted here is the walk the guard
+    actually makes rather than a copy of it standing beside one."""
     assert sorted(PACKAGE.rglob(TRANSPORT)) == [PACKAGE / TRANSPORT]
-    read = {path for path in PACKAGE.rglob("*.py") if path != PACKAGE / TRANSPORT}
+    read = set(guarded_paths())
     assert {PACKAGE / "surface.py", PACKAGE / "feedback.py"} <= read
+    # A module in a subdirectory is what tells `rglob` from `glob`. `migrations/` is the one the
+    # package already has, so narrowing the walk stops being invisible.
+    nested = {path for path in read if path.parent != PACKAGE}
+    assert nested, "the walk reaches no subpackage, so a narrowed walk would read the same set"
+    assert nested <= read
     assert wire_callers((PACKAGE / TRANSPORT).read_text(), "client"), (
         "the transport is skipped because it is the wire; a transport holding no send means this "
         "exclusion now hides the seam"
