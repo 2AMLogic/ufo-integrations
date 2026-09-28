@@ -16,7 +16,9 @@ from uuid import UUID
 SURFACE = "matrix"
 MESSAGE_TYPE = "m.room.message"
 TEXT_MSGTYPE = "m.text"
+NOTICE_MSGTYPE = "m.notice"
 REPLACE_RELATION = "m.replace"
+THREAD_RELATION = "m.thread"
 ROOM_KEY_CHARS = 32
 SYNC_TIMELINE_LIMIT = 50
 SYNC_FILTER = json.dumps(
@@ -38,7 +40,8 @@ BACKFILL_FILTER = json.dumps({"types": [MESSAGE_TYPE]}, separators=(",", ":"))
 @dataclass(frozen=True)
 class RoomMessage:
     """One plain-text message a member sent into a room: the only event shape that may found a
-    turn. `mentions` is the MXIDs the sender's client says it addressed."""
+    turn. `mentions` is the MXIDs the sender's client says it addressed, and `thread_root` the
+    thread the message belongs to, None for a message sent to the room itself."""
 
     room_id: str
     event_id: str
@@ -46,6 +49,7 @@ class RoomMessage:
     body: str
     formatted_body: str
     mentions: frozenset[str]
+    thread_root: str | None = None
 
     def addresses(self, bot: str) -> bool:
         """Whether the sender named the bot: an intentional mention, or a pill a client without
@@ -75,6 +79,25 @@ def txn_id(turn_id: UUID) -> str:
     """The transaction id a reply is sent under. One turn has one terminal reply, so a retried post
     for the same turn reaches the homeserver as the same transaction and lands once."""
     return f"ufo-{turn_id}"
+
+
+def part_txn_id(base: str, part: int) -> str:
+    """The transaction id the parts after the first of one reply are sent under, so a reply the
+    homeserver already holds in full is not doubled a part at a time."""
+    return base if part == 1 else f"{base}-{part}"
+
+
+def file_txn_id(turn_id: UUID, artifact_id: UUID) -> str:
+    """The transaction id one shared file is sent under. Delivery repeats `attach` after a crash,
+    and a file already sent for this turn reaches the homeserver as the transaction it already
+    answered."""
+    return f"ufo-file-{turn_id}-{artifact_id}"
+
+
+def say_txn_id(reply_id: UUID) -> str:
+    """The transaction id one mid-turn reply is sent under, named by the row core hands over, so a
+    re-handed row posts once."""
+    return f"ufo-say-{reply_id}"
 
 
 def permalink(room_id: str, event_id: str) -> str:
@@ -114,7 +137,19 @@ def room_message(room_id: str, event: Mapping[str, Any]) -> RoomMessage | None:
         body=body,
         formatted_body=formatted if isinstance(formatted, str) else "",
         mentions=_mentions(content),
+        thread_root=_thread_root(content),
     )
+
+
+def _thread_root(content: Mapping[str, Any]) -> str | None:
+    """The thread a message was sent in, read from its own relation: a room conversation is a
+    thread exactly where the message that founds a turn is in one, and the reply that answers it
+    belongs under the same root."""
+    relates = content.get("m.relates_to")
+    if not isinstance(relates, Mapping) or relates.get("rel_type") != THREAD_RELATION:
+        return None
+    root = relates.get("event_id")
+    return root if isinstance(root, str) and root else None
 
 
 def _mentions(content: Mapping[str, Any]) -> frozenset[str]:

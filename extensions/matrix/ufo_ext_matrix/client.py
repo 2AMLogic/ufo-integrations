@@ -15,6 +15,7 @@ import httpx
 from ufo_ext_matrix.events import BACKFILL_FILTER, SYNC_FILTER
 
 CLIENT_PATH = "/_matrix/client/v3"
+MEDIA_PATH = "/_matrix/media/v3"
 BACKFILL_PAGE = 100
 SYNC_TIMEOUT_MS = 30_000
 REQUEST_TIMEOUT_SECONDS = 20.0
@@ -49,8 +50,9 @@ class MatrixClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        self._root = homeserver.rstrip("/")
         self._http = httpx.AsyncClient(
-            base_url=homeserver.rstrip("/") + CLIENT_PATH,
+            base_url=self._root + CLIENT_PATH,
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS + SYNC_TIMEOUT_MS / 1000),
             transport=transport,
@@ -88,15 +90,31 @@ class MatrixClient:
             params["since"] = since
         return await self._call("GET", "/sync", "sync", params=params)
 
-    async def send_text(self, room_id: str, txn_id: str, body: str) -> str:
-        """Send one `m.text` message under a caller-chosen transaction id and return its event id.
+    async def send_message(self, room_id: str, txn_id: str, content: Mapping[str, Any]) -> str:
+        """Send one `m.room.message` under a caller-chosen transaction id and return its event id.
         The homeserver answers a repeated transaction id with the event it already created."""
         path = f"/rooms/{quote(room_id, safe='')}/send/m.room.message/{quote(txn_id, safe='')}"
-        answer = await self._call("PUT", path, "send", json={"msgtype": "m.text", "body": body})
+        answer = await self._call("PUT", path, "send", json=content)
         event_id = answer.get("event_id")
         if not isinstance(event_id, str):
             raise MatrixError("send", 200, "M_BAD_JSON", None)
         return event_id
+
+    async def upload(self, filename: str, media_type: str, data: bytes) -> str:
+        """Put one file in the media repository and return the `mxc://` URI a message carries it
+        by. The media repository is its own API rather than a client-server endpoint, so this is
+        the one call that does not go through the session's base URL."""
+        response = await self._http.post(
+            f"{self._root}{MEDIA_PATH}/upload",
+            content=data,
+            params={"filename": filename},
+            headers={"Content-Type": media_type or "application/octet-stream"},
+        )
+        answer = self._answer(response, "upload")
+        content_uri = answer.get("content_uri")
+        if not isinstance(content_uri, str):
+            raise MatrixError("upload", 200, "M_BAD_JSON", None)
+        return content_uri
 
     async def join(self, room_id: str) -> None:
         await self._call("POST", f"/join/{quote(room_id, safe='')}", "join", json={})
@@ -137,6 +155,9 @@ class MatrixClient:
         json: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         response = await self._http.request(method, path, params=params, json=json)
+        return self._answer(response, endpoint)
+
+    def _answer(self, response: httpx.Response, endpoint: str) -> Mapping[str, Any]:
         try:
             answer = response.json()
         except ValueError:

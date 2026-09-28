@@ -4,7 +4,9 @@ A Matrix chat surface for [ufo](https://github.com/ufo-ai/ufo-core): a room is a
 the people in it are members.
 
 The surface is durable, like Slack's. A bot user reads its rooms over the client-server `/sync`
-stream, and each finished turn is one message back into the room it came from.
+stream, and a turn answers in the room it came from: its reply as rich text under the message it
+answers, the files it shared as messages of their own, and the words it marks before it ends as they
+are marked.
 
 ## What it adds
 
@@ -30,15 +32,30 @@ the recent ones are the evidence the ambient decision reads.
 | Room where everyone but the bot is a member | A room audience: the room's memory and the workspace's shared memory |
 | Room with anyone else in it, or in a workspace with no domain | A foreign audience: the room's memory alone, nothing internal |
 | Terminal turn | `PUT /rooms/{roomId}/send/m.room.message/ufo-{turn_id}` |
+| The message that founded the turn | `m.in_reply_to`, or `m.thread` under its root where the member spoke in a thread |
+| Markdown the turn wrote | `formatted_body` in `org.matrix.custom.html`, beside the words in `body` |
+| A shared file | `POST /_matrix/media/v3/upload`, then `m.image` / `m.video` / `m.audio` / `m.file` under the reply |
+| A detailed write-up | A link in the reply to the portal, never an upload |
+| Words marked mid-turn | One message each, under `ufo-say-{reply_id}` |
 
 A direct room is a room like any other, so a room's audience only ever narrows: once anyone who is
 not a member joins, the room is foreign for good, whoever leaves after.
 
 The transaction id is the turn's, so a retried delivery is the same transaction and the homeserver
-answers it with the event it already sent. A turn whose whole answer is silence sends nothing. A
-question is written out with numbered options; a connect or credential handoff, and a turn's shared
-files, point at the workspace, since a room carries none of them. A cancelled turn posts the reason
-core gave — an archived conversation, a removed seat — or, with none, that it was stopped.
+answers it with the event it already sent. Each file is sent under `ufo-file-{turn_id}-{artifact_id}`
+and each mid-turn reply under `ufo-say-{reply_id}`, so a delivery recovered after a crash re-sends
+none of them. A turn whose whole answer is silence sends nothing. A question is written out with
+numbered options; a connect or credential handoff points at the workspace, since a room carries
+neither. A cancelled turn posts the reason core gave — an archived conversation, a removed seat — or,
+with none, that it was stopped.
+
+A whole event weighs at most 65536 bytes and a reply carries its words twice, so a reply over 4096
+bytes of Markdown is written in parts, cut between paragraphs and never leaving a code fence open.
+The first part's event id is the reference core records, and every part relates to the same message.
+
+Which room message a turn answers is stored per turn in `matrix_ext_answering`: a writeback names the
+turn, the room, and the member, so admission records the event id every later message of that turn
+relates to.
 
 The `/sync` position is stored per workspace in `matrix_ext_since`, a table the extension's
 migration owns, after each batch is delivered. A restart resumes from it; a batch replayed after a
@@ -112,6 +129,13 @@ workspace's to know.
   hears nothing it can read, and admits nothing.
 - **A new token is a new transaction scope.** Transaction ids are idempotent per access token, so a
   reply retried across a token rotation can land twice.
+- **A file is best effort.** One upload the homeserver refuses is logged by error class and its
+  siblings still land, so a room can hold three of four files and the reply that named all four.
+- **An orphaned upload is the cost of at-least-once.** Recovery repeats `attach`, so bytes can reach
+  the media repository twice; the second `mxc://` is unreferenced and the repository keeps it.
+- **A write-up needs a portal.** The detailed report is a link into the deploy's portal, and a deploy
+  without one, or a room the portal shows nobody, points at the workspace instead — the reply never
+  carries an empty body for a write-up the room cannot link.
 - **Only a member brings the bot into a room.** An invitation from anyone who resolves to no member —
   a stranger on the bot's own homeserver included — is left standing, unless a member's claim on
   that MXID is live.
@@ -148,11 +172,23 @@ workspace's to know.
 pytest extensions/matrix
 ```
 
-`test_matrix_contracts.py` needs only `pytest`: the import gate, and which events may found a turn.
-`test_matrix_surface.py` drives the listener and the post against a fake homeserver,
-`test_matrix_linking.py` drives a claim through its proof the same way, and
-`test_matrix_registry.py` loads the installed entry point through ufo's loader and applies the
-migrations; all three skip where `ufo` is absent.
+`test_matrix_contracts.py` needs only `pytest`: the import gate, which events may found a turn, and
+the HTML, splitting, and relations the surface writes. `test_matrix_surface.py` drives the listener
+and the three delivery handlers against a fake homeserver, `test_matrix_linking.py` drives a claim
+through its proof the same way, and `test_matrix_registry.py` loads the installed entry point
+through ufo's loader and applies the migrations; all three skip where `ufo` is absent.
+
+`test_matrix_integration.py` drives the delivery handlers against a real homeserver, and is
+collected only where `MATRIX_INTEGRATION_HOMESERVER` names one — CI never sets it, so the suite
+there is unchanged and the registry job's no-skip rule holds. It registers its own throwaway users,
+so the named homeserver must allow registration; a private Synapse container does. It needs `ufo`
+installed, and runs for example as:
+
+```bash
+MATRIX_INTEGRATION_HOMESERVER=http://localhost:8017 \
+  uv run --python 3.12 --with pytest --with "ufo @ file:///home/ubuntu/ufo-core" \
+  pytest extensions/matrix/tests/test_matrix_integration.py -v
+```
 
 ## License
 

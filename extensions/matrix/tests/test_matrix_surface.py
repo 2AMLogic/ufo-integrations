@@ -1,9 +1,11 @@
-"""The listener and the post against a fake homeserver: a stream resumes where it stood, the bot's
-own echo and every non-message event found nothing, a declined ambient line and a non-member's line
-found nothing, a room's audience only narrows, one bad event or one broken bot holds nothing else,
-and a reply lands once however often it is posted."""
+"""The listener and the delivery handlers against a fake homeserver: a stream resumes where it
+stood, the bot's own echo and every non-message event found nothing, a declined ambient line and a
+non-member's line found nothing, a room's audience only narrows, one bad event or one broken bot
+holds nothing else, and every message a turn sends — its reply, its files, and the words it marks
+before it ends — lands once, as rich text, under the message it answers."""
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
@@ -32,23 +34,40 @@ from matrix_fakes import (  # noqa: E402
     on_loop,
     text,
 )
+from ufo.runtime.turns.audience import SHARED_AUDIENCE  # noqa: E402
 from ufo.sdk.audience import foreign_room_audience, room_audience  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
     NOTHING_DELIVERED,
     SILENCE_SENTINEL,
     CredentialSlotUnset,
+    MidTurnReply,
+    SharedArtifact,
     SurfaceDeliveryError,
     SurfaceInstallationConflict,
     TerminalFrame,
     Writeback,
 )
-from ufo_ext_matrix.events import room_key, txn_id  # noqa: E402
+from ufo_ext_matrix.answering import Answering, read_answering  # noqa: E402
+from ufo_ext_matrix.events import (  # noqa: E402
+    file_txn_id,
+    part_txn_id,
+    room_key,
+    say_txn_id,
+    txn_id,
+)
+from ufo_ext_matrix.messages import (  # noqa: E402
+    EVENT_LIMIT_BYTES,
+    PART_BUDGET_BYTES,
+    reply_relation,
+)
 from ufo_ext_matrix.since import read_since, write_since  # noqa: E402
 from ufo_ext_matrix.surface import (  # noqa: E402
     CANCELLED_LINE,
     FAILED_LINE,
+    FILES_LINE,
     HOMESERVER_SLOT,
     IDLE_SECONDS,
+    REPORT_LINK_TEXT,
     TOKEN_SLOT,
     ConnectInput,
     FleetOwnershipLost,
@@ -77,15 +96,52 @@ async def primed(server: Homeserver, workspace: Workspace) -> Installation:
     return installation
 
 
-def writeback(terminal: TerminalFrame, turn_id: UUID | None = None) -> Writeback:
+def writeback(
+    terminal: TerminalFrame,
+    turn_id: UUID | None = None,
+    artifacts: tuple[SharedArtifact, ...] = (),
+) -> Writeback:
     return Writeback(
         turn_id=turn_id or uuid4(),
         conversation_id=uuid4(),
         agent_id=uuid4(),
         queue_key=ROOM,
         terminal=terminal,
-        artifacts=(),
+        artifacts=artifacts,
+        speaker_member_id=uuid4(),
     )
+
+
+def shared(filename: str, media_type: str, subject: str | None = None) -> SharedArtifact:
+    return SharedArtifact(
+        id=uuid4(),
+        blob_key=f"artifacts/{filename}",
+        filename=filename,
+        subject=subject,
+        media_type=media_type,
+        size_bytes=len(filename),
+        role="file",
+    )
+
+
+def report(subject: str | None = None) -> SharedArtifact:
+    return SharedArtifact(
+        id=uuid4(),
+        blob_key="artifacts/report.md",
+        filename="report.md",
+        subject=subject,
+        media_type="text/markdown",
+        size_bytes=9,
+        role="details",
+    )
+
+
+async def answered(server: Homeserver, workspace: Workspace, event: dict) -> UUID:
+    """The turn one room message founded, with the record of the message it answers beside it."""
+    installation = await primed(server, workspace)
+    server.syncs["s1"] = batch("s2", {ROOM: [event]})
+    assert await installation.step() == 0.0
+    return UUID(str(workspace.admitted[-1]["turn_id"]))
 
 
 @on_loop
@@ -751,3 +807,266 @@ def test_no_connect_answer_carries_the_token(caplog: pytest.LogCaptureFixture) -
     for answer in answers:
         assert TOKEN not in said(answer)
     assert TOKEN not in caplog.text
+
+
+@on_loop
+async def test_a_reply_renders_as_html_under_the_message_it_answers(workspace: Workspace) -> None:
+    server = Homeserver()
+    turn = await answered(server, workspace, mention("$m1", ALICE, "summarize the week"))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text="**one** line"), turn)
+    assert await surface.post(workspace, wb) == "$sent0"  # type: ignore[arg-type]
+    sent = server.sent[txn_id(turn)]
+    assert sent["body"] == "**one** line"
+    assert sent["format"] == "org.matrix.custom.html"
+    assert sent["formatted_body"] == "<p><strong>one</strong> line</p>"
+    assert sent["m.relates_to"] == {"m.in_reply_to": {"event_id": "$m1"}}
+
+
+@on_loop
+async def test_a_reply_to_a_threaded_message_hangs_under_its_root(workspace: Workspace) -> None:
+    server = Homeserver()
+    threaded = mention("$m1", ALICE, "and the numbers?")
+    threaded["content"]["m.relates_to"] = {"rel_type": "m.thread", "event_id": "$root"}
+    turn = await answered(server, workspace, threaded)
+    assert await read_answering(workspace, turn) == Answering(ROOM, "$m1", "$root")  # type: ignore[arg-type]
+    surface = MatrixSurface(transport=server.transport, environ={})
+    await surface.post(workspace, writeback(TerminalFrame(status="done", text="here"), turn))  # type: ignore[arg-type]
+    assert server.sent[txn_id(turn)]["m.relates_to"] == reply_relation("$m1", "$root")
+
+
+@on_loop
+async def test_a_turn_no_message_founded_relates_to_nothing(workspace: Workspace) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text="the scheduled brief"))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert "m.relates_to" not in server.sent[txn_id(wb.turn_id)]
+
+
+@on_loop
+async def test_a_long_reply_is_written_in_parts_under_one_reference(workspace: Workspace) -> None:
+    server = Homeserver()
+    turn = await answered(server, workspace, mention("$m1", ALICE, "the whole report please"))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    paragraph = "word " * 200
+    long_reply = "\n\n".join(f"{n}. {paragraph}" for n in range(8))
+    wb = writeback(TerminalFrame(status="done", text=long_reply), turn)
+    assert await surface.post(workspace, wb) == "$sent0"  # type: ignore[arg-type]
+    written = [txn for txn in server.sent if txn.startswith(txn_id(turn))]
+    assert len(written) > 1
+    assert written[0] == txn_id(turn) and written[1] == part_txn_id(txn_id(turn), 2)
+    for txn in written:
+        assert len(json.dumps(server.sent[txn]).encode()) < EVENT_LIMIT_BYTES
+        assert len(server.sent[txn]["body"].encode()) <= PART_BUDGET_BYTES
+        assert server.sent[txn]["m.relates_to"] == {"m.in_reply_to": {"event_id": "$m1"}}
+    assert sum(server.sent[txn]["body"].count("word") for txn in written) == 1600
+
+
+@on_loop
+async def test_the_detailed_report_is_a_link_and_is_never_uploaded(workspace: Workspace) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(
+        TerminalFrame(status="done", text="Short answer."), artifacts=(report("the write-up"),)
+    )
+    # Only the shared audience — or a member's own — earns a portal link, so a room conversation
+    # seeded with one reads the way core's audience gate lets it read.
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    body = server.sent[txn_id(wb.turn_id)]["body"]
+    url = f"https://ufo.example.org/surface/web#/c/{wb.conversation_id}?report={wb.artifacts[0].id}"
+    assert body == f"Short answer.\n\n[the write-up]({url})"
+    assert FILES_LINE not in body
+    assert server.uploaded == []
+    assert list(server.sent) == [txn_id(wb.turn_id)]
+
+
+@on_loop
+async def test_a_report_the_turn_named_nothing_reads_as_the_surfaces_own_words(
+    workspace: Workspace,
+) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text="Short answer."), artifacts=(report(),))
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert f"[{REPORT_LINK_TEXT}](" in server.sent[txn_id(wb.turn_id)]["body"]
+
+
+@on_loop
+async def test_a_details_report_the_portal_shows_nobody_points_at_the_workspace(
+    workspace: Workspace,
+) -> None:
+    """A room audience is neither the shared one nor a member's own, so core's gate offers no
+    link: the write-up then reads as the workspace pointer rather than vanishing — a turn whose
+    words were silence must never post an empty event."""
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text=SILENCE_SENTINEL), artifacts=(report(),))
+    workspace.conversations[ROOM] = (wb.conversation_id, room_audience("matrix", room_key(ROOM)))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    body = server.sent[txn_id(wb.turn_id)]["body"]
+    assert f"[{REPORT_LINK_TEXT}](" not in body
+    assert body == f"{FILES_LINE}: https://ufo.example.org/surface/web"
+
+
+@on_loop
+async def test_a_deploy_with_no_portal_offers_no_report_link(workspace: Workspace) -> None:
+    server = Homeserver()
+    workspace.portal = False
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text="Short answer."), artifacts=(report("here"),))
+    workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    assert server.sent[txn_id(wb.turn_id)]["body"] == (
+        f"Short answer.\n\n{FILES_LINE}: https://ufo.example.org/surface/web"
+    )
+
+
+@on_loop
+async def test_shared_files_follow_the_reply_as_what_they_are(workspace: Workspace) -> None:
+    server = Homeserver()
+    turn = await answered(server, workspace, mention("$m1", ALICE, "chart it"))
+    chart = shared("chart.png", "image/png", "Last week")
+    notes = shared("notes.md", "text/markdown")
+    workspace.blob.objects = {chart.blob_key: b"\x89PNG", notes.blob_key: b"# notes"}
+    wb = writeback(TerminalFrame(status="done", text="Two files."), turn, (chart, notes))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert server.uploaded == [("chart.png", b"\x89PNG"), ("notes.md", b"# notes")]
+    picture = server.sent[file_txn_id(turn, chart.id)]
+    assert picture["msgtype"] == "m.image"
+    assert picture["body"] == "Last week" and picture["filename"] == "chart.png"
+    assert picture["url"] == "mxc://example.org/chart.png"
+    assert picture["m.relates_to"] == reply_relation(str(reply_ref), None)
+    assert server.sent[file_txn_id(turn, notes.id)]["msgtype"] == "m.file"
+    assert FILES_LINE in server.sent[txn_id(turn)]["body"]
+
+
+@on_loop
+async def test_one_refused_upload_leaves_its_siblings_delivered(workspace: Workspace) -> None:
+    server = Homeserver(refused_uploads={"huge.bin"})
+    huge = shared("huge.bin", "application/octet-stream")
+    small = shared("small.txt", "text/plain")
+    gone = shared("gone.txt", "text/plain")
+    workspace.blob.objects = {huge.blob_key: b"x" * 9, small.blob_key: b"ok"}
+    wb = writeback(TerminalFrame(status="done", text="Three files."), artifacts=(huge, small, gone))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert server.uploaded == [("small.txt", b"ok")]
+    assert file_txn_id(wb.turn_id, small.id) in server.sent
+    assert file_txn_id(wb.turn_id, huge.id) not in server.sent
+    assert file_txn_id(wb.turn_id, gone.id) not in server.sent
+
+
+@on_loop
+async def test_a_rate_limited_upload_raises_so_the_file_is_not_discarded(
+    workspace: Workspace,
+) -> None:
+    """A refusal the homeserver will take back is not a file gone for good: it raises the delivery
+    error core retries on, carrying the wait the homeserver asked for."""
+    server = Homeserver(limited_uploads={"slow.png"})
+    slow = shared("slow.png", "image/png")
+    workspace.blob.objects = {slow.blob_key: b"png"}
+    wb = writeback(TerminalFrame(status="done", text="One file."), artifacts=(slow,))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    with pytest.raises(SurfaceDeliveryError) as raised:
+        await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert raised.value.retry_after_seconds == 2
+    assert server.uploaded == []
+    assert list(server.sent) == [txn_id(wb.turn_id)]
+
+
+@on_loop
+async def test_a_failed_answering_record_does_not_unadmit_the_message(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The turn stands when its answering row fails to write: the line is not fed back as room
+    context for a turn it founded, and the stream moves on."""
+
+    async def unrecorded(ctx: object, turn_id: object, answering: object) -> None:
+        raise ValueError("answering table unavailable")
+
+    monkeypatch.setattr("ufo_ext_matrix.surface.write_answering", unrecorded)
+    server = Homeserver()
+    server.syncs["s1"] = batch("s2", {ROOM: [mention("$m1", ALICE, "hi")]})
+    installation = await primed(server, workspace)
+    with caplog.at_level(logging.DEBUG):
+        await installation.step()
+    assert [a["key"] for a in workspace.admitted] == ["$m1"]
+    assert "matrix.answering_unrecorded" in caplog.text
+    assert await read_since(workspace, BOT) == "s2"
+
+
+@on_loop
+async def test_a_recovered_delivery_re_attaches_without_re_posting(workspace: Workspace) -> None:
+    """Core records the reply before `attach` runs, so recovery repeats `attach` alone. Each file is
+    sent under the transaction id it was sent under before, so the room holds it once."""
+    server = Homeserver()
+    notes = shared("notes.md", "text/markdown")
+    workspace.blob.objects = {notes.blob_key: b"# notes"}
+    wb = writeback(TerminalFrame(status="done", text="One file."), artifacts=(notes,))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    reply_ref = await surface.post(workspace, wb)  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    await surface.attach(workspace, wb, str(reply_ref))  # type: ignore[arg-type]
+    assert len(server.uploaded) == 2
+    assert list(server.sent) == [txn_id(wb.turn_id), file_txn_id(wb.turn_id, notes.id)]
+
+
+@on_loop
+async def test_a_turn_that_shared_nothing_uploads_nothing(workspace: Workspace) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    wb = writeback(TerminalFrame(status="done", text="Nothing shared."))
+    await surface.attach(workspace, wb, "$sent0")  # type: ignore[arg-type]
+    assert server.requests == []
+
+
+@on_loop
+async def test_a_mid_turn_reply_posts_once_under_the_row_it_came_from(workspace: Workspace) -> None:
+    server = Homeserver()
+    turn = await answered(server, workspace, mention("$m1", ALICE, "keep me posted"))
+    surface = MatrixSurface(transport=server.transport, environ={})
+    said = MidTurnReply(
+        id=uuid4(),
+        turn_id=turn,
+        conversation_id=uuid4(),
+        agent_id=uuid4(),
+        queue_key=ROOM,
+        message_ref=None,
+        text="Halfway through.",
+    )
+    first = await surface.speak(workspace, said)  # type: ignore[arg-type]
+    again = await surface.speak(workspace, said)  # type: ignore[arg-type]
+    assert first == again
+    assert list(server.sent) == [say_txn_id(said.id)]
+    sent = server.sent[say_txn_id(said.id)]
+    assert sent["msgtype"] == "m.text"
+    assert sent["formatted_body"] == "<p>Halfway through.</p>"
+    assert sent["m.relates_to"] == {"m.in_reply_to": {"event_id": "$m1"}}
+
+
+@on_loop
+async def test_a_comment_from_another_surface_reads_as_the_rooms_own_notice(
+    workspace: Workspace,
+) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    said = MidTurnReply(
+        id=uuid4(),
+        turn_id=uuid4(),
+        conversation_id=uuid4(),
+        agent_id=uuid4(),
+        queue_key=ROOM,
+        message_ref=None,
+        text="Alice commented in the workspace.",
+        is_comment=True,
+    )
+    await surface.speak(workspace, said)  # type: ignore[arg-type]
+    assert server.sent[say_txn_id(said.id)]["msgtype"] == "m.notice"

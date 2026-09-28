@@ -1,4 +1,4 @@
-"""The Matrix surface: a bot user's `/sync` stream in, one room message out per terminal turn.
+"""The Matrix surface: a bot user's `/sync` stream in, and the room messages a turn becomes.
 
 A room is a conversation, keyed by its room id; its speakers are members where one resolves. The
 surface is durable and installation-routed — the installation id is the bot's MXID, bound to one
@@ -9,7 +9,12 @@ mentions the bot, when it is sent in a direct room (the bot and one other), or w
 holds a conversation and `ambient_reply_wanted` says the agent is wanted; anything else is heard,
 kept as evidence for the next decision, and admits nothing. A sender who resolves to no member
 founds nothing, however it addresses the bot; the one thing the bot reads from it is a code proving
-its MXID for a member who claimed it (`linking.py`)."""
+its MXID for a member who claimed it (`linking.py`).
+
+What a turn sends back is three handlers over one transport: `post` writes the terminal reply,
+`attach` follows it with the turn's shared files, and `speak` delivers the words a turn marks before
+it ends. Each relates its messages to the room message the turn answers, which admission recorded
+(`answering.py`), so a reply lands as a reply and a threaded conversation stays in its thread."""
 
 import asyncio
 import math
@@ -38,7 +43,9 @@ from ufo.sdk.surfaces import (
     NOTHING_DELIVERED,
     AmbientMessage,
     CredentialSlotUnset,
+    MidTurnReply,
     NothingDelivered,
+    SharedArtifact,
     SurfaceAuth,
     SurfaceContext,
     SurfaceDeliveryError,
@@ -52,23 +59,36 @@ from ufo.sdk.surfaces import (
     writeback_says_nothing,
 )
 from ufo.sdk.tools import TextContent, ToolContext, ToolResult
+from ufo_ext_matrix.answering import Answering, read_answering, write_answering
 from ufo_ext_matrix.client import MatrixClient, MatrixError
 from ufo_ext_matrix.events import (
+    NOTICE_MSGTYPE,
     SURFACE,
+    TEXT_MSGTYPE,
     RoomMessage,
+    file_txn_id,
     gaps,
     invites,
     localpart,
     next_batch,
+    part_txn_id,
     permalink,
     room_key,
     room_message,
     room_names,
+    say_txn_id,
     server_name,
     timeline,
     txn_id,
 )
 from ufo_ext_matrix.linking import Linking, code_in, proof_txn, unlinked
+from ufo_ext_matrix.messages import (
+    file_content,
+    message_content,
+    msgtype_for,
+    parts,
+    reply_relation,
+)
 from ufo_ext_matrix.since import read_since, write_since
 
 BOTS_ENV = "UFO_MATRIX_BOTS"
@@ -84,6 +104,9 @@ FAILED_LINE = "This turn failed before it could answer."
 CANCELLED_LINE = "This turn was stopped."
 ELSEWHERE_LINE = "The next step happens in the workspace"
 FILES_LINE = "This turn shared files, which are in the workspace"
+REPORT_LINK_TEXT = "Open detailed report"
+FILE_ROLE = "file"
+DETAILS_ROLE = "details"
 
 
 class FleetOwnershipLost(RuntimeError):
@@ -103,32 +126,77 @@ def installations(configured: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(named))
 
 
-def reply_text(writeback: Writeback, workspace_url: str | None) -> str:
+def reply_text(
+    writeback: Writeback,
+    workspace_url: str | None,
+    reports: Sequence[str] = (),
+    *,
+    unlinked: bool = False,
+) -> str:
     """The one message a terminal turn becomes. A failed turn says so in the surface's own words; a
     cancelled turn posts the reason core gave — an archived conversation, a revoked seat — or, with
-    none, says it was stopped; a question is written out with its options, since a room has no
-    buttons; and what a room cannot carry — a connect or credential handoff, a shared file — points
-    at the workspace."""
+    none, says it was stopped; a detailed write-up is a link under the words the turn wrote it
+    under, or points at the workspace where the deploy offers no link; a question is written out
+    with its options, since a room has no buttons; and what a room cannot carry — a connect or
+    credential handoff, a shared file — points at the workspace."""
     terminal = writeback.terminal
     text = terminal.text.strip()
     if terminal.status == "failed":
         return FAILED_LINE
     if terminal.status == "cancelled":
         return text if text and not is_silence_sentinel(text) else CANCELLED_LINE
-    parts: list[str] = []
+    said: list[str] = []
     if text and not is_silence_sentinel(text):
-        parts.append(text)
+        said.append(text)
+    said.extend(reports)
     if terminal.question is not None:
         for asked in terminal.question.questions:
             options = asked.options or ()
             lines = [asked.question, *(f"{n}. {o.label}" for n, o in enumerate(options, 1))]
-            parts.append("\n".join(lines))
+            said.append("\n".join(lines))
     where = f": {workspace_url}" if workspace_url else "."
     if terminal.connect_request is not None or terminal.credential_request is not None:
-        parts.append(ELSEWHERE_LINE + where)
-    if writeback.artifacts:
-        parts.append(FILES_LINE + where)
-    return "\n\n".join(parts)
+        said.append(ELSEWHERE_LINE + where)
+    if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts) or unlinked:
+        said.append(FILES_LINE + where)
+    return "\n\n".join(said)
+
+
+def shared_files(writeback: Writeback) -> tuple[SharedArtifact, ...]:
+    """The files a turn shared, which a room carries as messages of their own. A detailed write-up
+    is not one of them: it reaches the member as the link the reply carries."""
+    return tuple(a for a in writeback.artifacts if a.role == FILE_ROLE)
+
+
+async def report_links(ctx: SurfaceContext, writeback: Writeback) -> tuple[str, ...]:
+    """The detailed write-ups this reply links to, under the words the turn linked them with or the
+    surface's own where it named none. A deploy whose portal shows nobody this conversation offers
+    no link, and the write-up reaches the member through the workspace instead."""
+    links: list[str] = []
+    for artifact in writeback.artifacts:
+        if artifact.role != DETAILS_ROLE:
+            continue
+        url = await ctx.report_url(writeback.conversation_id, artifact)
+        if url is None:
+            continue
+        links.append(f"[{artifact.subject or REPORT_LINK_TEXT}]({url})")
+    return tuple(links)
+
+
+@asynccontextmanager
+async def delivering() -> AsyncIterator[None]:
+    """Every homeserver failure a writeback handler meets, as the delivery error core retries on: a
+    rate limit carries the wait the homeserver itself asked for, and nothing repeats the body of the
+    answer the homeserver sent."""
+    try:
+        yield
+    except MatrixError as error:
+        retry = error.retry_after_ms
+        raise SurfaceDeliveryError(
+            str(error), retry_after_seconds=None if retry is None else math.ceil(retry / 1000)
+        ) from None
+    except httpx.HTTPError as error:
+        raise SurfaceDeliveryError(f"send failed: {type(error).__name__}") from None
 
 
 @dataclass
@@ -244,25 +312,144 @@ class MatrixSurface:
             await asyncio.Event().wait()
         await asyncio.gather(*(Installation(self, listener, bot).run() for bot in bots))
 
-    async def post(self, ctx: SurfaceContext, writeback: Writeback) -> str | NothingDelivered:
-        if writeback_says_nothing(writeback):
-            return NOTHING_DELIVERED
-        body = reply_text(writeback, ctx.home_url())
+    async def slots(self, ctx: SurfaceContext) -> tuple[str, str]:
+        """The workspace's homeserver and its bot's token. An empty slot is a delivery failure:
+        a member fills it in chat, and the writeback waits for them."""
         try:
-            homeserver = await ctx.credential(HOMESERVER_SLOT)
-            token = await ctx.credential(TOKEN_SLOT)
+            return await ctx.credential(HOMESERVER_SLOT), await ctx.credential(TOKEN_SLOT)
         except CredentialSlotUnset as unset:
             raise SurfaceDeliveryError(f"matrix slot {unset.args[0]} is empty") from None
-        try:
+
+    async def post(self, ctx: SurfaceContext, writeback: Writeback) -> str | NothingDelivered:
+        """The turn's answer as the room reads it: the words, the same words as HTML, and a relation
+        to the message the turn answers. A reply longer than one event carries is written in parts,
+        and the first part's event id is the reference core records — what `attach` hangs the turn's
+        files under, whatever else the reply became."""
+        if writeback_says_nothing(writeback):
+            return NOTHING_DELIVERED
+        links = await report_links(ctx, writeback)
+        details = sum(1 for artifact in writeback.artifacts if artifact.role == DETAILS_ROLE)
+        body = reply_text(writeback, ctx.home_url(), links, unlinked=details > len(links))
+        homeserver, token = await self.slots(ctx)
+        answering = await read_answering(ctx, writeback.turn_id)
+        async with delivering():
             async with self.client(homeserver, token) as client:
-                return await client.send_text(writeback.queue_key, txn_id(writeback.turn_id), body)
-        except MatrixError as error:
-            retry = error.retry_after_ms
-            raise SurfaceDeliveryError(
-                str(error), retry_after_seconds=None if retry is None else math.ceil(retry / 1000)
-            ) from None
-        except httpx.HTTPError as error:
-            raise SurfaceDeliveryError(f"send failed: {type(error).__name__}") from None
+                return await self.say(
+                    client, writeback.queue_key, txn_id(writeback.turn_id), body, answering
+                )
+
+    async def attach(self, ctx: SurfaceContext, writeback: Writeback, reply_ref: str) -> None:
+        """The turn's shared files, each its own message under the reply core recorded. Every file
+        is best effort: a refusal the homeserver will not take back is logged and the rest go on,
+        since a room that carries three of four files says more than one that carries none — but a
+        failure a retry can fix, a rate limit or a lost database among them, raises, so the file is
+        not discarded to a transient outage. Delivery repeats after a crash, and a file already
+        sent is sent under the transaction id it was sent under before."""
+        files = shared_files(writeback)
+        if not files:
+            return
+        homeserver, token = await self.slots(ctx)
+        answering = await read_answering(ctx, writeback.turn_id)
+        thread = answering.thread_root if answering is not None else None
+        relation = reply_relation(reply_ref, thread)
+        async with self.client(homeserver, token) as client:
+            for artifact in files:
+                try:
+                    await self.hand_over(ctx, client, writeback, artifact, relation)
+                except MatrixError as error:
+                    if error.retry_after_ms is not None or error.status >= 500:
+                        retry = error.retry_after_ms
+                        raise SurfaceDeliveryError(
+                            str(error),
+                            retry_after_seconds=(
+                                None if retry is None else math.ceil(retry / 1000)
+                            ),
+                        ) from None
+                    warn(
+                        "matrix.file_undelivered",
+                        media_type=artifact.media_type,
+                        error_class=type(error).__name__,
+                        status=error.status,
+                    )
+                except sa.exc.SQLAlchemyError:
+                    raise
+                except httpx.HTTPError as error:
+                    raise SurfaceDeliveryError(f"send failed: {type(error).__name__}") from None
+                except Exception as error:
+                    warn(
+                        "matrix.file_undelivered",
+                        media_type=artifact.media_type,
+                        error_class=type(error).__name__,
+                    )
+
+    async def hand_over(
+        self,
+        ctx: SurfaceContext,
+        client: MatrixClient,
+        writeback: Writeback,
+        artifact: SharedArtifact,
+        relation: Mapping[str, Any],
+    ) -> None:
+        """One shared file into the room: its bytes to the media repository, then the message that
+        carries the `mxc://` the repository answered. A repeated upload leaves an unreferenced
+        object behind, which the media repository is welcome to."""
+        data = await ctx.blob.get(artifact.blob_key)
+        url = await client.upload(artifact.filename, artifact.media_type, data)
+        await client.send_message(
+            writeback.queue_key,
+            file_txn_id(writeback.turn_id, artifact.id),
+            file_content(
+                msgtype_for(artifact.media_type),
+                artifact.filename,
+                artifact.subject,
+                artifact.media_type,
+                artifact.size_bytes,
+                url,
+                relation,
+            ),
+        )
+
+    async def speak(self, ctx: SurfaceContext, reply: MidTurnReply) -> str:
+        """One reply delivered while the turn is still running, under the same relation its terminal
+        reply will carry. A notice core sends because a member commented from another surface is the
+        room's own aside rather than the agent's words, so the room reads it as one."""
+        homeserver, token = await self.slots(ctx)
+        answering = await read_answering(ctx, reply.turn_id)
+        msgtype = NOTICE_MSGTYPE if reply.is_comment else TEXT_MSGTYPE
+        async with delivering():
+            async with self.client(homeserver, token) as client:
+                return await self.say(
+                    client,
+                    reply.queue_key,
+                    say_txn_id(reply.id),
+                    reply.text,
+                    answering,
+                    msgtype=msgtype,
+                )
+
+    async def say(
+        self,
+        client: MatrixClient,
+        room_id: str,
+        base: str,
+        body: str,
+        answering: Answering | None,
+        msgtype: str = TEXT_MSGTYPE,
+    ) -> str:
+        """One message, or the parts of one too long to be one, in order. Every part relates to the
+        same message, so a client threading the reply threads all of it, and the first part's event
+        id is the reference the caller returns."""
+        relation = (
+            None if answering is None else reply_relation(answering.event_id, answering.thread_root)
+        )
+        sent: list[str] = []
+        for part, text in enumerate(parts(body), 1):
+            sent.append(
+                await client.send_message(
+                    room_id, part_txn_id(base, part), message_content(text, msgtype, relation)
+                )
+            )
+        return sent[0]
 
     async def connect(self, ctx: ToolContext, _args: ConnectInput) -> ToolResult:
         """Bind the workspace's bot to this workspace: ask the homeserver whose token the slot
@@ -492,7 +679,9 @@ class Installation:
         if proof.member_id is not None:
             roster.known[message.sender] = proof.member_id
         log("matrix.proof_read", installation=self.bot, linked=proof.member_id is not None)
-        await client.send_text(message.room_id, proof_txn(message.event_id), proof.reply)
+        await client.send_message(
+            message.room_id, proof_txn(message.event_id), message_content(proof.reply, TEXT_MSGTYPE)
+        )
         return True
 
     async def consider(
@@ -504,7 +693,9 @@ class Installation:
         joined: frozenset[str],
     ) -> bool:
         """Admit one message or decline it, returning whether it founded or joined a turn. A sender
-        who is no member is declined before anything is spent on the line."""
+        who is no member is declined before anything is spent on the line. An admitted message is
+        recorded as the one its turn answers, since the writeback that answers it names the turn and
+        the room but not the event, and every message the turn sends back relates to this one."""
         addressed = (len(joined) == 2 and self.bot in joined) or message.addresses(self.bot)
         if not addressed and await ctx.find_conversation(message.room_id) is None:
             return False
@@ -522,7 +713,7 @@ class Installation:
             message.room_id, audience, label=self.names.get(message.room_id)
         )
         marker = mint_marker()
-        await ctx.admit(
+        admitted = await ctx.admit(
             conversation_id,
             fence_member_message(marker, room_context(marker, prior), message.body, ""),
             idempotency_key=message.event_id,
@@ -531,4 +722,20 @@ class Installation:
             ),
             speaker_member_id=member_id,
         )
+        try:
+            await write_answering(
+                ctx,
+                admitted.turn_id,
+                Answering(
+                    room_id=message.room_id,
+                    event_id=message.event_id,
+                    thread_root=message.thread_root,
+                ),
+            )
+        except sa.exc.SQLAlchemyError:
+            raise
+        except Exception as error:
+            # The turn stands without the record: the reply then relates to nothing, and the line
+            # is not fed back as room context for a turn it founded.
+            warn("matrix.answering_unrecorded", error_class=type(error).__name__)
         return True
