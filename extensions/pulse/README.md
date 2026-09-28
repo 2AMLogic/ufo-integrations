@@ -169,6 +169,12 @@ story's history across the series.
   never created, so the next edition reads an empty ledger and repeats the last one. Drive a pulse
   through the `ufo` client or a `--remote` sandbox; a brief that looks right is not evidence the
   series does.
+- **An armed pulse keeps the rule it was set up under.** `task-scheduling` stores `field-pulse`'s
+  manifest prompt on the scheduled row at apply time; editing the skill changes only what the next
+  setup writes, not a row already armed. Re-applying `<field>-pulse` upserts it in place and
+  re-points reporting to whichever conversation ran the re-apply, so adopting an edit means
+  re-applying from the pulse's own conversation. Same family as #70's running `serve` process
+  keeping the skills it booted with.
 
 ## Tests
 
