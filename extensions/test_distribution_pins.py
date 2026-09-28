@@ -29,6 +29,7 @@ from ufo.host.ext.loader import (  # noqa: E402
     ExtensionPin,
     Lockfile,
     discovered,
+    discovered_packs,
     extension_content_digest,
     extension_digest,
     load_manifests,
@@ -180,3 +181,28 @@ def test_a_pack_bundling_neither_activates_neither(installed: dict) -> None:
     active = {m.name for m in load_manifests("assistant")}
     assert "pulse" not in active
     assert "matrix" not in active
+
+
+def test_a_pack_narrows_the_set_a_lockfile_filled(
+    installed: dict, tmp_path, monkeypatch
+) -> None:
+    """A pin does not join `matrix` to a pack, because the pack narrows after the lockfile fills.
+
+    This is the order the `matrix-setup` trap turns on. The lockfile pins the assistant set and
+    `matrix` together, so `matrix` is installed, pinned, and in the active set before the pack is
+    consulted — and the pack drops it, because the assistant pack does not bundle it and a pack
+    carries only a name. That is the silence the trap explains.
+
+    The same lockfile with no pack activates `matrix`, which is what earns the conclusion: the
+    exclusion is the narrowing, not a pin that never took. Reorder the two steps upstream and this
+    test reports it, where the trap's prose alone would go on misleading.
+
+    The assistant set is pinned alongside `matrix` because a lockfile naming `matrix` alone leaves
+    the pack's own extensions out of `active`, and a pack bundling an inactive extension raises
+    rather than narrowing — a different failure from the one the trap describes.
+    """
+    bundled = discovered_packs()["assistant"].extensions
+    _lockfile_with(tmp_path, monkeypatch, installed, (*bundled, "matrix"))
+
+    assert "matrix" in {m.name for m in load_manifests(None)}
+    assert "matrix" not in {m.name for m in load_manifests("assistant")}
