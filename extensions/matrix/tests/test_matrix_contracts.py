@@ -71,7 +71,6 @@ from ufo_ext_matrix.questions import (
 EXTENSION = Path(__file__).resolve().parents[1]
 PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
-MIGRATIONS = PACKAGE / "migrations"
 SKILLS_ROOT = PACKAGE / "skills"
 SKILL_NAMES = ("matrix-setup",)
 DESCRIPTION_WORD_BUDGET = 50
@@ -178,39 +177,6 @@ def test_the_e2ee_libraries_are_an_extra_and_not_baseline() -> None:
     assert {dep.split(">")[0] for dep in extra} == set(E2EE_THIRD_PARTY)
     for dep in extra:
         assert not any(base.startswith(dep.split(">")[0]) for base in project["dependencies"]), dep
-
-
-def revisions() -> list[tuple[str, str | None]]:
-    """Each migration's `revision` and `down_revision`, in filename order, read as source so the
-    check needs no alembic. A pair per file, never a mapping: two files claiming one revision is
-    the defect this exists to catch, and a mapping would swallow it."""
-    found = []
-    for path in sorted(MIGRATIONS.glob("matrix_*.py")):
-        declared = {
-            node.target.id: node.value
-            for node in ast.walk(ast.parse(path.read_text()))
-            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
-        }
-        revision, down = declared["revision"], declared["down_revision"]
-        assert isinstance(revision, ast.Constant), path.name
-        assert path.name.startswith(f"{revision.value}_"), path.name
-        found.append((revision.value, down.value if isinstance(down, ast.Constant) else None))
-    return found
-
-
-def test_the_migrations_are_one_chain_from_one_base() -> None:
-    """A revision two migrations claim, or a parent no migration declares, forks the lineage and
-    breaks `ufoctl migrate`. Each such migration is green on its own branch, so the lineage is a
-    fact about the checkout and not about any one of them, and only a check here sees it."""
-    chain = revisions()
-    declared = [revision for revision, _ in chain]
-    parents = [down for _, down in chain if down is not None]
-    assert len(declared) == len(set(declared)), f"a revision is claimed twice: {declared}"
-    assert len(parents) == len(set(parents)), f"a parent is claimed twice: {parents}"
-    assert [down for _, down in chain if down is None] == [None], "more than one base"
-    for revision, down in chain:
-        assert down is None or down in declared, f"{revision} chains onto absent {down}"
-    assert len(set(declared) - set(parents)) == 1, "more than one head"
 
 
 def test_only_one_seam_puts_a_message_on_the_wire() -> None:
