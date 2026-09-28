@@ -76,3 +76,6 @@ dist/
 # Per-run timings ufo's pytest plugin writes
 .pytest-timings/
 uv.lock
+.squad/
+.claude/skills/squad/.install-local.json
+.claude/handoff.md
