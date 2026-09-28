@@ -4,6 +4,7 @@ arrives before its key is heard once the key lands and never as ciphertext, a po
 member device and no departed one, a device that changes its keys is not believed, and the store
 opens only under its slot's key."""
 
+import asyncio
 import logging
 from uuid import uuid4
 
@@ -21,8 +22,15 @@ from ufo.sdk.surfaces import SurfaceDeliveryError, TerminalFrame, Writeback  # n
 from ufo_ext_matrix import crypto  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient  # noqa: E402
 from ufo_ext_matrix.crypto import STORE_KEY_SLOT, device_for  # noqa: E402
-from ufo_ext_matrix.crypto_store import CRYPTO_TABLE, CryptoStore, Sealer, StoreLocked  # noqa: E402
+from ufo_ext_matrix.crypto_store import (  # noqa: E402
+    CRYPTO_TABLE,
+    CryptoStore,
+    Rows,
+    Sealer,
+    StoreLocked,
+)
 from ufo_ext_matrix.events import txn_id  # noqa: E402
+from ufo_ext_matrix.since import read_since  # noqa: E402
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT, Installation, MatrixSurface  # noqa: E402
 
 ENCRYPTED = {"algorithm": MEGOLM}
@@ -286,6 +294,114 @@ async def test_the_store_is_unreadable_without_the_slots_key(workspace: Workspac
     ) as client:
         assert await device_for(workspace, client) is None  # type: ignore[arg-type]
     assert server.device_uploads == 1
+
+
+async def pending(workspace: Workspace) -> list[dict]:
+    store = CryptoStore(workspace, Sealer(STORE_KEY), BOT, BOT_DEVICE)  # type: ignore[arg-type]
+    async with store.rows() as rows:
+        return (await rows.get("pending") or {"events": []})["events"]
+
+
+async def stored_account(workspace: Workspace) -> str:
+    """The Curve25519 key of the account the store holds for the bot's device."""
+    store = CryptoStore(workspace, Sealer(STORE_KEY), BOT, BOT_DEVICE)  # type: ignore[arg-type]
+    async with store.rows() as rows:
+        held = await rows.get("account")
+    return vz.Account.from_pickle(
+        held["pickle"], store.sealer.pickle_key
+    ).curve25519_key.to_base64()
+
+
+@on_loop
+async def test_two_processes_opening_one_device_agree_on_one_account(
+    workspace: Workspace,
+) -> None:
+    """`Installation.deliver` and the writeback path each open the device, so two of them meeting a
+    first encrypted event together is an ordinary interleaving, not a contrivance. Both leave with
+    one account, and the homeserver is offered one set of device keys."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    workspace.credentials[STORE_KEY_SLOT] = STORE_KEY
+    async with MatrixClient(
+        workspace.credentials[HOMESERVER_SLOT],
+        workspace.credentials[TOKEN_SLOT],
+        transport=server.transport,
+    ) as client:
+        opened = await asyncio.gather(
+            device_for(workspace, client),  # type: ignore[arg-type]
+            device_for(workspace, client),  # type: ignore[arg-type]
+        )
+    keys = {device.identity_key for device in opened if device is not None}
+    assert [device is not None for device in opened] == [True, True]
+    assert len(keys) == 1
+    assert server.device_uploads == 1
+    published = server.devices[BOT][BOT_DEVICE]["keys"][f"curve25519:{BOT_DEVICE}"]
+    assert published == keys.pop() == await stored_account(workspace)
+
+
+@on_loop
+async def test_a_mint_that_loses_reads_the_winners_account(workspace: Workspace) -> None:
+    """The interleaving the primary key arbitrates, held still: a caller whose read saw no account
+    mints one, loses the insert, and leaves with the stored account rather than publishing its own
+    keys over the winner's. Two accounts for one device id is #16's named failure — the published
+    and the stored keys diverge and the bot silently stops decrypting, with no log to say why."""
+    server = E2EHomeserver()
+    server.encrypted[DIRECT] = ENCRYPTED
+    await primed(server, workspace)
+    winner = await stored_account(workspace)
+    honest = Rows.get
+    lied: list[bool] = []
+
+    async def blind(self: Rows, kind: str, *key: str, lock: bool = False) -> object:
+        """The stale read: the account row is there, and this caller's first look does not see it."""
+        if kind == "account" and not lied:
+            lied.append(True)
+            return None
+        return await honest(self, kind, *key, lock=lock)
+
+    Rows.get = blind  # type: ignore[method-assign]
+    try:
+        async with MatrixClient(
+            workspace.credentials[HOMESERVER_SLOT],
+            workspace.credentials[TOKEN_SLOT],
+            transport=server.transport,
+        ) as client:
+            late = await device_for(workspace, client)  # type: ignore[arg-type]
+    finally:
+        Rows.get = honest  # type: ignore[method-assign]
+
+    assert late is not None
+    assert late.identity_key == winner
+    assert await stored_account(workspace) == winner
+    assert server.device_uploads == 1
+    assert server.devices[BOT][BOT_DEVICE]["keys"][f"curve25519:{BOT_DEVICE}"] == winner
+
+
+@on_loop
+async def test_a_parked_event_that_will_not_decrypt_is_dropped_rather_than_retried(
+    workspace: Workspace,
+) -> None:
+    """A parked event whose key arrives but whose plaintext is no Matrix event is dropped, named by
+    error class, and the stream carries on past it. Raising out of the retry loop would leave the
+    position where it was and the pending row unpruned, so one malformed payload would be retried on
+    every sync for good and silence that bot."""
+    server = E2EHomeserver()
+    server.encrypted[ROOM] = ENCRYPTED
+    installation = await primed(server, workspace)
+    alice = Peer(server, ALICE, "ALICEPHONE")
+    server.syncs["s1"] = batch("s2", {ROOM: [alice.babble(ROOM, "$m1")]})
+    assert await installation.step() == 0.0
+    assert workspace.admitted == []
+    assert await read_since(workspace, BOT) == "s2"  # type: ignore[arg-type]
+    assert len(await pending(workspace)) == 1
+
+    alice.forward(ROOM)
+    good = alice.say(ROOM, "$m2", f"{BOT} and again")
+    server.syncs["s2"] = batch("s3", {ROOM: [good]})
+    assert await installation.step() == 0.0
+    assert [a["key"] for a in workspace.admitted] == ["$m2"]
+    assert await read_since(workspace, BOT) == "s3"  # type: ignore[arg-type]
+    assert await pending(workspace) == []
 
 
 def test_a_short_store_key_is_refused() -> None:

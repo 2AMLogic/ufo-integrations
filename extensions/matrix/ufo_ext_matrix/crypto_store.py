@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from ufo_ext_matrix.e2ee import ExtraMissing
@@ -58,6 +59,15 @@ CRYPTO_TABLE = sa.Table(
     sa.Column("value", sa.LargeBinary(), nullable=False),
     sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
 )
+
+
+def _insert_ignoring(dialect: str) -> Any:
+    """An insert that leaves an existing row alone, in the two dialects ufo runs on."""
+    if dialect == "postgresql":
+        return postgresql.insert(CRYPTO_TABLE).on_conflict_do_nothing()
+    if dialect == "sqlite":
+        return sqlite.insert(CRYPTO_TABLE).on_conflict_do_nothing()
+    raise NotImplementedError(f"the crypto store has no insert for {dialect}")
 
 
 class StoreLocked(Exception):
@@ -144,6 +154,23 @@ class Rows:
             query = query.with_for_update()
         blob = (await self.connection.execute(query)).scalar_one_or_none()
         return None if blob is None else self.store.sealer.open(self._address(kind, name), blob)
+
+    async def create(self, kind: str, *key: str, value: Any) -> bool:
+        """Write the row only if no row is there, and say whether this call is the one that wrote
+        it. The table's own primary key arbitrates, so of two callers minting at once exactly one
+        wins: a `get` under `FOR UPDATE` locks nothing when the row does not exist yet, and `put`
+        would have overwritten the winner rather than conflicting with it."""
+        name = self.store.sealer.name(key)
+        statement = _insert_ignoring(self.connection.dialect.name).values(
+            workspace_id=self.store.ctx.workspace_id,
+            user_id=self.store.user_id,
+            device_id=self.store.device_id,
+            kind=kind,
+            name=name,
+            value=self.store.sealer.seal(self._address(kind, name), value),
+            updated_at=sa.func.now(),
+        )
+        return (await self.connection.execute(statement)).rowcount == 1
 
     async def put(self, kind: str, *key: str, value: Any) -> None:
         name = self.store.sealer.name(key)

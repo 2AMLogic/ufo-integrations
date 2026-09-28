@@ -268,6 +268,23 @@ class Peer:
             },
         }
 
+    def babble(self, room_id: str, event_id: str, plaintext: bytes = b"not an event") -> dict:
+        """One Megolm event this device's session decrypts to something that is not a Matrix event,
+        as a buggy or a hostile client sends."""
+        session = self.session(room_id)
+        return {
+            "type": "m.room.encrypted",
+            "event_id": event_id,
+            "sender": self.user,
+            "content": {
+                "algorithm": MEGOLM,
+                "sender_key": self.curve,
+                "device_id": self.device_id,
+                "session_id": session.session_id,
+                "ciphertext": session.encrypt(plaintext).to_base64(),
+            },
+        }
+
     def read_inbox(self) -> list[dict[str, Any]]:
         """Decrypt every to-device event waiting for this device, keep the room keys it carries,
         and return the plaintext payloads."""

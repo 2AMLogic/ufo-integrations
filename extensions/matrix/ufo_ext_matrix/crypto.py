@@ -9,7 +9,8 @@ Inbound, a `/sync` batch's to-device events are read first — room keys arrive 
 to this device — then each `m.room.encrypted` timeline event is decrypted into the plain event it
 carries, which the surface reads exactly as it reads an unencrypted one. An event whose session key
 has not arrived is parked, its key is asked for, and it is heard once the key lands; past
-`PENDING_SECONDS` it is dropped with a warning. Ciphertext is never heard.
+`PENDING_SECONDS` it is dropped with a warning. An event that will not decrypt is a dropped event
+that names itself in a log, never a stopped stream. Ciphertext is never heard.
 
 Outbound, a message into an encrypted room is Megolm-encrypted, and the session's key is first
 shared over Olm with every device of every joined member that has not had it. Devices are trusted on
@@ -151,21 +152,45 @@ class Device:
     def _pickle_key(self) -> bytes:
         return self.store.sealer.pickle_key
 
+    def __repr__(self) -> str:
+        """The device id and nothing else. `MatrixClient` holds the same discipline: whatever a
+        vodozemac `Account` chooses to show is the binding's choice, not this extension's, and an
+        f-string in a log line or an exception must not be where that is decided."""
+        return f"Device({self.device_id})"
+
     @classmethod
     async def open(cls, store: CryptoStore, client: MatrixClient) -> "Device":
-        """The device's account from the store, or a new one — stored, then published — when the
-        store holds none for this `(user, device)`."""
+        """The device's account from the store, or a new one — created once, then published —
+        where the store holds none for this `(user, device)`.
+
+        One device has one account, whichever process opens it: the listener and the writeback path
+        both open a device, so two of them meeting a first encrypted event together is an ordinary
+        interleaving. The account row is written with `create`, which the table's own primary key
+        arbitrates, and a caller whose mint loses reads the winner's account rather than publishing
+        its own keys over it — two accounts for one device id is how a bot silently stops
+        decrypting.
+
+        The upload happens once for the same reason: the caller whose insert lost leaves the publish
+        to the one that won, so two of them do not each generate a batch of one-time keys and upload
+        it over the other's. Only one of those batches survives in the store, and a peer that claims
+        a key from the other opens a session the bot cannot answer. An upload that fails leaves the
+        account unpublished, and the next open — the next sync — offers the same keys again."""
         async with store.rows() as rows:
-            record = await rows.get(ACCOUNT)
+            record = await rows.get(ACCOUNT, lock=True)
+            publishing = True
             if record is None:
-                account = vz.Account()
-                record = {"pickle": account.pickle(store.sealer.pickle_key), "published": False}
-                await rows.put(ACCOUNT, value=record)
-                log("matrix.crypto_device_new", device_id=store.device_id)
-            else:
-                account = vz.Account.from_pickle(record["pickle"], store.sealer.pickle_key)
+                fresh = vz.Account()
+                record = {"pickle": fresh.pickle(store.sealer.pickle_key), "published": False}
+                if await rows.create(ACCOUNT, value=record):
+                    log("matrix.crypto_device_new", device_id=store.device_id)
+                else:
+                    held = await rows.get(ACCOUNT, lock=True)
+                    if held is None:
+                        raise CryptoUnavailable("another process is opening this device's account")
+                    record, publishing = held, False
+            account = vz.Account.from_pickle(record["pickle"], store.sealer.pickle_key)
         device = cls(store, client, account)
-        if not record["published"]:
+        if publishing and not record["published"]:
             keys = {
                 "device_keys": device._device_keys(),
                 "one_time_keys": device._one_time_keys(account.max_number_of_one_time_keys // 2),
@@ -195,7 +220,11 @@ class Device:
         )
 
     def _one_time_keys(self, count: int) -> dict[str, Any]:
-        self.account.generate_one_time_keys(count)
+        """`count` keys the homeserver has not been offered, signed. Keys the account already holds
+        unpublished are offered again rather than generated over: `_publish` stores the account
+        before it uploads so a refused upload is tried again with the same keys, and generating on
+        top of them would churn the pool past the maximum every time a homeserver refuses."""
+        self.account.generate_one_time_keys(max(count - len(self.account.one_time_keys), 0))
         return {
             f"{SIGNED_KEY}:{key_id}": self._signed({"key": key.to_base64()})
             for key_id, key in self.account.one_time_keys.items()
@@ -490,7 +519,13 @@ class Device:
 
     async def retry(self) -> list[tuple[str, Mapping[str, Any]]]:
         """The parked events whose keys have since arrived, oldest first. An event parked longer
-        than `PENDING_SECONDS` is dropped with a warning; the rest stay parked."""
+        than `PENDING_SECONDS` is dropped with a warning; the rest stay parked.
+
+        An event whose key arrives but whose plaintext will not read as an event is dropped here and
+        now, named by error class. A failure to decrypt is one skipped event and never a stopped
+        stream: a parked event that raised out of this loop would leave `since` where it was and the
+        pending row unpruned, so one malformed payload would be retried on every sync forever and
+        silence the bot for good."""
         async with self.store.rows() as rows:
             record = await rows.get(PENDING) or {"events": []}
         if not record["events"]:
@@ -505,6 +540,11 @@ class Device:
                     warn("matrix.undecryptable_dropped", waited_seconds=PENDING_SECONDS)
                 else:
                     kept.append(parked)
+                continue
+            except StoreLocked:
+                raise
+            except Exception as error:
+                warn("matrix.undecryptable", error_class=type(error).__name__)
                 continue
             if plain is not None:
                 found.append((parked["room_id"], plain))
@@ -676,6 +716,8 @@ async def device_for(ctx: SurfaceContext, client: MatrixClient) -> Device | None
         return None
     try:
         return await Device.open(CryptoStore(ctx, sealer, user_id, device_id), client)
+    except CryptoUnavailable:
+        warn("matrix.crypto_device_contended", device_id=device_id)
     except StoreLocked:
         warn("matrix.crypto_store_locked", device_id=device_id)
     except MatrixError as error:
@@ -711,7 +753,9 @@ async def inbound(
             if admitting:
                 await device.park(room_id, event)
             continue
-        except (ValueError, KeyError, TypeError) as error:
+        except StoreLocked:
+            raise
+        except Exception as error:
             warn("matrix.undecryptable", error_class=type(error).__name__)
             continue
         if plain is not None:
