@@ -136,7 +136,8 @@ async def record_edition(ctx: ToolContext, args: RecordEditionInput) -> ToolResu
         f"edition {args.edition}. The record is durable now and pulse_recall reads it. The "
         f"workspace copy at {record.covered_projection(args.series)} is written separately by a "
         "job and may lag, or wait — a conversation bound to a terminal takes a file only while "
-        "that terminal is live."
+        "that terminal is live. It is rendered whole from the record, so nothing written into it "
+        "by hand survives."
     )
 
 

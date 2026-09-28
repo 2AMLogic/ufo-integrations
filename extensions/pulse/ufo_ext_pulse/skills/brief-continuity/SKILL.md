@@ -27,6 +27,14 @@ The workspace files are still written, by a job, a few minutes behind the record
 read. They are the copy the member opens, and they are always a copy. **Never treat a file as the
 record** — read it for a member, ask `pulse_recall` for a decision.
 
+**A row written into one of these files is erased, not kept.** The job renders the whole file from
+the record, so anything the file holds that the record does not is gone at the next render. This is
+not a warning about tidiness: a real fire appended two published stories to the file instead of
+calling `pulse_record_edition`, and both would have vanished at the next projection — the edition
+would have read as never published and the next one would have carried it again. There is no
+`record` subcommand on either script for this reason. If a row belongs in the series, it goes
+through the tool, and there is no second way to do it.
+
 ## Read the ledger before ranking, not after
 
 Read it first. A story's eligibility decides whether it is worth researching further, so a run that
