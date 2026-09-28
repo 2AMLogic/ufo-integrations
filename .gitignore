@@ -75,3 +75,4 @@ dist/
 .env
 # Per-run timings ufo's pytest plugin writes
 .pytest-timings/
+uv.lock
