@@ -51,6 +51,14 @@ def recent_rows(series: str, editions: int) -> list[dict]:
 
 
 def record(series: str, edition: str, slug: str, title: str, url: str) -> Path:
+    """The shape of one ledger line.
+
+**This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
+write the record; this file is a projection rendered whole from it, so a row appended here is erased
+by the next projection rather than kept. It survives as the definition of the row shape the
+projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
+there is deliberately no `record` subcommand, so nothing reachable from a shell can write here.
+    """
     if not EDITION.fullmatch(edition):
         raise ValueError(f"edition must be YYYY-MM-DD, got {edition!r}")
     if not SLUG.fullmatch(slug):
@@ -65,13 +73,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_record = sub.add_parser("record", help="append one published story to the ledger")
-    p_record.add_argument("--series", required=True)
-    p_record.add_argument("--edition", required=True)
-    p_record.add_argument("--slug", required=True)
-    p_record.add_argument("--title", required=True)
-    p_record.add_argument("--url", default="")
-
     p_recent = sub.add_parser("recent", help="rows from the last N editions")
     p_recent.add_argument("--series", required=True)
     p_recent.add_argument("--editions", type=int, default=DEFAULT_EDITIONS)
@@ -82,11 +83,6 @@ def main(argv: list[str] | None = None) -> int:
     p_check.add_argument("--editions", type=int, default=DEFAULT_EDITIONS)
 
     args = parser.parse_args(argv)
-
-    if args.command == "record":
-        path = record(args.series, args.edition, args.slug, args.title, args.url)
-        print(f"recorded {args.slug} in {args.edition} ({path})")
-        return 0
 
     if args.command == "recent":
         rows = recent_rows(args.series, args.editions)

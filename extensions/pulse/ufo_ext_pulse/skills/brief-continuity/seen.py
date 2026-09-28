@@ -52,6 +52,14 @@ def read_rows(series: str) -> list[dict]:
 
 
 def record(series: str, seen: str, slug: str, title: str, url: str, source: str) -> Path:
+    """The shape of one sighting line.
+
+**This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
+write the record; this file is a projection rendered whole from it, so a row appended here is erased
+by the next projection rather than kept. It survives as the definition of the row shape the
+projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
+there is deliberately no `record` subcommand, so nothing reachable from a shell can write here.
+    """
     if not SEEN_DATE.fullmatch(seen):
         raise ValueError(f"seen must be YYYY-MM-DD, got {seen!r}")
     if not SLUG.fullmatch(slug):
@@ -147,14 +155,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_record = sub.add_parser("record", help="append one sighting to the pool")
-    p_record.add_argument("--series", required=True)
-    p_record.add_argument("--seen", required=True)
-    p_record.add_argument("--slug", required=True)
-    p_record.add_argument("--title", required=True)
-    p_record.add_argument("--url", required=True)
-    p_record.add_argument("--source", default="")
-
     p_reconcile = sub.add_parser("reconcile", help="rows the pool cannot tell apart")
     p_reconcile.add_argument("--series", required=True)
 
@@ -175,11 +175,6 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     today = date.fromisoformat(args.today) if getattr(args, "today", None) else date.today()
-
-    if args.command == "record":
-        path = record(args.series, args.seen, args.slug, args.title, args.url, args.source)
-        print(f"recorded {args.slug} seen {args.seen} ({path})")
-        return 0
 
     if args.command == "history":
         rows = history(args.series, args.slug)

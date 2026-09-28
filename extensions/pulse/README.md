@@ -209,6 +209,13 @@ python "$UFO_HOME/skills/brief-continuity/covered.py" check --series data-infra 
 python "$UFO_HOME/skills/brief-continuity/seen.py" fresh --series data-infra --within-days 14
 ```
 
+**Both scripts are read-only.** Neither has a `record` subcommand, because a row written into a
+projected file is erased by the next render rather than kept — and that is not theoretical: a live
+fire on 2026-09-28, told by the skill to call `pulse_record_edition` and holding the tool, appended
+its two published stories to the file instead. Both were pending erasure, which would have left the
+edition reading as never published and the next one free to carry it again. Prose did not move the
+model off the script, so the script no longer offers the move.
+
 `check` exits non-zero when the slug is covered in the span, and `fresh` lists the leads whose most
 recent sighting is inside the window. A story carried again under the material-new-development
 exception keeps its original slug, so the rows sharing a slug are that story's history across the

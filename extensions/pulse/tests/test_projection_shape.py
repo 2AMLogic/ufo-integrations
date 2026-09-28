@@ -92,3 +92,30 @@ def test_a_projected_line_carries_no_field_the_script_would_drop(seen) -> None:
     line = json.loads(record.seen_lines([ROW]))
     seen.record("data-infra", ROW["seen"], ROW["slug"], ROW["title"], ROW["url"], ROW["source"])
     assert line.keys() == seen.read_rows("data-infra")[0].keys()
+
+
+def test_no_script_offers_a_way_to_write_from_a_shell(seen, covered) -> None:
+    """The measured reason this matters, not a style preference.
+
+    A live fire on 2026-09-28 was told by `brief-continuity` to call `pulse_record_edition`, had the
+    tool available, and appended its two published stories to the workspace file instead. The file
+    is rendered whole from the record, so both rows were pending erasure: the edition would have
+    read as never published and the next one would have carried it again.
+
+    Prose alone did not move the model off the script, so the script no longer offers the move. Both
+    files keep a `record` function as the definition of the row shape the projection must match, and
+    neither exposes it as a subcommand — a shell reaches only what `main` parses.
+    """
+    for module in (seen, covered):
+        with pytest.raises(SystemExit) as refused:
+            module.main(["record", "--series", "data-infra", "--slug", "acme-1-0"])
+        assert refused.value.code != 0
+
+
+def test_the_read_subcommands_all_still_work(seen, covered) -> None:
+    """Removing the write must not have removed the reads with it."""
+    assert seen.main(["history", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
+    assert seen.main(["fresh", "--series", "data-infra"]) == 0
+    assert seen.main(["reconcile", "--series", "data-infra"]) == 0
+    assert covered.main(["recent", "--series", "data-infra"]) == 0
+    assert covered.main(["check", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
