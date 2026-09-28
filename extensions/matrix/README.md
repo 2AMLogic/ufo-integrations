@@ -242,6 +242,21 @@ order of the steps.
 | Connect | `GET /_matrix/client/v3/account/whoami` names the bot the token belongs to, and that MXID is bound as the workspace's installation |
 | Invite | A workspace member invites the bot to a room and it joins itself, as does an MXID a member is proving; an invitation from anyone else is left standing |
 
+**A deploy is not connected until `matrix_connect` has run in chat.** Filled credential slots and a
+bot named in `UFO_MATRIX_BOTS` are the deploy's half; the binding is the workspace's, and the
+listener admits nothing for an installation it does not hold. An invitation sent before the binding
+exists is left standing rather than refused, so a bot that looks configured sits in no room and says
+nothing about it — invite again once connected, and it joins within a sync round.
+
+That order is forced rather than chosen: the slots are filled by an action offered in chat, so the
+chat needs the booted deploy and the binding needs the chat.
+
+**The bot's homeserver must be the workspace's own domain** for a member to be linked on first
+contact, because that is the rule above — an MXID is a member when its homeserver is that domain and
+`localpart@domain` is a member's email. A homeserver whose `server_name` is anything else can link
+nobody that way, so every sender is nobody, no turn is founded, and the room stays silent under a
+deploy that is otherwise correct. A member on another homeserver links by proving a code instead.
+
 The bot the token belongs to is the bot that gets bound, so a wrong token is a refusal and never a
 wrong binding. A second token for the same bot replaces the binding, and the listener reads the
 binding each sync round, so a connect takes effect without a restart. A bot another workspace already
