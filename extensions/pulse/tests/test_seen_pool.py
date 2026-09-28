@@ -106,3 +106,13 @@ def test_the_pool_is_a_different_file_from_the_ledger(seen, covered, tmp_path) -
     assert (tmp_path / "pulse" / "data-infra.seen.jsonl").is_file()
     assert not (tmp_path / "pulse" / "data-infra.covered.jsonl").exists()
     assert covered.main(["check", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
+
+
+def test_fresh_separates_a_max_length_slug_from_its_title(seen, capsys) -> None:
+    """A slug exactly as wide as the column pad left no gap at all, which only shows with a real
+    slug — every fixture here was short enough to hide it."""
+    wide = "kicad-ai-assistant-plugin-gemini-fix-release"  # 44 chars, the pad width
+    seen.record("data-infra", "2026-09-27", wide, "A title that must not abut", "", "github")
+    seen.main(["fresh", "--series", "data-infra", "--today", "2026-09-28"])
+    line = capsys.readouterr().out.strip()
+    assert f"{wide}  " in line, line
