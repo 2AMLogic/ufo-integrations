@@ -229,10 +229,10 @@ def test_the_runtime_carries_the_coverage_script_as_a_skill_file() -> None:
     assert "_jsonl_pool.py" in files
 
 
-def test_the_projection_is_a_job_because_only_a_job_can_write_a_file() -> None:
-    """The load-bearing fact behind the whole shape: core wires `ExtensionContext.files` for the job
-    runner and for surface contexts, and `turn_tools` does not wire it at all. A projection written
-    from a tool handler is dead code on every deploy, so it lives in a job."""
+def test_the_projection_is_declared_as_a_job() -> None:
+    """The projection is declared as a job, which is where `jobs.py` argues it belongs: the copy
+    follows the series rather than the turn that recorded, no sandbox is opened per write, and a
+    record that advanced with no workspace to take a file is rendered whole on a later tick."""
     manifest = pulse_manifest.manifest()
     assert [job.name for job in manifest.jobs] == [JOB_NAME]
     assert manifest.jobs[0].schedule == SCHEDULE
@@ -240,11 +240,13 @@ def test_the_projection_is_a_job_because_only_a_job_can_write_a_file() -> None:
 
 
 def test_turn_tools_really_does_leave_a_tool_handler_without_the_file_seam() -> None:
-    """Pinned against core rather than asserted in prose, because the previous version of this
-    change projected from a tool and the test that "covered" it used a fake that could write.
+    """Pinned against core rather than asserted in prose, because an earlier version of this change
+    projected from a tool and the test that "covered" it used a fake that could write.
 
-    `context_for` is the one builder, and `files` is `None` unless `sandboxes=` is passed. The whole
-    of `turn_tools` never passes it — so this reads the source rather than constructing a runtime.
+    `context_for` is the one builder, and `files` is `None` unless `sandboxes=` is passed; the whole
+    of `turn_tools` never passes it. This is why `pulse_fakes.Store.files` defaults to `None` — it is
+    *not* evidence that a tool cannot write a workspace file, which it can through
+    `ctx.sandbox.write_file`. It bounds one seam, not the capability.
     """
     source = inspect.getsource(loader.turn_tools)
     assert "sandboxes" not in source

@@ -1,11 +1,20 @@
 """The projection: the member-readable copy of a series' record, written by a job.
 
-**Why a job and not the tool that recorded the row.** A workspace file is written through
-`ExtensionContext.files`, and that seam is only wired where core passes `sandboxes=` when it builds
-the context — `serve.py` does so for the job runner, the page-change runner and surface contexts, and
-`host/ext/loader.py`'s `turn_tools` does not. So `ctx.ext.files` is `None` in *every* extension tool
-handler, unconditionally. A projection attempted there is not unreliable; it is dead code that
-reports "no carrier" on a deploy where every carrier is present.
+**Why a job and not the tool that recorded the row.** Not because a tool cannot write a file — it
+can, through `ctx.sandbox.write_file`, which is how `research` and `connectors` write theirs. The two
+seams answer different questions: `ExtensionContext.files` is for a writer with no turn (a job, a
+surface listener) and is `None` in every tool handler, while `ctx.sandbox` is the turn's own
+workspace and is always present.
+
+The projection is a job because of where and when it must land, not because of what a tool may do:
+
+- **Where.** It belongs in the series' conversation, which is not always the one that recorded. A
+  tool writes into its own turn's sandbox, so a series recorded from two conversations would leave a
+  copy in each — the split this store exists to end, reintroduced one layer up.
+- **When.** `ctx.sandbox` opens a sandbox on first use, so projecting from every write would open
+  one per recording call, including on fires that never needed a workspace at all.
+- **Catching up.** A record that advanced while no workspace could take a file stays due, and the
+  next tick renders it whole. A tool has only its own moment.
 
 **Why it wakes on work rather than on the clock.** `ConversationFiles.write` opens a sandbox rather
 than reusing a live one, so a job that rendered every series each tick would start a container per

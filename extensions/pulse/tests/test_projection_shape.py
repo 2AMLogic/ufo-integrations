@@ -182,22 +182,50 @@ def test_a_projected_line_carries_no_field_the_script_would_drop(seen) -> None:
     assert line.keys() == seen.read_rows("data-infra")[0].keys()
 
 
-def test_no_script_offers_a_way_to_write_from_a_shell(seen, covered, coverage) -> None:
+# A complete argv for the write each script used to offer. Completeness is the whole point: the
+# first version of this test passed a partial one, so a script with its `record` parser restored
+# exited 2 for a *missing required argument* rather than for an unknown subcommand, and the test
+# could not tell the two apart. It stayed green against a full revert — measured, after the fact.
+WRITE_ARGV = {
+    "seen": [
+        "record", "--series", "data-infra", "--seen", "2026-09-21",
+        "--slug", "acme-1-0", "--title", "Acme 1.0", "--url", "https://x/1",
+    ],
+    "covered": [
+        "record", "--series", "data-infra", "--edition", "2026-09-28",
+        "--slug", "acme-1-0", "--title", "Acme 1.0", "--url", "https://x/1",
+    ],
+    "coverage": [
+        "record", "--series", "data-infra", "--gathered", "2026-09-28",
+        "--source", "releases", "--state", "read", "--items", "3",
+    ],
+}
+
+
+def test_no_script_writes_when_asked_to_with_a_complete_command(
+    seen, covered, coverage, tmp_path
+) -> None:
     """The measured reason this matters, not a style preference.
 
-    A live fire on 2026-09-28 was told by `brief-continuity` to call `pulse_record_edition`, had the
-    tool available, and appended its two published stories to the workspace file instead. The file
-    is rendered whole from the record, so both rows were pending erasure: the edition would have
-    read as never published and the next one would have carried it again.
+    A live fire on 2026-09-28 was told by `brief-continuity` to call `pulse_record_edition` and
+    instead ran `python seen.py record --series agent-runtimes …` from its shell. Its two published
+    stories went into the workspace file, which is rendered whole from the record, so both were
+    pending erasure: the edition would have read as never published and the next one would have
+    carried it again.
 
-    Prose alone did not move the model off the script, so the script no longer offers the move. All
-    three files keep a `record` function as the definition of the row shape the projection must
-    match, and none exposes it as a subcommand — a shell reaches only what `main` parses.
+    Two assertions, because the exit code alone is not evidence. The refusal must happen on an argv
+    that a restored parser would have *accepted*, and — the part that cannot be faked — no file may
+    appear. A script that wrote and then exited non-zero would pass on the code alone.
     """
-    for module in (seen, covered, coverage):
+    for module, argv in (
+        (seen, WRITE_ARGV["seen"]),
+        (covered, WRITE_ARGV["covered"]),
+        (coverage, WRITE_ARGV["coverage"]),
+    ):
         with pytest.raises(SystemExit) as refused:
-            module.main(["record", "--series", "data-infra", "--slug", "acme-1-0"])
+            module.main(argv)
         assert refused.value.code != 0
+    assert not (tmp_path / "pulse").exists(), "a script wrote a file it has no subcommand to write"
 
 
 def test_the_read_subcommands_all_still_work(seen, covered, coverage) -> None:
@@ -205,6 +233,9 @@ def test_the_read_subcommands_all_still_work(seen, covered, coverage) -> None:
     assert seen.main(["history", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
     assert seen.main(["fresh", "--series", "data-infra"]) == 0
     assert seen.main(["reconcile", "--series", "data-infra"]) == 0
+    # `stale` is the one read dispatched by fall-through rather than by an explicit branch, which
+    # makes it the one a careless edit to the dispatch chain breaks first.
+    assert seen.main(["stale", "--series", "data-infra", "--slug", "acme-1-0"]) == 1
     assert covered.main(["recent", "--series", "data-infra"]) == 0
     assert covered.main(["check", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
     assert coverage.main(["window", "--series", "data-infra"]) == 0
