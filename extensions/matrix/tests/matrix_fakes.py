@@ -277,6 +277,19 @@ class Blob:
 
 
 @dataclass
+class Credentials:
+    """The extension context's credential slots as the surface reads them. A slot no deploy filled
+    raises, the way core raises for a slot nobody set."""
+
+    values: dict[str, str]
+
+    async def get(self, slot: str) -> str:
+        if slot not in self.values:
+            raise CredentialSlotUnset(slot)
+        return self.values[slot]
+
+
+@dataclass
 class Workspace:
     """A surface context's reach into core, recorded. `wanted` is the ambient decision's answer;
     `broken` names the event ids whose admission raises, and `lost` maps an event id to the
@@ -454,6 +467,11 @@ class Workspace:
 
 def terminal_frame(text_: str = "done") -> Terminal:
     return Terminal(frame=TerminalFrame(status="done", text=text_))
+
+
+def said(result: object) -> str:
+    """What a tool told the member: the text of the one block its result carries."""
+    return result.content[0].text  # type: ignore[attr-defined]
 
 
 @dataclass

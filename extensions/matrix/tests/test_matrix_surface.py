@@ -31,6 +31,7 @@ from matrix_fakes import (  # noqa: E402
     STRANGER,
     TOKEN,
     HOMESERVER,
+    Credentials,
     Homeserver,
     Listener,
     Workspace,
@@ -40,6 +41,7 @@ from matrix_fakes import (  # noqa: E402
     on_loop,
     question,
     reply,
+    said,
     tap,
     terminal_frame,
     text,
@@ -51,7 +53,6 @@ from ufo.sdk.surfaces import (  # noqa: E402
     AMBIENT_HISTORY_MESSAGES,
     NOTHING_DELIVERED,
     SILENCE_SENTINEL,
-    CredentialSlotUnset,
     MidTurnReply,
     SharedArtifact,
     SurfaceDeliveryError,
@@ -754,16 +755,6 @@ def test_the_deploy_names_its_bots_once_each() -> None:
 
 
 @dataclass
-class Credentials:
-    values: dict[str, str]
-
-    async def get(self, slot: str) -> str:
-        if slot not in self.values:
-            raise CredentialSlotUnset(slot)
-        return self.values[slot]
-
-
-@dataclass
 class Installations:
     """Core's writer as a tool reaches it: a bind lands unless another workspace holds that
     installation, and binding a bot this workspace already holds replaces what it held."""
@@ -792,10 +783,6 @@ class Tool:
 
 def connecting(values: dict[str, str], *, taken: bool = False) -> Tool:
     return Tool(Ext(Credentials(values), Installations(taken=taken)))
-
-
-def said(result: object) -> str:
-    return result.content[0].text  # type: ignore[attr-defined]
 
 
 def test_connect_binds_the_bot_the_token_belongs_to() -> None:
