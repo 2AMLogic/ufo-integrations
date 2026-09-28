@@ -59,6 +59,12 @@ def test_continuity_ships_its_pool_script() -> None:
     assert (SKILLS_ROOT / "brief-continuity" / "seen.py").is_file()
 
 
+def test_continuity_ships_its_coverage_script() -> None:
+    """The multi-day footer `coverage-honesty` specifies is an aggregation over gathers, so the
+    store holding each gather's source states has to ship where SKILL.md says to run it."""
+    assert (SKILLS_ROOT / "brief-continuity" / "coverage.py").is_file()
+
+
 @pytest.mark.parametrize("name", SKILL_NAMES)
 def test_every_skill_closes_with_traps(name: str) -> None:
     """House shape: the failure modes are listed where a reader looks for them."""

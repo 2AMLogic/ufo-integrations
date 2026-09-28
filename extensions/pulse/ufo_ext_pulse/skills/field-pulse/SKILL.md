@@ -42,7 +42,10 @@ ask again.
 ## Write the first brief
 
 Load `research-assistant` and find what changed across the confirmed sources, bounding every query to
-the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states.
+the recent past. Set each source's state as its read returns, per `coverage-honesty`'s three states,
+and record it under this gather's date with `brief-continuity`'s `coverage.py` — an edition covering
+more than one gather writes its footer from those rows, and the row is only writable while the read
+is in front of you.
 
 `brief-continuity` and `coverage-honesty` arrive with this skill and hold the two contracts a series
 lives by: what an edition may repeat, and what it may claim about a source it could not read. They are
@@ -92,10 +95,11 @@ This is the first edition, so there is no ledger to read. Record the edition's s
 recorded what it covered.
 
 **If a write fails, say so in the reply.** Recording the edition, writing the report file and
-appending to the pool all need a workspace a command can write to, and not every run has one: a fire
-with no client attached has no file tools at all. Such a run still gathers, ranks and replies
-perfectly well, so the edition looks finished while the ledger learned nothing — and the next
-edition, reading a ledger missing this one, repeats it. A series quietly stops being a series.
+appending to the pool and the coverage store all need a workspace a command can write to, and not
+every run has one: a fire with no client attached has no file tools at all. Such a run still
+gathers, ranks and replies perfectly well, so the edition looks finished while the ledger learned
+nothing — and the next edition, reading a ledger missing this one, repeats it. A series quietly
+stops being a series.
 
 So a failed write is part of the brief, not a detail to swallow: name what could not be written and
 that continuity is broken for this edition. An edition that could not record itself is worth less
@@ -134,13 +138,15 @@ spec:
     research-assistant and find what changed across <the confirmed sources> since the previous
     edition, and record every candidate it surfaces in the sightings pool with brief-continuity's
     seen.py before ranking — everything seen, not only what you publish. Load coverage-honesty and
-    set each source's state as it returns; name every unread source in the footer. Load
-    research-report and write <series>-<date>.md. Record the published stories with
-    brief-continuity. If any write fails — the report file, the ledger or the pool — say so in the
-    reply and say that continuity is broken for this edition; a fire with no client attached has no
-    file tools, and an edition that silently recorded nothing is repeated by the next one. Reply
-    with the brief; when nothing clears the bar, say the window was quiet and never lower the bar
-    to fill it.
+    set each source's state as it returns, recording each one under this gather's date with
+    brief-continuity's coverage.py; name every unread source in the footer, and where the edition
+    covers more than one gather say how many of them it went unread on. Load research-report and
+    write <series>-<date>.md. Record the published stories with brief-continuity. If any write
+    fails — the report file, the ledger, the pool or the coverage store — say so in the reply and
+    say that continuity is broken for this edition; a fire with no client attached has no file
+    tools, and an edition that silently recorded nothing is repeated by the next one. Reply with
+    the brief; when nothing clears the bar, say the window was quiet and never lower the bar to
+    fill it.
 ```
 
 Every field is filled from this member's own answers. A source carried over from this example is a
@@ -172,6 +178,8 @@ on, and that every edition lands in this conversation.
 - Letting the schedule's prompt name the sources while the ledger series name is left as a placeholder.
 - Writing a headline in the source's words rather than the reader's.
 - Recording only what you publish, which leaves the pool blind to every lead the bar rejected.
+- Leaving a gather's source states unrecorded, so an edition spanning several of them can report
+  only the last one's failures.
 - Replying with a finished-looking edition after a write failed, which leaves the next edition to
   repeat it.
 - Padding a thin window to reach a story count, which turns a brief about this business back into a

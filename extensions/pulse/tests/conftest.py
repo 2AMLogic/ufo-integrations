@@ -37,3 +37,17 @@ def seen(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def coverage(tmp_path, monkeypatch):
+    """The coverage-state store, loaded and run the way the other two are: over a temporary
+    workspace, with the working directory as the workspace the relative store path resolves
+    against."""
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(
+        "coverage_state", SKILLS_ROOT / "brief-continuity" / "coverage.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
