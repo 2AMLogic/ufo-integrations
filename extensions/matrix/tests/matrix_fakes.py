@@ -52,6 +52,8 @@ from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT
 
 BOT = "@ufo:example.org"
 HOMESERVER = "https://matrix.example.org"
+
+
 def media_id(filename: str) -> str:
     """The id a media repository answers an upload with. A real one is opaque and carries none of
     the filename's punctuation, so the fake mints one the media id grammar accepts rather than

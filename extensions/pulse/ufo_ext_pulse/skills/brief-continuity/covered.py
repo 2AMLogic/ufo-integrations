@@ -53,12 +53,12 @@ def recent_rows(series: str, editions: int) -> list[dict]:
 def record(series: str, edition: str, slug: str, title: str, url: str) -> Path:
     """The shape of one ledger line.
 
-**This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
-write the record; this file is a projection rendered whole from it, so a row appended here is erased
-by the next projection rather than kept. It survives as the definition of the row shape the
-projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
-there is deliberately no `record` subcommand, so the obvious way to write here is gone. A shell can
-still append to the file by other means; what stops that mattering is the render, not the parser.
+    **This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
+    write the record; this file is a projection rendered whole from it, so a row appended here is erased
+    by the next projection rather than kept. It survives as the definition of the row shape the
+    projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
+    there is deliberately no `record` subcommand, so the obvious way to write here is gone. A shell can
+    still append to the file by other means; what stops that mattering is the render, not the parser.
     """
     if not EDITION.fullmatch(edition):
         raise ValueError(f"edition must be YYYY-MM-DD, got {edition!r}")

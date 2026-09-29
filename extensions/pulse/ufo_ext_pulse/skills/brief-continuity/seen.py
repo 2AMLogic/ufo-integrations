@@ -54,12 +54,12 @@ def read_rows(series: str) -> list[dict]:
 def record(series: str, seen: str, slug: str, title: str, url: str, source: str) -> Path:
     """The shape of one sighting line.
 
-**This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
-write the record; this file is a projection rendered whole from it, so a row appended here is erased
-by the next projection rather than kept. It survives as the definition of the row shape the
-projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
-there is deliberately no `record` subcommand, so the obvious way to write here is gone. A shell can
-still append to the file by other means; what stops that mattering is the render, not the parser.
+    **This function is not how a row is recorded.** `pulse_record_sightings` and `pulse_record_edition`
+    write the record; this file is a projection rendered whole from it, so a row appended here is erased
+    by the next projection rather than kept. It survives as the definition of the row shape the
+    projection must match — `tests/test_projection_shape.py` asserts the two are byte-identical — and
+    there is deliberately no `record` subcommand, so the obvious way to write here is gone. A shell can
+    still append to the file by other means; what stops that mattering is the render, not the parser.
     """
     if not SEEN_DATE.fullmatch(seen):
         raise ValueError(f"seen must be YYYY-MM-DD, got {seen!r}")

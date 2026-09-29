@@ -183,9 +183,7 @@ def test_a_pack_bundling_neither_activates_neither(installed: dict) -> None:
     assert "matrix" not in active
 
 
-def test_a_pack_narrows_the_set_a_lockfile_filled(
-    installed: dict, tmp_path, monkeypatch
-) -> None:
+def test_a_pack_narrows_the_set_a_lockfile_filled(installed: dict, tmp_path, monkeypatch) -> None:
     """A pin does not join `matrix` to a pack, because the pack narrows after the lockfile fills.
 
     This is the order the `matrix-setup` trap turns on. The lockfile pins the assistant set and

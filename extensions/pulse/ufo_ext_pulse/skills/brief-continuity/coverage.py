@@ -74,14 +74,14 @@ def record(
 ) -> Path:
     """The shape of one coverage line, refused unless the row is one of the three states.
 
-**This function is not how a row is recorded.** `pulse_record_coverage` writes the record; this file
-is a projection rendered whole from it, so a row appended here is erased by the next projection
-rather than kept. It survives as the definition of the row shape the projection must match —
-`tests/test_projection_shape.py` asserts the two are byte-identical — and as the reader an old file
-is imported through, and there is deliberately no `record` subcommand.
+    **This function is not how a row is recorded.** `pulse_record_coverage` writes the record; this file
+    is a projection rendered whole from it, so a row appended here is erased by the next projection
+    rather than kept. It survives as the definition of the row shape the projection must match —
+    `tests/test_projection_shape.py` asserts the two are byte-identical — and as the reader an old file
+    is imported through, and there is deliberately no `record` subcommand.
 
-    A read with no items is `read-empty`, which is an answer, and a not-read row names which of the
-    four failures it was — the two distinctions the footer is written from.
+        A read with no items is `read-empty`, which is an answer, and a not-read row names which of the
+        four failures it was — the two distinctions the footer is written from.
     """
     if not GATHERED.fullmatch(gathered):
         raise ValueError(f"gathered must be YYYY-MM-DD, got {gathered!r}")
@@ -91,9 +91,7 @@ is imported through, and there is deliberately no `record` subcommand.
         raise ValueError(f"state must be one of {', '.join(STATES)}, got {state!r}")
     if state == NOT_READ:
         if reason not in REASONS:
-            raise ValueError(
-                f"a not-read source names one of {', '.join(REASONS)}, got {reason!r}"
-            )
+            raise ValueError(f"a not-read source names one of {', '.join(REASONS)}, got {reason!r}")
         if items:
             raise ValueError(f"a source that went unread returned no items, got {items}")
     else:

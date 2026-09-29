@@ -530,9 +530,7 @@ async def read_covered(ctx: Transactional, series: str) -> list[dict]:
                 )
             )
         ).all()
-    return [
-        {"edition": r.edition, "slug": r.slug, "title": r.title, "url": r.url} for r in rows
-    ]
+    return [{"edition": r.edition, "slug": r.slug, "title": r.title, "url": r.url} for r in rows]
 
 
 async def read_coverage(ctx: Transactional, series: str) -> list[dict]:
@@ -590,7 +588,9 @@ def last_seen(rows: Iterable[Mapping[str, Any]]) -> dict[str, str]:
     return latest
 
 
-def fresh(rows: Iterable[Mapping[str, Any]], within_days: int, today: date) -> list[tuple[str, str]]:
+def fresh(
+    rows: Iterable[Mapping[str, Any]], within_days: int, today: date
+) -> list[tuple[str, str]]:
     """Leads whose most recent sighting is inside the window, most recently seen first."""
     cutoff = (today - timedelta(days=within_days)).isoformat()
     live = [(slug, seen) for slug, seen in last_seen(rows).items() if seen >= cutoff]

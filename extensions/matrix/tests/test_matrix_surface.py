@@ -1583,7 +1583,9 @@ async def test_a_file_uploaded_comes_back_by_its_mxc(workspace: Workspace) -> No
 
 
 @on_loop
-async def test_a_download_of_nothing_raises_rather_than_returning_empty(workspace: Workspace) -> None:
+async def test_a_download_of_nothing_raises_rather_than_returning_empty(
+    workspace: Workspace,
+) -> None:
     """A media id the repository does not hold is an error, not zero bytes — an empty file and an
     absent one read identically to a caller that only checks the length."""
     server = Homeserver()
@@ -1657,13 +1659,17 @@ async def test_a_file_declaring_too_much_is_never_fetched(workspace: Workspace) 
     installation = rig(server, workspace)
     async with MatrixClient(HOMESERVER, TOKEN, transport=server.transport) as client:
         before = len(server.requests)
-        got = await installation.fetched(client, _shared(url="mxc://example.org/x", size=99), limit=8)
+        got = await installation.fetched(
+            client, _shared(url="mxc://example.org/x", size=99), limit=8
+        )
         assert len(server.requests) == before
     assert got is None
 
 
 @on_loop
-async def test_a_file_the_repository_does_not_hold_is_dropped_not_raised(workspace: Workspace) -> None:
+async def test_a_file_the_repository_does_not_hold_is_dropped_not_raised(
+    workspace: Workspace,
+) -> None:
     """A member's attachment must not stop their room being read: the fetch failure costs that
     file and the stream goes on."""
     server = Homeserver()

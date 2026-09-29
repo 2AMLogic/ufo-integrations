@@ -26,6 +26,26 @@ packages = [
     "extensions/matrix/ufo_ext_matrix",
 ]
 
+[tool.ruff]
+# The house wrap is 100 columns, and ruff's own default is 88: a file written to the house style
+# reads as drift against the default, so the number is stated here rather than left implied.
+line-length = 100
+# Overriding the default list rather than extending it. Ruff added Markdown to its own default
+# discovery, and the skills this repo ships are Markdown holding fenced Python written for a reader
+# — a prose budget, not a formatter's. Naming the two source suffixes keeps a later ruff from
+# reformatting a SKILL.md.
+include = ["*.py", "*.pyi"]
+# Installer-managed trees. `.claude/skills/repo/scripts/` is vendored from rjwalters/repo and is
+# refreshed by its installer, so a fix made here is reverted there.
+extend-exclude = [".claude"]
+
+[tool.ruff.lint]
+# Ruff's own default selection widened between releases, so a lane that inherits it inherits a
+# contract that moves under a version bump: pyflakes and the three pycodestyle groups are named
+# here so the pin in `.github/workflows/ci.yml` decides the ruff binary and this decides the rules.
+# `E5` is absent because line length is the formatter's to hold, and it holds it at the wrap above.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["extensions"]
 pythonpath = ["extensions/pulse/tests", "extensions/matrix", "extensions/matrix/tests"]
