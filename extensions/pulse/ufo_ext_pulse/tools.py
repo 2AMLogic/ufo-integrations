@@ -7,6 +7,9 @@ and any other conversation writes under `workspace_root/<conversation_id>`. One 
 grew one ledger per tree, each looking complete and none of them whole. These write to tables
 instead, keyed by workspace and series, which every turn in the workspace reaches identically.
 
+The one read answers every decision the pack takes from the record, an edition's footer included,
+so no decision depends on which conversation a projection happened to land in.
+
 **Nothing here writes a file**, by choice rather than by inability. A tool can write one through
 `ctx.sandbox.write_file`; it would land in this turn's own conversation, which is the wrong place
 for a copy that belongs to the series. `jobs.py` owns the workspace-file copy and says why.
@@ -108,6 +111,14 @@ class RecallInput(BaseModel):
             "the answer is the live leads and what the recent editions covered."
         ),
     )
+    coverage: str | None = Field(
+        default=None,
+        description=(
+            "An edition's window: YYYY-MM-DD, closing today, or YYYY-MM-DD..YYYY-MM-DD. Given, the "
+            "answer is every source's recorded state across the gathers inside it, which is what "
+            "the edition's footer is written from."
+        ),
+    )
 
 
 def _said(text: str, *, error: bool = False) -> ToolResult:
@@ -198,9 +209,57 @@ async def record_coverage(ctx: ToolContext, args: RecordCoverageInput) -> ToolRe
     )
 
 
+def _window(coverage: str) -> tuple[str, str] | None:
+    """The bounds a `coverage` argument names, or None when it names none."""
+    since, span, until = coverage.partition("..")
+    if not span:
+        until = datetime.now(UTC).date().isoformat()
+    if not (record.DATE.fullmatch(since) and record.DATE.fullmatch(until)) or since > until:
+        return None
+    return since, until
+
+
+async def _recall_coverage(ext, series: str, coverage: str) -> ToolResult:
+    """The footer's read. It is a mode of `pulse_recall` rather than the projected file because the
+    file lands in the conversation the series last recorded from — the pulse agent's, where the
+    gathers run — while an edition is answered in the conversation the member asked in."""
+    bounds = _window(coverage)
+    if bounds is None:
+        return _said(
+            f"coverage must be YYYY-MM-DD or YYYY-MM-DD..YYYY-MM-DD, opening no later than it "
+            f"closes; got {coverage!r}.",
+            error=True,
+        )
+    since, until = bounds
+    rows = await record.read_coverage(ext, series)
+    dates = record.coverage_gathers(rows, since, until)
+    if not dates:
+        return _said(
+            f"No gather recorded a source state for {series} between {since} and {until}. The "
+            "pool is the only witness to this window."
+        )
+    span = dates[0] if len(dates) == 1 else f"{dates[0]}..{dates[-1]}"
+    lines = [f"{span}  {len(dates)} gather{'' if len(dates) == 1 else 's'} in {series}"]
+    lines += [
+        f"  {aggregate['source']:<24}  {record.coverage_line(aggregate)}"
+        for aggregate in record.coverage_window(rows, since, until)
+    ]
+    return _said("\n".join(lines))
+
+
 async def recall(ctx: ToolContext, args: RecallInput) -> ToolResult:
-    """Read the record back: what is live, what is spent, or one lead's whole history."""
+    """Read the record back: what is live, what is spent, one lead's whole history, or every
+    source's state across an edition's window."""
     ext = _ext(ctx, RECALL_TOOL)
+    if args.coverage is not None:
+        if args.slug is not None:
+            return _said(
+                "Name a slug or a coverage window, not both: one is a lead's history and the other "
+                "is the sources' states.",
+                error=True,
+            )
+        return await _recall_coverage(ext, args.series, args.coverage)
+
     sightings = await record.read_sightings(ext, args.series)
     covered = await record.read_covered(ext, args.series)
 

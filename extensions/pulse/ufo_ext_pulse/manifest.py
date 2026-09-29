@@ -110,7 +110,8 @@ def manifest() -> Manifest:
                 name=RECALL_TOOL,
                 description=(
                     "Read a brief series' record: the leads seen recently, the stories the last "
-                    "few editions carried, or one lead's whole history when a slug is named."
+                    "few editions carried, one lead's whole history when a slug is named, or every "
+                    "source's state across an edition's window when a coverage window is named."
                 ),
                 input_model=RecallInput,
                 handler=recall,

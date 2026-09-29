@@ -121,16 +121,19 @@ def test_the_report_reads_the_pool_by_tool() -> None:
     assert "seen.py" not in body
 
 
-def test_the_report_reads_the_coverage_store_by_script() -> None:
+def test_the_report_reads_the_coverage_store_by_tool() -> None:
     """The report is the only skill that writes an edition, so it is the only one that writes a
     footer over several gathers. That footer is a count of recorded states, and a file that
     described the store rather than invoking it would be back to inferring from the pool.
 
-    The window is the one read with no tool behind it: it is an aggregation a footer is written
-    from rather than a decision, and a fourth read tool is a prompt-token cost on every turn of
-    every agent that loads this pack. It reads the projection, which is rendered whole from the
-    record, so what it aggregates is the record's rows and not one tree's half of them."""
-    assert "coverage.py" in (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+    It names `pulse_recall`'s `coverage` window and not `coverage.py` because the projected file
+    lands in the conversation the series last recorded from — the pulse agent's — while an edition
+    is answered in the member's, which as a rule never recorded and holds no file. The read is a
+    mode of the existing tool rather than a fourth one, so it adds no tool to any turn's schema."""
+    body = (SKILLS_ROOT / "field-report" / "SKILL.md").read_text()
+    assert "pulse_recall" in body
+    assert "`coverage`" in body
+    assert "coverage.py" not in body
 
 
 def test_the_handoff_spawns_the_agent_and_not_a_profile() -> None:
