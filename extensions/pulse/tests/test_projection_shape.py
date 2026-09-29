@@ -94,9 +94,7 @@ def test_the_two_validators_agree_on_every_row(coverage, row: tuple) -> None:
         lambda: coverage.record("data-infra", gathered, source, state, items, reason)
     )
     by_store = refused(
-        lambda: record.check_coverage(
-            gathered, record.Coverage(source, state, items, reason)
-        )
+        lambda: record.check_coverage(gathered, record.Coverage(source, state, items, reason))
     )
     assert by_script == by_store
 
@@ -128,9 +126,7 @@ def test_the_tool_and_the_script_write_one_footer(coverage, since: str, until: s
     assert record.coverage_gathers(rows, since, until) == gathers
     by_store = record.coverage_window(rows, since, until)
     assert by_store == coverage.window("data-infra", since, until)
-    assert [record.coverage_line(a) for a in by_store] == [
-        coverage.state_line(a) for a in by_store
-    ]
+    assert [record.coverage_line(a) for a in by_store] == [coverage.state_line(a) for a in by_store]
 
 
 def test_a_projected_sighting_line_is_the_line_the_script_appends(seen) -> None:
@@ -220,16 +216,43 @@ def test_a_projected_line_carries_no_field_the_script_would_drop(seen) -> None:
 # could not tell the two apart. It stayed green against a full revert — measured, after the fact.
 WRITE_ARGV = {
     "seen": [
-        "record", "--series", "data-infra", "--seen", "2026-09-21",
-        "--slug", "acme-1-0", "--title", "Acme 1.0", "--url", "https://x/1",
+        "record",
+        "--series",
+        "data-infra",
+        "--seen",
+        "2026-09-21",
+        "--slug",
+        "acme-1-0",
+        "--title",
+        "Acme 1.0",
+        "--url",
+        "https://x/1",
     ],
     "covered": [
-        "record", "--series", "data-infra", "--edition", "2026-09-28",
-        "--slug", "acme-1-0", "--title", "Acme 1.0", "--url", "https://x/1",
+        "record",
+        "--series",
+        "data-infra",
+        "--edition",
+        "2026-09-28",
+        "--slug",
+        "acme-1-0",
+        "--title",
+        "Acme 1.0",
+        "--url",
+        "https://x/1",
     ],
     "coverage": [
-        "record", "--series", "data-infra", "--gathered", "2026-09-28",
-        "--source", "releases", "--state", "read", "--items", "3",
+        "record",
+        "--series",
+        "data-infra",
+        "--gathered",
+        "2026-09-28",
+        "--source",
+        "releases",
+        "--state",
+        "read",
+        "--items",
+        "3",
     ],
 }
 

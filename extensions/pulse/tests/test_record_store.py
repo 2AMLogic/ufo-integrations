@@ -100,7 +100,9 @@ async def test_one_lead_at_two_addresses_on_one_day_is_two_rows(store: Store) ->
 @on_store
 async def test_a_retitled_sighting_keeps_one_row_and_the_newer_title(store: Store) -> None:
     await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0", "first")], NOW)
-    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0", "second")], NOW)
+    await record.record_sightings(
+        store, SERIES, [sighting("2026-09-21", "acme-1-0", "second")], NOW
+    )
     rows = await record.read_sightings(store, SERIES)
     assert [row["title"] for row in rows] == ["second"]
 
@@ -614,9 +616,7 @@ async def test_the_job_writes_every_file_and_clears_the_series(store: Store) -> 
 async def test_the_job_skips_a_series_nothing_has_touched(store: Store) -> None:
     """A projection opens a sandbox rather than reusing a live one, so a job that rewrote every
     series each tick would start a container per conversation per tick for no change."""
-    await record.record_sightings(
-        store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4()
-    )
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0")], NOW, uuid4())
     await jobs.project(job_store(store))
     store.files.written.clear()
     await jobs.project(store)
@@ -777,30 +777,34 @@ async def test_recall_names_the_live_leads_and_what_the_editions_spent(store: St
     await record.record_sightings(store, SERIES, [sighting(today, "acme-1-0")], NOW)
     await record.record_covered(store, SERIES, today, [Story("beta-2", "Beta 2")], NOW)
     said = (
-        await tools.recall(tool_context(store), tools.RecallInput(series=SERIES))
-    ).content[0].text
+        (await tools.recall(tool_context(store), tools.RecallInput(series=SERIES))).content[0].text
+    )
     assert "acme-1-0" in said
     assert "beta-2" in said
 
 
 @on_store
 async def test_recall_of_one_slug_answers_with_its_whole_history(store: Store) -> None:
-    await record.record_sightings(
-        store, SERIES, [sighting("2026-09-21", "acme-1-0", "beta")], NOW
-    )
+    await record.record_sightings(store, SERIES, [sighting("2026-09-21", "acme-1-0", "beta")], NOW)
     await record.record_sightings(store, SERIES, [sighting("2026-09-23", "acme-1-0", "GA")], NOW)
     await record.record_covered(store, SERIES, "2026-09-23", [Story("acme-1-0", "GA")], NOW)
     said = (
-        await tools.recall(tool_context(store), tools.RecallInput(series=SERIES, slug="acme-1-0"))
-    ).content[0].text
+        (await tools.recall(tool_context(store), tools.RecallInput(series=SERIES, slug="acme-1-0")))
+        .content[0]
+        .text
+    )
     assert "beta" in said and "GA" in said and "carried 2026-09-23" in said
 
 
 @on_store
-async def test_recall_of_an_unknown_slug_says_so_rather_than_answering_emptily(store: Store) -> None:
+async def test_recall_of_an_unknown_slug_says_so_rather_than_answering_emptily(
+    store: Store,
+) -> None:
     said = (
-        await tools.recall(tool_context(store), tools.RecallInput(series=SERIES, slug="nobody"))
-    ).content[0].text
+        (await tools.recall(tool_context(store), tools.RecallInput(series=SERIES, slug="nobody")))
+        .content[0]
+        .text
+    )
     assert "never seen and never carried" in said
 
 

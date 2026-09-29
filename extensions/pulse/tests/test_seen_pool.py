@@ -25,14 +25,18 @@ def test_the_pool_lands_in_the_workspace_beside_the_ledger(seen, tmp_path, monke
     """Workspace-relative for the same reason the covered ledger is, and a `UFO_HOME` elsewhere
     moves nothing."""
     monkeypatch.setenv("UFO_HOME", str(tmp_path / "scratch" / "ufo"))
-    path = seen.record("data-infra", "2026-09-21", "acme-1-0", "Acme 1.0", "https://x/1", "releases")
+    path = seen.record(
+        "data-infra", "2026-09-21", "acme-1-0", "Acme 1.0", "https://x/1", "releases"
+    )
     assert path == Path("pulse/data-infra.seen.jsonl")
     assert (tmp_path / "pulse" / "data-infra.seen.jsonl").is_file()
 
 
 def test_two_sightings_of_one_lead_are_two_rows(seen) -> None:
     """Not an overwrite: the difference between the rows is what evidences a development."""
-    seen.record("data-infra", "2026-09-21", "acme-1-0", "Acme 1.0 in beta", "https://x/r", "releases")
+    seen.record(
+        "data-infra", "2026-09-21", "acme-1-0", "Acme 1.0 in beta", "https://x/r", "releases"
+    )
     seen.record("data-infra", "2026-09-23", "acme-1-0", "Acme 1.0 GA", "https://x/r", "releases")
     rows = seen.history("data-infra", "acme-1-0")
     assert [row["seen"] for row in rows] == ["2026-09-21", "2026-09-23"]
@@ -41,7 +45,9 @@ def test_two_sightings_of_one_lead_are_two_rows(seen) -> None:
 
 def test_staleness_keys_on_the_most_recent_sighting(seen) -> None:
     """A lead first seen long ago but seen again this morning is live, not old."""
-    seen.record("data-infra", "2026-08-01", "acme-1-0", "Acme 1.0 rumoured", "https://x/f", "forums")
+    seen.record(
+        "data-infra", "2026-08-01", "acme-1-0", "Acme 1.0 rumoured", "https://x/f", "forums"
+    )
     seen.record("data-infra", "2026-09-27", "acme-1-0", "Acme 1.0 GA", "https://x/r", "releases")
     assert (
         seen.main(
@@ -52,9 +58,13 @@ def test_staleness_keys_on_the_most_recent_sighting(seen) -> None:
 
 
 def test_a_lead_that_went_quiet_is_stale(seen) -> None:
-    seen.record("data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums")
+    seen.record(
+        "data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums"
+    )
     assert (
-        seen.main(["stale", "--series", "data-infra", "--slug", "old-news", "--today", "2026-09-28"])
+        seen.main(
+            ["stale", "--series", "data-infra", "--slug", "old-news", "--today", "2026-09-28"]
+        )
         == 1
     )
 
@@ -69,14 +79,20 @@ def test_a_never_seen_lead_is_not_live(seen) -> None:
 def test_a_stale_lead_is_still_in_the_pool_with_its_history(seen) -> None:
     """The point of additive collection: going quiet loses a lead no data at all, so when it moves
     again its whole history is still attached."""
-    seen.record("data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums")
+    seen.record(
+        "data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums"
+    )
     seen.main(["stale", "--series", "data-infra", "--slug", "old-news", "--today", "2026-09-28"])
     assert len(seen.history("data-infra", "old-news")) == 1
 
-    seen.record("data-infra", "2026-09-28", "old-news", "It moved after all", "https://x/r", "releases")
+    seen.record(
+        "data-infra", "2026-09-28", "old-news", "It moved after all", "https://x/r", "releases"
+    )
     assert len(seen.history("data-infra", "old-news")) == 2
     assert (
-        seen.main(["stale", "--series", "data-infra", "--slug", "old-news", "--today", "2026-09-28"])
+        seen.main(
+            ["stale", "--series", "data-infra", "--slug", "old-news", "--today", "2026-09-28"]
+        )
         == 0
     )
 
@@ -85,8 +101,12 @@ def test_reading_never_writes(seen, tmp_path) -> None:
     """The constraint that keeps this a pool rather than an expiry: no read path — stale, fresh or
     history — may write, mark or delete a row. Asserted on the file's bytes, so any future write
     dressed up as a read fails here."""
-    seen.record("data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums")
-    seen.record("data-infra", "2026-09-27", "live-news", "Something recent", "https://x/r", "releases")
+    seen.record(
+        "data-infra", "2026-08-01", "old-news", "Something from August", "https://x/f", "forums"
+    )
+    seen.record(
+        "data-infra", "2026-09-27", "live-news", "Something recent", "https://x/r", "releases"
+    )
     path = tmp_path / "pulse" / "data-infra.seen.jsonl"
     before = path.read_bytes()
 
@@ -120,7 +140,9 @@ def test_fresh_separates_a_max_length_slug_from_its_title(seen, capsys) -> None:
     """A slug exactly as wide as the column pad left no gap at all, which only shows with a real
     slug — every fixture here was short enough to hide it."""
     wide = "kicad-ai-assistant-plugin-gemini-fix-release"  # 44 chars, the pad width
-    seen.record("data-infra", "2026-09-27", wide, "A title that must not abut", "https://x/g", "github")
+    seen.record(
+        "data-infra", "2026-09-27", wide, "A title that must not abut", "https://x/g", "github"
+    )
     seen.main(["fresh", "--series", "data-infra", "--today", "2026-09-28"])
     line = capsys.readouterr().out.strip()
     assert f"{wide}  " in line, line
@@ -152,7 +174,9 @@ def test_one_url_under_two_slugs_cannot_be_told_apart(seen) -> None:
     the pool's side. The ledger's ineligibility rule keys on the slug, so a story renamed on its
     second outing is republished and nothing says so."""
     seen.record("data-infra", "2026-09-20", "acme-1-0-shipped", "Acme 1.0", "https://acme/1", "rel")
-    seen.record("data-infra", "2026-09-25", "big-week-for-acme", "Big week", "https://acme/1", "rel")
+    seen.record(
+        "data-infra", "2026-09-25", "big-week-for-acme", "Big week", "https://acme/1", "rel"
+    )
     split, merged = seen.unreconciled("data-infra")
     assert split == [("https://acme/1", ["acme-1-0-shipped", "big-week-for-acme"])]
     assert merged == []

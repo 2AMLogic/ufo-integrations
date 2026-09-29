@@ -8,9 +8,7 @@ import xml.etree.ElementTree as ET
 # alone called that skip a stray and turned the step red.
 cases = list(ET.parse(sys.argv[1]).iter("testcase"))
 named = [
-    f"{c.get('classname', '')}::{c.get('name', '')}"
-    for c in cases
-    if c.find("skipped") is not None
+    f"{c.get('classname', '')}::{c.get('name', '')}" for c in cases if c.find("skipped") is not None
 ]
 stray = [where for where in named if "test_matrix_crypto" not in where]
 if stray:
