@@ -123,7 +123,8 @@ SERIES_TABLE = sa.Table(
 class Transactional(Protocol):
     """What a store call needs of its `ExtensionContext`, and nothing more."""
 
-    workspace_id: UUID
+    @property
+    def workspace_id(self) -> UUID: ...
 
     def transaction(self) -> AbstractAsyncContextManager[AsyncConnection]: ...
 
