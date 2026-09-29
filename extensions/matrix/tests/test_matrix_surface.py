@@ -87,6 +87,7 @@ from ufo_ext_matrix.questions import LABELLED_HINT, ONE_HINT, question_block  # 
 from ufo_ext_matrix.since import read_since, write_since  # noqa: E402
 from ufo_ext_matrix.surface import (  # noqa: E402
     CANCELLED_LINE,
+    DETAILS_LINE,
     FAILED_LINE,
     FILES_LINE,
     HOMESERVER_SLOT,
@@ -959,7 +960,7 @@ async def test_a_details_report_the_portal_shows_nobody_points_at_the_workspace(
 ) -> None:
     """A room audience is neither the shared one nor a member's own, so core's gate offers no
     link: the write-up then reads as the workspace pointer rather than vanishing — a turn whose
-    words were silence must never post an empty event."""
+    words were silence must never post an empty event — and, having shared no file, says none."""
     server = Homeserver()
     surface = MatrixSurface(transport=server.transport, environ={})
     wb = writeback(TerminalFrame(status="done", text=SILENCE_SENTINEL), artifacts=(report(),))
@@ -967,7 +968,22 @@ async def test_a_details_report_the_portal_shows_nobody_points_at_the_workspace(
     await surface.post(workspace, wb)  # type: ignore[arg-type]
     body = server.sent[txn_id(wb.turn_id)]["body"]
     assert f"[{REPORT_LINK_TEXT}](" not in body
-    assert body == f"{FILES_LINE}: https://ufo.example.org/surface/web"
+    assert FILES_LINE not in body
+    assert body == f"{DETAILS_LINE}: https://ufo.example.org/surface/web"
+
+
+@on_loop
+async def test_a_file_and_an_unlinked_report_are_each_said_once(workspace: Workspace) -> None:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={})
+    chart = shared("chart.png", "image/png")
+    wb = writeback(TerminalFrame(status="done", text="Both."), artifacts=(chart, report()))
+    workspace.conversations[ROOM] = (wb.conversation_id, room_audience("matrix", room_key(ROOM)))
+    await surface.post(workspace, wb)  # type: ignore[arg-type]
+    home = "https://ufo.example.org/surface/web"
+    assert server.sent[txn_id(wb.turn_id)]["body"] == (
+        f"Both.\n\n{FILES_LINE}: {home}\n\n{DETAILS_LINE}: {home}"
+    )
 
 
 @on_loop
@@ -979,7 +995,7 @@ async def test_a_deploy_with_no_portal_offers_no_report_link(workspace: Workspac
     workspace.conversations[ROOM] = (wb.conversation_id, SHARED_AUDIENCE)
     await surface.post(workspace, wb)  # type: ignore[arg-type]
     assert server.sent[txn_id(wb.turn_id)]["body"] == (
-        f"Short answer.\n\n{FILES_LINE}: https://ufo.example.org/surface/web"
+        f"Short answer.\n\n{DETAILS_LINE}: https://ufo.example.org/surface/web"
     )
 
 

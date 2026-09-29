@@ -147,6 +147,7 @@ FAILED_LINE = "This turn failed before it could answer."
 CANCELLED_LINE = "This turn was stopped."
 ELSEWHERE_LINE = "The next step happens in the workspace"
 FILES_LINE = "This turn shared files, which are in the workspace"
+DETAILS_LINE = "This turn wrote a detailed report, which is in the workspace"
 REPORT_LINK_TEXT = "Open detailed report"
 FILE_ROLE = "file"
 DETAILS_ROLE = "details"
@@ -179,10 +180,10 @@ def reply_text(
     """The reply a terminal turn becomes. A failed turn says so in the surface's own words; a
     cancelled turn posts the reason core gave — an archived conversation, a revoked seat — or, with
     none, says it was stopped; a detailed write-up is a link under the words the turn wrote it
-    under, or points at the workspace where the deploy offers no link; and what a room cannot carry
-    — a connect or credential handoff, a shared file — points at the workspace. A question is not
-    part of it: `post` sends the question as a message of its own, the one message an answer may
-    rewrite."""
+    under, or says it is in the workspace where the deploy offers no link; and what a room cannot
+    carry — a connect or credential handoff, a shared file — points at the workspace. A write-up is
+    never called a file: a turn with both says each once. A question is not part of it: `post` sends
+    the question as a message of its own, the one message an answer may rewrite."""
     terminal = writeback.terminal
     text = terminal.text.strip()
     if terminal.status == "failed":
@@ -196,8 +197,10 @@ def reply_text(
     where = f": {workspace_url}" if workspace_url else "."
     if terminal.connect_request is not None or terminal.credential_request is not None:
         said.append(ELSEWHERE_LINE + where)
-    if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts) or unlinked:
+    if any(artifact.role == FILE_ROLE for artifact in writeback.artifacts):
         said.append(FILES_LINE + where)
+    if unlinked:
+        said.append(DETAILS_LINE + where)
     return "\n\n".join(said)
 
 
