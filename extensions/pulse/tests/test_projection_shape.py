@@ -265,8 +265,8 @@ def test_the_read_subcommands_all_still_work(seen, covered, coverage) -> None:
     assert seen.main(["history", "--series", "data-infra", "--slug", "acme-1-0"]) == 0
     assert seen.main(["fresh", "--series", "data-infra"]) == 0
     assert seen.main(["reconcile", "--series", "data-infra"]) == 0
-    # `stale` is the one read dispatched by fall-through rather than by an explicit branch, which
-    # makes it the one a careless edit to the dispatch chain breaks first.
+    # `stale` is `seen.py`'s one read dispatched by fall-through rather than by an explicit branch,
+    # which makes it the one a careless edit to that script's dispatch chain breaks first.
     assert seen.main(["stale", "--series", "data-infra", "--slug", "acme-1-0"]) == 1
     assert covered.main(["recent", "--series", "data-infra"]) == 0
     assert covered.main(["check", "--series", "data-infra", "--slug", "acme-1-0"]) == 0

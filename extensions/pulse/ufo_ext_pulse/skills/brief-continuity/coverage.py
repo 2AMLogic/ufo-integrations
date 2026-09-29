@@ -9,8 +9,9 @@ that projection must match.
 
 **A row is recorded with `pulse_record_coverage`, not here.** The tool writes the record, which every
 turn in the workspace reaches identically; this file is a copy of it. A row appended here is erased
-by the next projection rather than kept, so there is deliberately no `record` subcommand and nothing
-reachable from a shell can write to the store.
+by the next projection rather than kept, so there is deliberately no `record` subcommand and the
+obvious way to write here is gone. A shell can still append to the file by other means; what stops
+that mattering is the render, not the parser.
 
 `coverage-honesty` gives a source three states in one run, and a footer written from one gather says
 which of them it was. A report covering three gathers holds three sets of those states, and a flat
