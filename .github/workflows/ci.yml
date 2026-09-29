@@ -16,6 +16,32 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv run --python 3.12 --with pytest --with pyyaml pytest extensions -v
 
+  workflow-lint:
+    name: workflow syntax and gate scripts
+    # No path filter, and no ufo or crypto extra: this lane costs seconds, and a filtered job that
+    # skips reads as passing when it is a required check (rule 6 of .loom/docs/ci-principles.md).
+    # actionlint runs shellcheck over every `run:` block on the runner, so the shell embedded in a
+    # step is read too. The gate scripts live in .github/scripts/ because actionlint cannot read a
+    # heredoc's Python, and a syntax error there would otherwise surface at job runtime, inside a
+    # step whose purpose is to fail for a different reason.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: actionlint over every workflow
+        run: |
+          bash <(curl -fsS https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+      - name: Every gate script compiles
+        run: |
+          set -euo pipefail
+          scripts=$(find .github/scripts -name '*.py' | sort)
+          if [ -z "$scripts" ]; then
+            echo "::error::no gate script found, so this step is checking an empty rule"
+            exit 1
+          fi
+          echo "$scripts" | xargs python3 -m py_compile
+          echo "compiled: $(echo "$scripts" | tr '\n' ' ')"
+
   lineage:
     name: one lineage across every open pull request
     # A revision id is an identity two branches assign independently, and the clash lives in their
@@ -91,22 +117,7 @@ jobs:
             pytest extensions -v -rs --junitxml=pytest-report.xml
       - name: Every test ran, the registry test among them
         run: |
-          python3 - pytest-report.xml <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-
-          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
-          skipped = [f"{c.get('classname')}::{c.get('name')}" for c in cases if c.find("skipped") is not None]
-          registry = [c for c in cases if "test_registry" in c.get("classname", "") and c.find("skipped") is None]
-          if skipped:
-              print("::error::this job runs against ufo, so no test may skip")
-              print("\n".join(skipped))
-              sys.exit(1)
-          if not registry:
-              print("::error::the registry test did not run")
-              sys.exit(1)
-          print(f"{len(cases)} tests ran, {len(registry)} of them against the registry, none skipped")
-          PY
+          python3 .github/scripts/registry_ran.py pytest-report.xml
 
   against-a-homeserver:
     name: the gated suites against a Synapse container
@@ -179,43 +190,7 @@ jobs:
             -v -rs --junitxml=pytest-report.xml
       - name: Every gated module ran, and no test in it skipped
         run: |
-          python3 - pytest-report.xml extensions/matrix/tests <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          # This job exists to run the tests the gate holds back everywhere else, so a report with
-          # nothing in it is this job's own failure: an unset env var, a module that would not
-          # import, and a homeserver that came up too late all read as a green suite otherwise.
-          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
-          skipped = [f"{c.get('classname')}::{c.get('name')}" for c in cases if c.find("skipped") is not None]
-          if not cases:
-              print("::error::no test ran, so the gate held this suite back from the job that sets it")
-              sys.exit(1)
-          if skipped:
-              print("::error::this job names a homeserver and installs the extra, so no test may skip")
-              print("\n".join(skipped))
-              sys.exit(1)
-
-          # Naming the directory is not enough on its own: a module this job exists for could stop
-          # being collected — renamed, ignored by a conftest edit, failing to import behind a guard
-          # — and the rest of the suite would keep this step green while the homeserver went
-          # unexercised. Each gated module is asked for by name, from the same directory the gate
-          # reads, by the `*_integration.py` naming convention rather than by parsing conftest's
-          # ignore list directly — the two agree today but are not the same source.
-          ran = {c.get("classname", "").rsplit(".", 1)[-1] for c in cases}
-          gated = sorted(p.stem for p in Path(sys.argv[2]).glob("*_integration.py"))
-          missing = [name for name in gated if name not in ran]
-          if not gated:
-              print("::error::no gated module found, so this job is checking an empty rule")
-              sys.exit(1)
-          if missing:
-              print("::error::a module this job exists for contributed no test")
-              print("\n".join(missing))
-              sys.exit(1)
-          print(f"{len(cases)} tests ran against the homeserver, none skipped")
-          print(f"gated modules that ran: {', '.join(gated)}")
-          PY
+          python3 .github/scripts/homeserver_ran.py pytest-report.xml extensions/matrix/tests
       - name: What the homeserver made of it
         if: failure()
         run: docker logs synapse
@@ -234,18 +209,7 @@ jobs:
           uv run --python 3.12 \
             --with pytest --with pyyaml --with pytest-xdist \
             --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
-            python - <<'PY'
-          import sys
-          from importlib.util import find_spec
-
-          if find_spec("vodozemac") is not None:
-              print("::error::vodozemac is installed, so this is not the lane without the extra")
-              sys.exit(1)
-          if find_spec("cryptography") is None:
-              print("::error::cryptography is absent, so ufo is not installed and neither is the lane")
-              sys.exit(1)
-          print("vodozemac absent, cryptography present: the extra is what is missing, and only it")
-          PY
+            python .github/scripts/lane_without_extra.py
       - name: Install ufo alone and run every test
         run: |
           uv run --python 3.12 \
@@ -254,29 +218,4 @@ jobs:
             pytest extensions -v -rs --junitxml=pytest-report.xml
       - name: Only test_matrix_crypto skipped, and it did skip
         run: |
-          python3 - pytest-report.xml <<'PY'
-          import sys
-          import xml.etree.ElementTree as ET
-
-          # A module-level `pytest.importorskip` skips collection, and junitxml reports that as
-          # `classname=''` with the module's dotted path in `name` — the opposite placement from a
-          # skipped test function, which names its module in `classname`. Reading the pair as one
-          # string is what lets this gate bless the one skip it exists for; matching `classname`
-          # alone called that skip a stray and turned the step red.
-          cases = list(ET.parse(sys.argv[1]).iter("testcase"))
-          named = [
-              f"{c.get('classname', '')}::{c.get('name', '')}"
-              for c in cases
-              if c.find("skipped") is not None
-          ]
-          stray = [where for where in named if "test_matrix_crypto" not in where]
-          if stray:
-              print("::error::the crypto extra's absence may silence only the crypto tests")
-              print("\n".join(stray))
-              sys.exit(1)
-          if not named:
-              print("::error::the crypto tests did not skip, so the extra was installed after all")
-              sys.exit(1)
-          print(f"{len(cases)} tests ran, {len(named)} skipped, all of test_matrix_crypto:")
-          print("\n".join(named))
-          PY
+          python3 .github/scripts/crypto_skips_only.py pytest-report.xml
