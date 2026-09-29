@@ -33,6 +33,9 @@ DUPLICATE_REVISION = "two files claim revision"
 FORKED = "two files chain onto revision"
 TWO_ROOTS = "two files start the lineage"
 UNKNOWN_PARENT = "chains onto a revision no file here declares"
+UNKNOWN_PARENT_CAUSE = (
+    "its parent is likely on an unmerged sibling pull request; merge that one first"
+)
 NO_ROOT = "no file starts the lineage"
 
 Lineage = dict[str, dict[str, str | None]]
@@ -95,7 +98,10 @@ def faults(extension: str, declared: Lineage) -> list[str]:
             fault = TWO_ROOTS if parent is None else f"{FORKED} {parent!r}"
             found.append(f"{extension}: {fault} — {', '.join(names)}")
         if parent is not None and parent not in revisions:
-            found += [f"{extension}/{name}: {UNKNOWN_PARENT} {parent!r}" for name in names]
+            found += [
+                f"{extension}/{name}: {UNKNOWN_PARENT} {parent!r} — {UNKNOWN_PARENT_CAUSE}"
+                for name in names
+            ]
     if revisions and None not in parents:
         found.append(f"{extension}: {NO_ROOT}")
     return found
@@ -167,7 +173,9 @@ ANSWERING = ("matrix_0002_answering.py", "matrix_0002", "matrix_0001")
         (
             chain(SCHEMA, ("matrix_0002_linking.py", "matrix_0002", "matrix_0001_schema")),
             [
-                f"matrix/matrix_0002_linking.py: {UNKNOWN_PARENT} 'matrix_0001_schema'",
+                "matrix/matrix_0002_linking.py: chains onto a revision no file here declares "
+                "'matrix_0001_schema' — its parent is likely on an unmerged sibling "
+                "pull request; merge that one first",
             ],
         ),
         (
