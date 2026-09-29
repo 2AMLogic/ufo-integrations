@@ -217,16 +217,22 @@ tried to read, each with its state, its item count if it answered, and its reaso
 states are only writable while the reads are in front of the run, so the gather makes this call and
 no later turn can.
 
-The footer's own read has no tool and is run over the projected file, so it needs a carrier:
+**Read it with `pulse_recall`**, naming the series and `coverage` as the edition's window —
+`2026-09-22..2026-09-28`, or its opening date alone when it closes today. The reply states every
+source across the gathers inside it: read on all three, not read on two of three, not read
+throughout. An edition covering one gather has one set of states to report and an edition covering
+three has three, and `coverage-honesty` is what the footer follows in either case.
+
+The member's own reader over the projected file prints the same lines, for a turn that has a
+command tool and wants them on the terminal:
 
 ```bash
 python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
   --series <s> --since <date> --until <date>
 ```
 
-`window` states every source across the gathers between those dates: read on all three, not read on
-two of three, not read throughout. An edition covering one gather has one set of states to report and
-an edition covering three has three, and `coverage-honesty` is what the footer follows in either case.
+That file lands only in the conversation the series last recorded from, so a footer is never
+written from it — a conversation that never recorded reads no states where the record holds them.
 
 The source slug is that source's durable address across gathers, exactly as a story slug is across
 editions. The footer names the source in the reader's words and the store keys it by the slug, which

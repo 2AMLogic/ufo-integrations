@@ -101,6 +101,38 @@ def test_the_two_validators_agree_on_every_row(coverage, row: tuple) -> None:
     assert by_script == by_store
 
 
+WINDOW = [
+    ("2026-09-22", "releases", "read", 4, ""),
+    ("2026-09-22", "filings-index", "not-read", 0, "rate-limited"),
+    ("2026-09-22", "forums", "read-empty", 0, ""),
+    ("2026-09-23", "releases", "read", 1, ""),
+    ("2026-09-23", "filings-index", "not-read", 0, "unreachable"),
+    ("2026-09-24", "releases", "read-empty", 0, ""),
+    ("2026-09-24", "filings-index", "not-read", 0, "rate-limited"),
+    ("2026-09-25", "papers", "read", 2, ""),
+]
+
+
+@pytest.mark.parametrize(
+    ("since", "until"),
+    [("", ""), ("2026-09-22", "2026-09-24"), ("2026-09-23", ""), ("2026-09-25", "2026-09-25")],
+)
+def test_the_tool_and_the_script_write_one_footer(coverage, since: str, until: str) -> None:
+    """The window is restated too, and a footer must not depend on which of the two was read: the
+    member's terminal and the member's conversation would otherwise disagree about one gather."""
+    for row in WINDOW:
+        coverage.record("data-infra", *row)
+    rows = coverage.read_rows("data-infra")
+
+    gathers = coverage.gathers("data-infra", since, until)
+    assert record.coverage_gathers(rows, since, until) == gathers
+    by_store = record.coverage_window(rows, since, until)
+    assert by_store == coverage.window("data-infra", since, until)
+    assert [record.coverage_line(a) for a in by_store] == [
+        coverage.state_line(a) for a in by_store
+    ]
+
+
 def test_a_projected_sighting_line_is_the_line_the_script_appends(seen) -> None:
     """Not a comparison of formats — the script writes a real file here, and the projection of the
     same row has to be that file's bytes."""

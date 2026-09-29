@@ -2,8 +2,10 @@
 
 One JSON Lines file per series at `pulse/<series>.coverage.jsonl` in the conversation workspace, one
 row per source per gather, rendered whole from the record by the projection job. `window` aggregates
-every source's states across the gathers a report covers, which is what a multi-gather footer is
-written from; `record` is the definition of the row shape that projection must match.
+every source's states across the gathers a report covers — the member's reader of the lines
+`pulse_recall` answers a footer with from the record, which `record.py` restates and
+`tests/test_projection_shape.py` holds to this file's; `record` is the definition of the row shape
+that projection must match.
 
 **A row is recorded with `pulse_record_coverage`, not here.** The tool writes the record, which every
 turn in the workspace reaches identically; this file is a copy of it. A row appended here is erased

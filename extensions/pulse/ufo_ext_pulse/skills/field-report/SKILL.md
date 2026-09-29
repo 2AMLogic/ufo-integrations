@@ -102,28 +102,31 @@ pointed at the series' own record instead of its inputs.
 ## The footer reads the gathers' own states, and names where there were none
 
 Each gather recorded every source's state with `pulse_record_coverage` as its read returned, so the
-footer is a lookup rather than an inference. The states are on the record; this reads the projected
-copy of them, over the same span the window line states:
+footer is a lookup rather than an inference. Call `pulse_recall` with the series and `coverage` set
+to the span the window line states:
 
-```bash
-python "$UFO_HOME/skills/brief-continuity/coverage.py" window \
-  --series <series> --since <the window opens> --until <today>
-```
+| Window | `coverage` |
+| --- | --- |
+| Closes today | `2026-09-22` |
+| Closes earlier, as the member named it | `2026-09-15..2026-09-21` |
 
-`window` states each source across the gathers it covers: read on all of them, read on two of three,
-not read throughout, and which of `coverage-honesty`'s four reasons kept it out. An edition covering
-one gather takes that skill's single-run lines; one covering several says how many of them each
-state held, which is the count it requires and the ambiguity it refuses.
+The record answers the same in every conversation, so this is the read wherever the member asked.
+The projected `coverage.jsonl` is not: it lands in the conversation the series last recorded from,
+which is the pulse agent's where the gathers run, and a conversation that never recorded for the
+series — the member's own, as a rule — holds none.
+
+The reply states each source across the gathers the window holds: read on all of them, read on two
+of three, not read throughout, and which of `coverage-honesty`'s four reasons kept it out. An
+edition covering one gather takes that skill's single-run lines; one covering several says how many
+of them each state held, which is the count it requires and the ambiguity it refuses.
 
     Read: releases on all 6 gathers (14 items), papers on 4 of 6 gathers (5 items).
     Not read: the filings index rate-limited 5 of the 6 gathers.
 
 A window can reach back past the gathers a series has states from, and a gather that recorded none
-left none. The file is a projection of the record rendered whole and a few minutes behind it, and it
-lands in the conversation the series last recorded from — so a turn in a conversation that has never
-recorded for this series may find no file where the record holds rows. There the pool is the only
-witness, and it records sightings rather than reads: a source with rows was read at least once, and
-a source with none may have been read and empty or never reached. Say which store answered, because
+left none. Over those gathers the pool is the only witness, and it records sightings rather than
+reads: a source with rows was read at least once, and a source with none may have been read and
+empty or never reached. Say which store answered, because
 the two support different claims — a recorded state names the failure, and the pool's silence
 supports only `coverage-honesty`'s third state, that this edition has no evidence from that source.
 
@@ -164,6 +167,8 @@ to read a brief.
   unreached one leave the same absence of rows.
 - Reading the footer out of the pool's silence over gathers that recorded their states, which turns
   a named failure back into an absence and loses the count of days it lasted.
+- Writing the footer from the projected `coverage.jsonl`, which a conversation that never recorded
+  does not hold, so an edition finds no states where the record has every one of them.
 - Reporting a quiet field over a window whose gathers did not run.
 - Running the scripts from a subdirectory, which reads an empty pool and an empty ledger and
   publishes an edition with nothing behind it.

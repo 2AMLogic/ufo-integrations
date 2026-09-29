@@ -811,3 +811,97 @@ async def test_recall_never_changes_the_record(store: Store) -> None:
     await tools.recall(tool_context(store), tools.RecallInput(series=SERIES))
     await tools.recall(tool_context(store), tools.RecallInput(series=SERIES, slug="acme-1-0"))
     assert await record.read_sightings(store, SERIES) == before
+
+
+# --- recall: the footer's window ------------------------------------------------------------------
+
+
+async def _gathers(store: Store, conversation) -> None:
+    """Three gathers recorded from the pulse agent's conversation, the way a daily fire records."""
+    for gathered, filings in (
+        ("2026-09-22", Coverage("filings-index", record.NOT_READ, 0, "rate-limited")),
+        ("2026-09-23", Coverage("filings-index", record.NOT_READ, 0, "rate-limited")),
+        ("2026-09-24", Coverage("filings-index", record.READ, 2)),
+    ):
+        states = [Coverage("releases", record.READ, 4), filings]
+        await record.record_coverage(store, SERIES, gathered, states, NOW, conversation)
+
+
+async def _footer(store: Store, coverage: str, series: str = SERIES, conversation=None):
+    return await tools.recall(
+        tool_context(store, conversation), tools.RecallInput(series=series, coverage=coverage)
+    )
+
+
+@on_store
+async def test_a_conversation_that_never_recorded_reads_the_footer(store: Store) -> None:
+    """The regression test for #138. The gathers record from the pulse agent's conversation and the
+    projection lands there; the member asks for an edition from their own, which recorded nothing
+    and holds no file. The footer is read from the record, so it is the same in both."""
+    agent, member = uuid4(), uuid4()
+    await _gathers(store, agent)
+    here = (await _footer(store, "2026-09-22..2026-09-28", conversation=member)).content[0].text
+    there = (await _footer(store, "2026-09-22..2026-09-28", conversation=agent)).content[0].text
+    assert here == there
+    assert "2026-09-22..2026-09-24  3 gathers in data-infra" in here
+    assert "read on all 3 gathers (12 items)" in here
+    assert "not read on 2 of 3 gathers — rate-limited" in here
+
+
+@on_store
+async def test_a_window_opening_alone_closes_today(store: Store) -> None:
+    await _gathers(store, uuid4())
+    said = (await _footer(store, "2026-09-23")).content[0].text
+    assert "2026-09-23..2026-09-24  2 gathers" in said
+
+
+@on_store
+async def test_a_window_closing_early_leaves_the_later_gathers_out(store: Store) -> None:
+    await _gathers(store, uuid4())
+    said = (await _footer(store, "2026-09-22..2026-09-23")).content[0].text
+    assert "not read on all 2 gathers — rate-limited" in said
+
+
+@on_store
+async def test_a_window_with_no_recorded_gather_says_the_pool_is_the_witness(store: Store) -> None:
+    """Zero rows is an answer, and the one the report's fallback is written from."""
+    result = await _footer(store, "2026-09-22..2026-09-28")
+    assert not result.is_error
+    assert "No gather recorded a source state" in result.content[0].text
+    assert "pool is the only witness" in result.content[0].text
+
+
+@on_store
+async def test_a_footer_never_reads_another_series_states(store: Store) -> None:
+    """A conversation that recorded for a different series has rows, and none of them are this
+    series' footer."""
+    await _gathers(store, uuid4())
+    said = (await _footer(store, "2026-09-22..2026-09-28", series="other-series")).content[0].text
+    assert "No gather recorded a source state for other-series" in said
+
+
+@pytest.mark.parametrize(
+    "window", ["last week", "2026-09-28..2026-09-22", "2026-09-22..", "2026-9-22"]
+)
+@on_store
+async def test_a_window_that_names_no_span_is_refused(store: Store, window: str) -> None:
+    assert (await _footer(store, window)).is_error
+
+
+@on_store
+async def test_a_slug_and_a_window_together_are_refused(store: Store) -> None:
+    result = await tools.recall(
+        tool_context(store),
+        tools.RecallInput(series=SERIES, slug="acme-1-0", coverage="2026-09-22"),
+    )
+    assert result.is_error
+
+
+@on_store
+async def test_reading_the_footer_never_changes_the_record(store: Store) -> None:
+    await _gathers(store, uuid4())
+    before = await record.read_coverage(store, SERIES)
+    due = await record.due_series(store)
+    await _footer(store, "2026-09-22..2026-09-28")
+    assert await record.read_coverage(store, SERIES) == before
+    assert await record.due_series(store) == due

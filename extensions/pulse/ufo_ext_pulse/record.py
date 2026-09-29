@@ -46,7 +46,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 # These shapes are the skills' own, restated here because a skill script is materialised standalone
 # in a sandbox and cannot import this package. `test_projection_shape.py` reads the pattern out of
 # `_jsonl_pool.py`, the three date patterns out of their scripts, and the states and reasons out of
-# `coverage.py`, and asserts they match — so the duplication is checked rather than trusted.
+# `coverage.py`, and asserts they match — so the duplication is checked rather than trusted. The
+# coverage window further down is restated and checked the same way.
 SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -603,6 +604,90 @@ def recent_rows(rows: Sequence[Mapping[str, Any]], editions: int) -> list[dict]:
     """
     dates = set(sorted({row["edition"] for row in rows}, reverse=True)[:editions])
     return [dict(row) for row in rows if row["edition"] in dates]
+
+
+# The window and its lines are `coverage.py`'s, restated for the same reason the shapes above are:
+# `pulse_recall` answers a footer from the record in any conversation, and `coverage.py window`
+# answers it from one tree's copy. `test_projection_shape.py` runs both over the same rows and
+# asserts they say the same thing, so a footer does not depend on which of the two was read.
+
+
+def _inside(gathered: str, since: str, until: str) -> bool:
+    return (not since or gathered >= since) and (not until or gathered <= until)
+
+
+def coverage_gathers(rows: Iterable[Mapping[str, Any]], since: str, until: str) -> list[str]:
+    """The distinct gather dates inside the window, oldest first: the denominator of every count.
+    A gather that recorded no source state is not one of them."""
+    return sorted({row["gathered"] for row in rows if _inside(row["gathered"], since, until)})
+
+
+def coverage_window(rows: Sequence[Mapping[str, Any]], since: str, until: str) -> list[dict]:
+    """Every source's states across the gathers in the window, by source slug — the counts that
+    separate "unread on two of three" from "unread throughout" and from "read every gather"."""
+    dates = set(coverage_gathers(rows, since, until))
+    answers: dict[str, dict[str, Mapping[str, Any]]] = {}
+    for row in rows:
+        if row["gathered"] in dates:
+            answers.setdefault(row["source"], {})[row["gathered"]] = row
+
+    aggregates = []
+    for source in sorted(answers):
+        states = list(answers[source].values())
+        reasons: dict[str, int] = {}
+        for row in states:
+            if row["state"] == NOT_READ:
+                reasons[row["reason"]] = reasons.get(row["reason"], 0) + 1
+        aggregates.append(
+            {
+                "source": source,
+                "gathers": len(dates),
+                "states": {s: sum(row["state"] == s for row in states) for s in COVERAGE_STATES},
+                "unrecorded": len(dates) - len(states),
+                "items": sum(row["items"] for row in states),
+                "reasons": dict(sorted(reasons.items(), key=lambda pair: (-pair[1], pair[0]))),
+            }
+        )
+    return aggregates
+
+
+def _reasons_of(aggregate: Mapping[str, Any]) -> str:
+    reasons = aggregate["reasons"]
+    if len(reasons) == 1:
+        return next(iter(reasons))
+    return ", ".join(f"{reason} ({count})" for reason, count in reasons.items())
+
+
+def _of(count: int, total: int) -> str:
+    return f"all {total} gathers" if count == total else f"{count} of {total} gathers"
+
+
+def _items(count: int) -> str:
+    return f"{count} item" if count == 1 else f"{count} items"
+
+
+def coverage_line(aggregate: Mapping[str, Any]) -> str:
+    """One source's state across the window, in the words a footer is written from. A window of
+    one gather reads as one run; a longer one says how many of its gathers each state held."""
+    total, states = aggregate["gathers"], aggregate["states"]
+    if total == 1:
+        if states[NOT_READ]:
+            return f"not read — {_reasons_of(aggregate)}"
+        if states[READ]:
+            return f"read ({_items(aggregate['items'])})"
+        return "read, nothing in it"
+
+    segments = []
+    answered = states[READ] + states[READ_EMPTY]
+    if answered:
+        empty = ", nothing in it" if answered == 1 else ", nothing in them"
+        found = f" ({_items(aggregate['items'])})" if aggregate["items"] else empty
+        segments.append(f"read on {_of(answered, total)}{found}")
+    if states[NOT_READ]:
+        segments.append(f"not read on {_of(states[NOT_READ], total)} — {_reasons_of(aggregate)}")
+    if aggregate["unrecorded"]:
+        segments.append(f"no state recorded on {_of(aggregate['unrecorded'], total)}")
+    return "; ".join(segments)
 
 
 def seen_lines(rows: Iterable[Mapping[str, Any]]) -> str:
