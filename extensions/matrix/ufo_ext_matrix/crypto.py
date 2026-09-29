@@ -300,11 +300,22 @@ def _verified_key(user_id: str, device_id: str, ed25519: str, key: Any) -> str |
 
 @dataclass
 class Device:
-    """The bot's device over one store and one homeserver session."""
+    """The bot's device over one store and one homeserver session.
+
+    `offered` is the pool the homeserver holds of the one-time keys this device last published, and
+    it is the floor a batch's count is read against. A batch is fetched before the device that
+    hears it is opened, so the count it carries is the homeserver's from before an opening device
+    published anything: read on its own it says the pool is empty, and the device buys a second
+    pool over the one it has just offered. The floor is spent by the first count read against it,
+    so a pool a peer then draws down is answered from what the homeserver says it holds. It lives
+    in this process's memory rather than the store: a publish the store already records is one
+    every batch this process fetches was assembled after, so such a count is the homeserver's own
+    answer."""
 
     store: CryptoStore
     client: MatrixClient
     account: vz.Account
+    offered: int = 0
 
     @property
     def user_id(self) -> str:
@@ -365,12 +376,13 @@ class Device:
             account = vz.Account.from_pickle(record["pickle"], store.sealer.pickle_key)
         device = cls(store, client, account)
         if publishing and not record["published"]:
+            pool = account.max_number_of_one_time_keys // 2
             keys = {
                 "device_keys": device._device_keys(),
-                "one_time_keys": device._one_time_keys(account.max_number_of_one_time_keys // 2),
+                "one_time_keys": device._one_time_keys(pool),
                 "fallback_keys": device._fallback_key(),
             }
-            await device._publish(keys)
+            await device._publish(keys, pool=pool)
         return device
 
     def _signed(self, value: dict[str, Any]) -> dict[str, Any]:
@@ -411,12 +423,17 @@ class Device:
             for key_id, key in self.account.fallback_key.items()
         }
 
-    async def _publish(self, keys: Mapping[str, Any]) -> None:
+    async def _publish(self, keys: Mapping[str, Any], *, pool: int | None = None) -> None:
         """Upload what the account generated, then record it published. The account is stored
-        first, so a failed upload is tried again with the same keys rather than lost."""
+        first, so a failed upload is tried again with the same keys rather than lost. `pool` is the
+        one-time keys the homeserver holds once the upload lands, which an upload of one-time keys
+        names and any other leaves as it was: it is recorded behind the upload, so a refused upload
+        counts for nothing and its keys are offered again."""
         await self._save_account(published=False)
         await self.client.upload_keys(keys)
         self.account.mark_keys_as_published()
+        if pool is not None:
+            self.offered = pool
         await self._save_account(published=True)
 
     async def _save_account(self, *, published: bool = True, rows: Rows | None = None) -> None:
@@ -454,16 +471,25 @@ class Device:
         )
 
     async def _replenish(self, counts: Any, fallback_types: Any) -> None:
+        """A fresh pool where the homeserver holds less than one, and a fallback key where it has
+        none left to hand out. What the homeserver holds is the count the batch carried or the pool
+        this device published since, whichever is the greater; reading the count spends that floor,
+        so the batch that arrives alongside a publish is not read as an empty pool and the next
+        batch is read for what it says."""
         keys: dict[str, Any] = {}
+        pool: int | None = None
         if isinstance(counts, Mapping):
             target = self.account.max_number_of_one_time_keys // 2
             held = counts.get(SIGNED_KEY, 0)
-            if isinstance(held, int) and held < target:
-                keys["one_time_keys"] = self._one_time_keys(target - held)
+            if isinstance(held, int):
+                held, self.offered = max(held, self.offered), 0
+                if held < target:
+                    keys["one_time_keys"] = self._one_time_keys(target - held)
+                    pool = target
         if isinstance(fallback_types, list) and SIGNED_KEY not in fallback_types:
             keys["fallback_keys"] = self._fallback_key()
         if keys:
-            await self._publish(keys)
+            await self._publish(keys, pool=pool)
 
     async def _outdate(self, users: Iterable[str]) -> None:
         async with self.store.rows() as rows:

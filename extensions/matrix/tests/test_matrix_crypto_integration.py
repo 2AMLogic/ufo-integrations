@@ -8,7 +8,7 @@ What it cannot answer is the homeserver's own conduct:
 | Point | What the homeserver decides |
 | --- | --- |
 | To-device ordering | Which batch carries a room key, and whether the event it opens is in it |
-| One-time key accounting | What the count of a pool it drew on says, and when it is reported |
+| One-time key accounting | What a publish leaves it holding, and what a drawn-down pool counts |
 | Fallback keys | That an emptied pool is served by the fallback key, and served again |
 | `device_lists` | That a member's new device is announced to a room encrypted with them |
 
@@ -476,6 +476,20 @@ async def test_an_encrypted_room_round_trips_through_a_real_homeserver(
         assert payload["room_id"] == pair.room_id
         assert payload["content"]["body"] == "The answer, in full."
         assert payload["content"]["formatted_body"] == "<p>The answer, in full.</p>"
+
+
+@on_loop
+async def test_a_new_device_publishes_one_pool_of_one_time_keys(engine: Any, pair: Pair) -> None:
+    """A round mints the device and publishes its pool, and the batch that round heard was assembled
+    before any of it existed. `TARGET` keys is what the homeserver is left holding, which the next
+    batch counts: the publish is what that first count is read against, and a count read in place of
+    it says the pool is empty and buys a second one. Only the homeserver's own accounting of what it
+    was uploaded says which happened."""
+    ctx = bot_ctx(engine, pair.bot_token)
+    bot = Bot(ctx, pair.bot_token)
+    await bot.hear()  # the round that mints the device and publishes its keys
+    await bot.hear()  # the first batch assembled with that pool in hand
+    assert bot.counts()[-1] == TARGET
 
 
 @on_loop
