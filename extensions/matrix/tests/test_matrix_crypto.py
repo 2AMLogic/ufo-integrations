@@ -61,6 +61,9 @@ from ufo_ext_matrix.since import read_since  # noqa: E402
 from ufo_ext_matrix.surface import HOMESERVER_SLOT, TOKEN_SLOT, Installation, MatrixSurface  # noqa: E402
 
 ENCRYPTED = {"algorithm": MEGOLM}
+# The pool a device offers, which `crypto.Device` takes from its own account: half of what the
+# account holds, the same figure `test_matrix_crypto_integration.py` reads it as.
+TARGET = vz.Account().max_number_of_one_time_keys // 2
 
 
 def rig(server: E2EHomeserver, workspace: Workspace) -> Installation:
@@ -600,6 +603,44 @@ async def test_a_mint_that_loses_reads_the_winners_account(workspace: Workspace)
     assert await stored_account(workspace) == winner
     assert server.device_uploads == 1
     assert server.devices[BOT][BOT_DEVICE]["keys"][f"curve25519:{BOT_DEVICE}"] == winner
+
+
+def key_uploads(server: E2EHomeserver) -> int:
+    """How many times the bot published keys, of whatever kind."""
+    return len([r for r in server.requests if r.url.path.endswith("/keys/upload")])
+
+
+def pool(server: E2EHomeserver) -> int:
+    """The one-time keys the homeserver holds of the bot's device."""
+    return len(server.one_time_keys.get((BOT, BOT_DEVICE), {}))
+
+
+@on_loop
+async def test_a_new_device_offers_one_pool_of_one_time_keys(workspace: Workspace) -> None:
+    """A batch is fetched before the device that hears it is opened, so the count it carries was the
+    homeserver's before the opening device published anything. `TARGET` keys is what the homeserver
+    is left holding: the publish is what the count is read against, and a count read in place of it
+    says the pool is empty and buys a second one."""
+    server = E2EHomeserver()
+    await primed(server, workspace)
+    assert pool(server) == TARGET
+    assert key_uploads(server) == 1
+
+
+@on_loop
+async def test_a_pool_drawn_down_after_the_first_sync_is_offered_again(
+    workspace: Workspace,
+) -> None:
+    """What a publish is counted as is spent by the first count read against it, so a homeserver
+    that has handed the pool out is answered with a fresh one. A publish standing in for the count
+    of every later batch would leave the device with no key to claim and nothing saying so."""
+    server = E2EHomeserver()
+    installation = await primed(server, workspace)
+    server.one_time_keys[(BOT, BOT_DEVICE)].clear()  # every key in the pool claimed
+    server.syncs["s1"] = batch("s2")
+    await installation.step()
+    assert pool(server) == TARGET
+    assert key_uploads(server) == 2
 
 
 @on_loop
