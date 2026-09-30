@@ -31,7 +31,7 @@ from ufo_ext_matrix.manifest import (  # noqa: E402
     SKILL_NAMES,
     UNLINK_TOOL,
 )
-from ufo_ext_matrix.surface import BOTS_ENV, HOMESERVER_SLOT, TOKEN_SLOT  # noqa: E402
+from ufo_ext_matrix.surface import BOTS_ENV, HOMESERVER_SLOT, TOKEN_SLOT, TOPOLOGY_SLOT  # noqa: E402
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "ufo_ext_matrix" / "migrations"
 
@@ -59,6 +59,7 @@ def test_the_credentials_and_the_deploy_key(manifest) -> None:
         HOMESERVER_SLOT,
         TOKEN_SLOT,
         STORE_KEY_SLOT,
+        TOPOLOGY_SLOT,
     }
     assert all(slot.injection is None for slot in manifest.credentials)
     assert manifest.deploy_keys == ("MATRIX_BOTS",)

@@ -38,6 +38,7 @@ from ufo.sdk.audience import (
 )
 from ufo.sdk.http import Request
 from ufo.sdk.o11y import log, warn
+from ufo.sdk.seats import workspace_domain
 from ufo.sdk.surfaces import (
     ATTACHED_FILES_CLAUSE,
     inbox_name,
@@ -133,6 +134,9 @@ from ufo_ext_matrix.since import read_since, write_since
 BOTS_ENV = "UFO_MATRIX_BOTS"
 HOMESERVER_SLOT = "matrix_homeserver"
 TOKEN_SLOT = "matrix_access_token"
+TOPOLOGY_SLOT = "matrix_topology"
+OWN_TOPOLOGY = "own"
+SHARED_TOPOLOGY = "shared"
 IDLE_SECONDS = 30.0
 BACKOFF_SECONDS = (1.0, 2.0, 5.0, 15.0, 30.0, 60.0)
 AMBIENT_CONTEXT_LINES = 10
@@ -639,7 +643,8 @@ class MatrixSurface:
 
     async def connect(self, ctx: ToolContext, _args: ConnectInput) -> ToolResult:
         """Bind the workspace's bot to this workspace: ask the homeserver whose token the slot
-        holds, and make that MXID the installation the listener routes by."""
+        holds, and make that MXID the installation the listener routes by — unless that homeserver's
+        name would have it vouch for members it has no standing to vouch for (`collision`)."""
         ext = ctx.ext
         if ext is None:
             raise RuntimeError("matrix_connect dispatched without its ExtensionContext")
@@ -655,6 +660,9 @@ class MatrixSurface:
             return _said(f"The homeserver refused the bot's token: {error}.", error=True)
         except httpx.HTTPError as error:
             return _said(f"The homeserver did not answer: {type(error).__name__}.", error=True)
+        refused = await self.collision(ext, bot)
+        if refused is not None:
+            return refused
         try:
             await ext.installations.bind(SURFACE, bot)
         except SurfaceInstallationConflict:
@@ -664,6 +672,40 @@ class MatrixSurface:
             "It is listening." if listed else f"It listens once the deploy's {BOTS_ENV} names it."
         )
         return _said(f"Connected {bot}. {tail}")
+
+    async def collision(self, ext: Any, bot: str) -> ToolResult | None:
+        """The refusal a bot earns when its homeserver's server name is the workspace's own domain
+        and the deploy has not declared that homeserver the workspace's own.
+
+        The name is read from the bot's MXID, which the homeserver's `server_name` issued, and never
+        from the URL the slot holds. Where it equals the domain, `Roster` takes every MXID that
+        homeserver registers for a member on first contact: right for a homeserver serving this
+        workspace alone, and a stranger's way in on one serving anybody else. The name cannot tell
+        the two apart, so `matrix_topology` does — `own` connects, anything else is refused, and an
+        empty slot asks to be filled. Any other server name, and a workspace with no domain of its
+        own, never reach the rule, and the slot goes unread."""
+        server = _server(bot)
+        async with ext.transaction() as connection:
+            domain = await workspace_domain(connection, ext.workspace_id)
+        if domain is None or server != domain:
+            return None
+        try:
+            topology = await ext.credentials.get(TOPOLOGY_SLOT)
+        except CredentialSlotUnset:
+            return _said(
+                f"{server} is both this homeserver's name and this workspace's domain, so everyone "
+                f"it registers would be a member on first contact. Fill {TOPOLOGY_SLOT} — "
+                f"{OWN_TOPOLOGY} if the homeserver serves this workspace alone, {SHARED_TOPOLOGY} "
+                "if it serves anyone else — then connect again."
+            )
+        if topology.strip().lower() == OWN_TOPOLOGY:
+            return None
+        return _said(
+            f"{bot} is on a homeserver shared beyond this workspace, and its name {server} is this "
+            "workspace's domain, so anyone who registers there would be a member on first contact. "
+            "Connect a bot on a homeserver with another name.",
+            error=True,
+        )
 
 
 @dataclass

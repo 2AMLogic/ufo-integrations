@@ -1,4 +1,4 @@
-"""What the matrix extension declares: one durable surface, the two credential slots its bot needs,
+"""What the matrix extension declares: one durable surface, the credential slots its bot needs,
 the setup action that binds that bot to a workspace, the skill that walks an admin through it, and
 the two tools that link and unlink a member's MXID.
 
@@ -21,9 +21,11 @@ That is why `requires` is empty while a sibling extension names a seam it cannot
 `requires` names one of four seams another extension serves — `cdp_providers`, `context_boundaries`,
 `memory_search`, `search_providers` — and matrix consumes none of them; a credential slot is not a
 seam and cannot be spelled as one. The "would a deploy refuse to boot without this" instinct still
-has an answer, and it is `deploy_keys`, which matrix already carries for `MATRIX_BOTS`. The three
-credential slots are a different thing again: per-workspace values, read per request, filled by
-`matrix_connect` in chat.
+has an answer, and it is `deploy_keys`, which matrix already carries for `MATRIX_BOTS`. The four
+credential slots are a different thing again: per-workspace values, read per request, filled in chat
+ahead of `matrix_connect`. `matrix_topology` is the one that is a declaration rather than a secret:
+whether the homeserver serves this workspace alone, which `matrix_connect` reads only where the
+homeserver's name is the workspace's own domain.
 
 In an encrypted room the bot's device decrypts what it is sent and encrypts what it posts; its keys
 live in the extension's own table, sealed under the `matrix_store_key` slot. An edit and a redaction
@@ -40,7 +42,10 @@ from ufo_ext_matrix.events import SURFACE
 from ufo_ext_matrix.linking import CLAIM_MINUTES, LinkInput, UnlinkInput
 from ufo_ext_matrix.surface import (
     HOMESERVER_SLOT,
+    OWN_TOPOLOGY,
+    SHARED_TOPOLOGY,
     TOKEN_SLOT,
+    TOPOLOGY_SLOT,
     ConnectInput,
     MatrixSurface,
     refuse_requests,
@@ -86,6 +91,15 @@ def manifest(surface: MatrixSurface | None = None) -> Manifest:
                     "At least 32 random characters that seal the Matrix bot's end-to-end "
                     "encryption keys at rest. Empty, the bot neither reads nor posts in encrypted "
                     "rooms; changed, it loses the keys sealed under the old value."
+                ),
+            ),
+            CredentialSlot(
+                name=TOPOLOGY_SLOT,
+                description=(
+                    f"{OWN_TOPOLOGY!r} when the Matrix homeserver serves this workspace alone, "
+                    f"{SHARED_TOPOLOGY!r} when it serves anyone else. Read only where the "
+                    "homeserver's server name is this workspace's domain, and there a bot on a "
+                    f"homeserver not declared {OWN_TOPOLOGY!r} is refused."
                 ),
             ),
         ),
