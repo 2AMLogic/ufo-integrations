@@ -160,6 +160,23 @@
 # unverifiable LEASE comment is common (predates the lease feature, a
 # transient `gh` hiccup) and blocking on it would strand legitimate sweeps.
 #
+# ONE answer is outside that contract entirely, and is the single exception
+# to the "every code other than `1` is a collision" rule: a `loom-daemon`
+# that PREDATES the verb never runs the probe at all. It answers clap's
+# `error: unrecognized subcommand 'check-branch'` on stderr with exit `2`,
+# which says nothing whatsoever about `origin` -- there is no failed probe
+# to fail closed on, only a binary that was asked a question it does not
+# know. Reading that as a collision aborted every push on every issue on
+# such a host (Issue #152: `loom-daemon` 0.19.563 against a fence script
+# resynced from a newer `defaults/`), which trained workers to treat
+# `ABORT: BRANCH_COLLISION` as routine noise to verify around by hand --
+# the exact disposition that makes the fence useless against a REAL
+# collision. That signature -- exit `2` AND clap's own "unrecognized
+# subcommand" text -- is therefore reported as a SKIPPED leg (warning on
+# stderr, `check` continues to the lease logic), not as an abort. Nothing
+# else moves: `0`, `5`, a missing binary (exit `127`), and any other
+# non-`1` code all still abort exactly as before.
+#
 # Before asking the daemon, the check first looks at THIS worktree's own
 # push-tracking state: if `feature/issue-<N>` already has an `origin`
 # upstream configured locally (this exact worktree already ran `git push -u`
@@ -375,11 +392,14 @@ parse_lease_yield_marker_line() {
 # (exit 5, BRANCH_COLLISION) when `feature/issue-<issue>` already exists on
 # `origin` and this worktree never pushed it itself. Returns (does not exit)
 # on every other outcome, so the caller proceeds to the lease-fencing logic
-# below exactly as before this check existed.
+# below exactly as before this check existed. A `loom-daemon` that predates
+# the `forge check-branch` verb leaves the leg unrun: it warns and returns,
+# rather than treating clap's rejection as a collision (#152).
 #
 # See this script's own header doc, "Branch-collision hard stop", for the
-# fail-closed-vs-fail-open asymmetry with the lease checks below and why the
-# local upstream-tracking probe is the "did THIS claim create it" signal.
+# fail-closed-vs-fail-open asymmetry with the lease checks below, why the
+# missing-verb answer is the one exception to it, and why the local
+# upstream-tracking probe is the "did THIS claim create it" signal.
 check_branch_collision() {
     local issue="$1"
 
@@ -399,6 +419,22 @@ check_branch_collision() {
     branch_out="$("${LOOM_DAEMON_BIN:-loom-daemon}" forge check-branch "$issue" 2>&1)"
     branch_rc=$?
     set -e
+
+    # requires-daemon: forge optional   Without the `check-branch` verb the probe never runs and this ONE leg is skipped with a warning (#152); every answer the verb itself gives still fails closed below.
+    #
+    # A binary predating the verb is NOT a probe failure: clap rejected the
+    # command line before any `git ls-remote` happened, so the answer carries
+    # no information about `origin` at all -- unlike `5`, which means the
+    # probe ran and could not answer. Matched on the signature that build
+    # actually emits (verified against loom-daemon 0.19.563: exit `2`,
+    # "error: unrecognized subcommand 'check-branch'" on stderr), never on
+    # the exit code alone -- clap spends `2` on ordinary usage errors too.
+    # Skipping the leg here restores the lease checks below; failing closed
+    # here aborted every push on the host instead (#152, see header doc).
+    if [[ "$branch_rc" -eq 2 && "$branch_out" == *"unrecognized subcommand"* ]]; then
+        echo "WARN: branch-collision check SKIPPED -- '${LOOM_DAEMON_BIN:-loom-daemon}' predates 'forge check-branch' (#9453 Phase 4), so the probe never ran and origin was never consulted (exit ${branch_rc}: ${branch_out}). Proceeding to the lease checks WITHOUT this leg. Confirm by hand before pushing if this claim may be racing a peer: git ls-remote --heads origin feature/issue-${issue}. Restore the check by rolling this host's daemon: .loom/scripts/cli/loom-daemon-update.sh --fetch" >&2
+        return 0
+    fi
 
     # Mirrors `forge check-branch`'s own contract: exactly `1` is the only
     # verified-safe answer. Every other code -- `0` (confirmed collision),

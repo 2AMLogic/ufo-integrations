@@ -45,6 +45,12 @@
 #       fetched (#9453 Phase 4)
 #   (v) `forge check-branch` fails closed (exit 5) -> also ABORT
 #       BRANCH_COLLISION -- unlike the lease checks, this leg fails CLOSED
+#   (w) a `loom-daemon` predating the verb (clap's "unrecognized subcommand"
+#       on stderr, exit 2) -> the leg is SKIPPED with a warning and `check`
+#       continues into the lease logic, never BRANCH_COLLISION (#152)
+#   (w2) exit 2 WITHOUT that message (an ordinary usage error, from a daemon
+#       that does have the verb) -> still ABORT BRANCH_COLLISION: the skip is
+#       keyed on clap's message, not on the exit code alone
 #   (s) LOOM_REPO unset (the common case -- this script has no --repo CLI
 #       flag) leaves `repo_args` a genuinely empty array; expanding
 #       `"${repo_args[@]}"` unguarded there is an "unbound variable" under
@@ -523,6 +529,49 @@ echo "5" > "$STUB_DIR/check-branch-rc"
 LOOM_LEASE_FENCE_NOW="$NOW_EPOCH" run_script check 6309 --host studio-host
 assert_eq "5" "$RC" "(v) branch probe failure -> exit 5 (ABORT BRANCH_COLLISION, fail CLOSED)"
 assert_contains "$ERR" "BRANCH_COLLISION" "(v) stderr names the collision even though it is unverified"
+
+# --- (w) #152: a `loom-daemon` predating `forge check-branch` -> the leg is
+# SKIPPED, not aborted. This stand-in reproduces exactly what loom-daemon
+# 0.19.563 prints for the verb (clap's "unrecognized subcommand" on stderr,
+# exit 2) and delegates every other verb to the trust stub, so the run
+# continues into the lease logic the same way a real pre-verb binary does.
+cat > "$STUB_DIR/loom-daemon-pre-check-branch" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-}" == "forge check-branch" ]]; then
+  echo "error: unrecognized subcommand 'check-branch'" >&2
+  echo "" >&2
+  echo "  tip: some similar subcommands exist: 'check-open-pr', 'check-claim'" >&2
+  exit 2
+fi
+exec "${LOOM_TEST_TRUST_STUB:?stub: LOOM_TEST_TRUST_STUB not set}" "$@"
+STUB
+chmod +x "$STUB_DIR/loom-daemon-pre-check-branch"
+export LOOM_TEST_TRUST_STUB="$STUB_DIR/loom-daemon"
+
+reset_state
+: > "$STUB_DIR/api-paths.log"
+cat > "$STUB_DIR/comments.json" <<'JSON'
+[{"id": 1, "updated_at": "2026-08-15T15:50:00Z", "body": "<!-- loom:lease host=studio-host sweep=sweep-a -->\nprose"}]
+JSON
+LOOM_DAEMON_BIN="$STUB_DIR/loom-daemon-pre-check-branch" \
+    LOOM_LEASE_FENCE_NOW="$NOW_EPOCH" run_script check 6309 --host studio-host
+export LOOM_DAEMON_BIN="$STUB_DIR/loom-daemon"
+assert_eq "0" "$RC" "(w) daemon predating 'forge check-branch' -> exit 0 (leg SKIPPED, never BRANCH_COLLISION)"
+assert_contains "$ERR" "branch-collision check SKIPPED" "(w) stderr reports the skipped leg"
+assert_contains "$ERR" "predates 'forge check-branch'" "(w) stderr names why the probe is unavailable"
+assert_contains "$ERR" "git ls-remote --heads origin feature/issue-6309" "(w) stderr hands over the by-hand check the leg would have done"
+assert_contains "$ERR" "lease fence OK" "(w) the lease checks still ran after the skip"
+assert_contains "$(cat "$STUB_DIR/api-paths.log" 2>/dev/null || true)" "issues/6309/comments" "(w) the lease-comment fetch ran -- the skip does not short-circuit the rest of check"
+
+# --- (w2) #152: the skip is keyed on clap's MESSAGE, not on exit 2 alone. A
+# probe that exits 2 for any other reason (an ordinary usage error) is still
+# an unusable answer from a daemon that HAS the verb -> ABORT, fail CLOSED.
+reset_state
+echo "2" > "$STUB_DIR/check-branch-rc"
+echo "error: unexpected argument '--nope' found" > "$STUB_DIR/check-branch-stdout"
+LOOM_LEASE_FENCE_NOW="$NOW_EPOCH" run_script check 6309 --host studio-host
+assert_eq "5" "$RC" "(w2) exit 2 WITHOUT clap's unrecognized-subcommand text -> exit 5 (ABORT, fail CLOSED)"
+assert_contains "$ERR" "BRANCH_COLLISION" "(w2) stderr names the collision rather than a skipped leg"
 
 echo ""
 echo "Results: $TESTS_PASSED/$TESTS_RUN passed"

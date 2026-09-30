@@ -1,0 +1,17 @@
+# .loom/resync-ignore -- paths this repo owns. `resync-installed.sh` and the
+# installer report them as `skipped` and never overwrite or delete them.
+#
+# Both entries below carry one change, the #152 fix: sweep-lease-fence.sh's
+# branch-collision leg reads clap's "unrecognized subcommand 'check-branch'"
+# (exit 2, a loom-daemon predating the verb -- 0.19.563 on the current
+# workers) as "probe unavailable" and skips the leg with a warning, instead of
+# reading it as a confirmed collision and aborting every push. Upstream
+# (rjwalters/loom defaults/scripts/) still fails closed on that answer, so
+# without the pin the next `chore: resync installed Loom surfaces` reverts the
+# fix and BRANCH_COLLISION fires on every issue again.
+#
+# The pin is a holding action: it also freezes these files against upstream
+# fixes to the fence. Retire both entries once the same degradation lands
+# upstream -- tracked in #153.
+scripts/sweep-lease-fence.sh
+scripts/tests/test-sweep-lease-fence.sh
