@@ -11,8 +11,11 @@ however often its answer is delivered, and a turn that runs shows the room that 
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
 import pytest
 
@@ -20,6 +23,7 @@ pytest.importorskip("ufo", reason="install ufo from git to run the surface tests
 
 import httpx  # noqa: E402
 import sqlalchemy as sa  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine  # noqa: E402
 
 from matrix_fakes import (  # noqa: E402
     ALICE,
@@ -48,6 +52,8 @@ from matrix_fakes import (  # noqa: E402
     text,
 )
 from ufo.runtime.turns.audience import SHARED_AUDIENCE  # noqa: E402
+from ufo.schema import tables  # noqa: E402
+from ufo.sdk.tools import ToolResult  # noqa: E402
 from ufo.sdk.audience import foreign_room_audience, room_audience  # noqa: E402
 from ufo.sdk.hub import Activity  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
@@ -94,6 +100,7 @@ from ufo_ext_matrix.surface import (  # noqa: E402
     IDLE_SECONDS,
     REPORT_LINK_TEXT,
     TOKEN_SLOT,
+    TOPOLOGY_SLOT,
     ConnectInput,
     FleetOwnershipLost,
     Installation,
@@ -773,10 +780,42 @@ class Installations:
             self.bound.append(pair)
 
 
+MEMBERS = sa.MetaData()
+sa.Table("workspace", MEMBERS, sa.Column("id", sa.Uuid(), primary_key=True))
+tables.member.to_metadata(MEMBERS)
+
+
 @dataclass
 class Ext:
+    """The extension context a tool reaches. Its transaction holds core's own member table seeded
+    with the workspace's founder, so the domain `matrix_connect` reads is core's rule over that row:
+    a founder at `bob@acme.example` gives the domain `acme.example`, and no founder gives none."""
+
     credentials: Credentials
     installations: Installations = field(default_factory=Installations)
+    founder: str | None = None
+    workspace_id: UUID = field(default_factory=uuid4)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[AsyncConnection]:
+        engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(MEMBERS.create_all)
+                if self.founder is not None:
+                    now = datetime.now(UTC)
+                    await connection.execute(
+                        sa.insert(tables.member).values(
+                            id=uuid4(),
+                            workspace_id=self.workspace_id,
+                            email=self.founder,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                yield connection
+        finally:
+            await engine.dispose()
 
 
 @dataclass
@@ -784,8 +823,8 @@ class Tool:
     ext: Ext
 
 
-def connecting(values: dict[str, str], *, taken: bool = False) -> Tool:
-    return Tool(Ext(Credentials(values), Installations(taken=taken)))
+def connecting(values: dict[str, str], *, taken: bool = False, founder: str | None = None) -> Tool:
+    return Tool(Ext(Credentials(values), Installations(taken=taken), founder=founder))
 
 
 def test_connect_binds_the_bot_the_token_belongs_to() -> None:
@@ -843,6 +882,128 @@ def test_connect_again_in_the_same_workspace_replaces_the_binding() -> None:
     first = asyncio.run(surface.connect(tool, ConnectInput()))  # type: ignore[arg-type]
     second = asyncio.run(surface.connect(tool, ConnectInput()))  # type: ignore[arg-type]
     assert not first.is_error and not second.is_error
+    assert tool.ext.installations.bound == [("matrix", BOT)]
+
+
+FOUNDER = "founder@example.org"
+
+
+def connected(tool: Tool) -> tuple[ToolResult, Homeserver]:
+    server = Homeserver()
+    surface = MatrixSurface(transport=server.transport, environ={"UFO_MATRIX_BOTS": BOT})
+    return asyncio.run(surface.connect(tool, ConnectInput())), server  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("declared", ["own", " Own "])
+def test_connect_on_a_homeserver_declared_own_binds_as_it_always_did(declared: str) -> None:
+    """The case vouching was written for: the bot's server name is the workspace's domain, and the
+    deploy says the homeserver serves this workspace alone. The answer, the binding, and what went
+    over the wire are those of a workspace that never reached the rule."""
+    slots = {HOMESERVER_SLOT: "https://matrix.example.org", TOKEN_SLOT: TOKEN}
+    owned, owned_server = connected(connecting({**slots, TOPOLOGY_SLOT: declared}, founder=FOUNDER))
+    plain, plain_server = connected(connecting(slots))
+    assert not owned.is_error
+    assert said(owned) == said(plain) == f"Connected {BOT}. It is listening."
+    assert owned.content == plain.content
+    assert [r.url.path for r in owned_server.requests] == [
+        r.url.path for r in plain_server.requests
+    ]
+
+
+def test_connect_on_a_shared_homeserver_named_otherwise_binds() -> None:
+    """A shared homeserver whose name is not the workspace's domain vouches for nobody here, so
+    there is nothing to refuse."""
+    tool = connecting(
+        {
+            HOMESERVER_SLOT: "https://matrix.example.org",
+            TOKEN_SLOT: TOKEN,
+            TOPOLOGY_SLOT: "shared",
+        },
+        founder="founder@acme.example",
+    )
+    result, _ = connected(tool)
+    assert not result.is_error
+    assert said(result) == f"Connected {BOT}. It is listening."
+    assert tool.ext.installations.bound == [("matrix", BOT)]
+
+
+@pytest.mark.parametrize("declared", ["shared", "mainstream"])
+def test_connect_refuses_a_shared_homeserver_named_for_the_workspace_domain(
+    declared: str,
+) -> None:
+    """Anyone who registers on a homeserver serving other people picks a localpart and would be a
+    member of this workspace on first contact. The refusal names the bot and the name the two share
+    — both this workspace's own — and nothing about who else the homeserver serves."""
+    tool = connecting(
+        {
+            HOMESERVER_SLOT: "https://matrix.example.org",
+            TOKEN_SLOT: TOKEN,
+            TOPOLOGY_SLOT: declared,
+        },
+        founder=FOUNDER,
+    )
+    result, _ = connected(tool)
+    assert result.is_error
+    assert said(result) == (
+        f"{BOT} is on a homeserver shared beyond this workspace, and its name example.org is "
+        "this workspace's domain, so anyone who registers there would be a member on first "
+        "contact. Connect a bot on a homeserver with another name."
+    )
+    assert tool.ext.installations.bound == []
+
+
+def test_connect_asks_for_the_topology_where_the_names_collide() -> None:
+    """Where the bot's server name is the workspace's domain, whether that homeserver serves this
+    workspace alone is the one thing that decides whether its users are members, so an undeclared
+    homeserver binds nothing and the answer names the slot and its two values."""
+    tool = connecting(
+        {HOMESERVER_SLOT: "https://matrix.example.org", TOKEN_SLOT: TOKEN}, founder=FOUNDER
+    )
+    result, _ = connected(tool)
+    assert not result.is_error
+    answer = said(result)
+    assert TOPOLOGY_SLOT in answer and "own" in answer and "shared" in answer
+    assert tool.ext.installations.bound == []
+
+
+@pytest.mark.parametrize(
+    ("homeserver", "founder", "refused"),
+    [
+        ("https://matrix.acme.example", FOUNDER, True),
+        ("https://acme.example", "founder@acme.example", False),
+    ],
+)
+def test_the_collision_is_read_from_the_bot_and_never_from_the_url(
+    homeserver: str, founder: str, refused: bool
+) -> None:
+    """The bot is `@ufo:example.org` whatever URL reached its homeserver: the name after the colon
+    is what the homeserver's `server_name` issued, and it is what vouching compares."""
+    tool = connecting(
+        {HOMESERVER_SLOT: homeserver, TOKEN_SLOT: TOKEN, TOPOLOGY_SLOT: "shared"},
+        founder=founder,
+    )
+    result, _ = connected(tool)
+    assert result.is_error is refused
+    assert tool.ext.installations.bound == ([] if refused else [("matrix", BOT)])
+
+
+@pytest.mark.parametrize("personal", [False, True])
+def test_a_workspace_with_no_domain_of_its_own_is_never_refused(personal: bool) -> None:
+    """No founder, or a personal-mail founder whose exact address keys the workspace, leaves it no
+    domain — core's rule, read through core's own member table — and a workspace with no domain
+    vouches for nobody, whatever the homeserver is declared."""
+    tool = connecting(
+        {
+            HOMESERVER_SLOT: "https://matrix.example.org",
+            TOKEN_SLOT: TOKEN,
+            TOPOLOGY_SLOT: "shared",
+        },
+        founder=FOUNDER if personal else None,
+    )
+    if personal:
+        tool.ext.workspace_id = uuid5(NAMESPACE_DNS, FOUNDER)
+    result, _ = connected(tool)
+    assert not result.is_error
     assert tool.ext.installations.bound == [("matrix", BOT)]
 
 

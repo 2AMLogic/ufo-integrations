@@ -128,6 +128,11 @@ its own homeserver decides who registers on it and can hold its usernames to mai
 shared with other ufo users is one whose registrations somebody else decides — so a workspace there
 takes a domain of its own, or none, and never the shared server's name.
 
+The deploy declares its mode in the `matrix_topology` slot: `own` for a homeserver serving this
+workspace alone, `shared` for any other. `matrix_connect` reads it only where the bot's server name
+is the workspace's domain, and there it binds an `own` homeserver, refuses any other, and asks for
+the slot when it is empty — so a shared server's name reaches no workspace's vouching unannounced.
+
 A workspace with no domain of its own vouches for nobody, whichever homeserver it uses.
 
 Federation is what a member elsewhere crosses. A room reaches the bot only where the two homeservers
@@ -275,6 +280,7 @@ narrowing, and [`pulse`](../pulse/README.md#install) carries the pack files such
 | `matrix_homeserver` | Workspace credential slot | The homeserver's base URL, e.g. `https://matrix.example.org` |
 | `matrix_access_token` | Workspace credential slot | The bot user's access token |
 | `matrix_store_key` | Workspace credential slot | At least 32 random characters sealing the bot's encryption keys, e.g. `openssl rand -base64 32` |
+| `matrix_topology` | Workspace credential slot | `own` when the homeserver serves this workspace alone, `shared` otherwise |
 
 ## Connect
 
@@ -285,7 +291,7 @@ order of the steps.
 | Step | In chat |
 | --- | --- |
 | The two slots | The agent calls core's `request_credentials` for `matrix_homeserver` and `matrix_access_token`, so the token is filled where the transcript cannot see it |
-| Connect | `GET /_matrix/client/v3/account/whoami` names the bot the token belongs to, and that MXID is bound as the workspace's installation |
+| Connect | `GET /_matrix/client/v3/account/whoami` names the bot the token belongs to, and that MXID is bound as the workspace's installation unless its server name is the workspace's domain on a homeserver `matrix_topology` does not declare `own` |
 | Invite | A workspace member invites the bot to a room and it joins itself, as does an MXID a member is proving; an invitation from anyone else is left standing |
 
 **A deploy is not connected until `matrix_connect` has run in chat.** Filled credential slots and a
@@ -356,8 +362,8 @@ workspace's to know.
 - **An unconfigured deploy boots, and answers nothing.** `requires` is empty because matrix consumes
   no seam another extension serves — a credential slot is not one of the four seams `requires` can
   name. The deploy-refuses-to-boot instinct is `deploy_keys`, already carried here for
-  `MATRIX_BOTS`; the three credential slots are per-workspace values instead, filled by
-  `matrix_connect` in chat.
+  `MATRIX_BOTS`; the four credential slots are per-workspace values instead, filled in chat ahead of
+  `matrix_connect`.
 - **An event that will not decrypt is a dropped event.** A plaintext that does not read as a Matrix
   event is logged as `matrix.undecryptable` with its error class and skipped. It is never retried
   into a stalled stream, so one malformed sender cannot silence a bot.

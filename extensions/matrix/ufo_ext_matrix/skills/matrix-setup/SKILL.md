@@ -24,6 +24,7 @@ readers receive the same stream, and each treats the other's messages as its own
 | `matrix_homeserver` | The homeserver's base URL, e.g. `https://matrix.example.org` | Every room |
 | `matrix_access_token` | The bot account's access token | Every room |
 | `matrix_store_key` | At least 32 random characters, e.g. from `openssl rand -base64 32` | An encrypted room |
+| `matrix_topology` | `own` if the homeserver serves this workspace alone, `shared` if it serves anyone else | A homeserver whose server name is the workspace's domain |
 
 Call `request_credentials` for them. The admin fills them where the transcript cannot see them, so
 neither the token nor the store key is ever typed into the conversation or repeated back.
@@ -48,6 +49,12 @@ agent: Connected @ufo:example.org. It is listening.
 A bot another workspace already holds is refused by name: that MXID belongs elsewhere, and which
 workspace holds it is not this workspace's to know. Register a separate account for this workspace's
 agent and connect that one.
+
+A bot whose server name — the part of its MXID after the colon — is the workspace's own domain is
+bound only on a homeserver `matrix_topology` declares `own`. Its users are members on first contact,
+which is sound where the workspace decides who registers there and a stranger's way in where anybody
+else does. Empty, the slot is asked for; `shared`, the connect is refused, and the way through is a
+bot on a homeserver with another name.
 
 ## Then invite it
 
