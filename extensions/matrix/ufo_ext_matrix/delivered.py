@@ -19,6 +19,8 @@ from typing import Protocol
 from uuid import UUID
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 DELIVERED_TABLE = sa.Table(
@@ -61,14 +63,24 @@ async def read_delivered(ctx: Transactional, event_id: str) -> tuple[str, str] |
 
 async def write_delivered(ctx: Transactional, event_id: str, rel: str, blob_key: str) -> None:
     """Record where this event's file landed. Written after the delivery core accepted, so a row
-    stands for a file that is on disk rather than one that was about to be."""
+    stands for a file that is on disk rather than one that was about to be.
+
+    A second write for one event leaves the first row standing. The row exists to say the work is
+    done, so an insert that says it twice is that same answer arriving twice — and the alternative
+    is a database error the delivery guard re-raises, which parks the stream on the room whose file
+    already landed."""
     async with ctx.transaction() as connection:
+        insert = postgres_insert if connection.dialect.name == "postgresql" else sqlite_insert
         await connection.execute(
-            sa.insert(DELIVERED_TABLE).values(
+            insert(DELIVERED_TABLE)
+            .values(
                 workspace_id=ctx.workspace_id,
                 event_id=event_id,
                 rel=rel,
                 blob_key=blob_key,
                 created_at=sa.func.now(),
+            )
+            .on_conflict_do_nothing(
+                index_elements=[DELIVERED_TABLE.c.workspace_id, DELIVERED_TABLE.c.event_id]
             )
         )
