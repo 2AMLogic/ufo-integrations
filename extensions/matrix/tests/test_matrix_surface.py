@@ -71,6 +71,7 @@ from ufo.sdk.surfaces import (  # noqa: E402
 from ufo_ext_matrix.answering import Answering, read_answering  # noqa: E402
 from ufo_ext_matrix.client import MatrixClient, MatrixError  # noqa: E402
 from ufo_ext_matrix.asking import Asking, read_asking, write_asking  # noqa: E402
+from ufo_ext_matrix.delivered import read_delivered, write_delivered  # noqa: E402
 from ufo_ext_matrix.events import (  # noqa: E402
     RoomFile,
     POLL_START_TYPE,
@@ -2013,3 +2014,17 @@ async def test_a_second_file_after_a_replay_is_still_numbered(workspace: Workspa
         "uploads/chart.png",
         "uploads/chart-1.png",
     ]
+
+
+@on_loop
+async def test_a_second_delivered_row_for_one_event_leaves_the_first_standing(
+    workspace: Workspace,
+) -> None:
+    """`read_delivered` answers the replay before `write_delivered` is reached, so a second write
+    for one event is what a path that missed that answer would do. The row says the file landed, so
+    the insert says it again and changes nothing — where a raise would be a database error the
+    delivery guard re-raises, parking the stream over a row that already holds the answer."""
+    await write_delivered(workspace, "$r1", "uploads/chart.png", "artifacts/one")
+    await write_delivered(workspace, "$r1", "uploads/chart-1.png", "artifacts/two")
+
+    assert await read_delivered(workspace, "$r1") == ("uploads/chart.png", "artifacts/one")
