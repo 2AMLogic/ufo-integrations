@@ -12,17 +12,23 @@ import asyncio
 import functools
 import inspect
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Self
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
 pytest.importorskip("ufo", reason="install ufo from git to run the integration tests")
 
 from matrix_fakes import Credentials, Workspace, extension_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine  # noqa: E402
+from ufo.schema import tables  # noqa: E402
 from ufo.sdk.surfaces import (  # noqa: E402
     MidTurnReply,
     SharedArtifact,
@@ -36,6 +42,7 @@ from ufo_ext_matrix.messages import reply_relation  # noqa: E402
 from ufo_ext_matrix.surface import (  # noqa: E402
     HOMESERVER_SLOT,
     TOKEN_SLOT,
+    TOPOLOGY_SLOT,
     ConnectInput,
     MatrixSurface,
 )
@@ -178,10 +185,42 @@ class Installations:
         self.bound.append((surface, installation_id))
 
 
+MEMBERS = sa.MetaData()
+sa.Table("workspace", MEMBERS, sa.Column("id", sa.Uuid(), primary_key=True))
+tables.member.to_metadata(MEMBERS)
+
+
 @dataclass
 class Ext:
+    """The extension context a tool reaches. Its transaction runs over the test's engine with core's
+    own member table beside the extension's, so the domain `matrix_connect` reads is core's rule
+    over whatever founder `found` seated there, and a workspace with no founder has none."""
+
+    engine: AsyncEngine
     credentials: Credentials
     installations: Installations
+    workspace_id: UUID = field(default_factory=uuid4)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[AsyncConnection]:
+        async with self.engine.begin() as connection:
+            await connection.run_sync(MEMBERS.create_all)
+            yield connection
+
+
+async def found(ext: Ext, email: str) -> None:
+    """Seat `email` as the workspace's founder, whose address gives the workspace its domain."""
+    async with ext.transaction() as connection:
+        now = datetime.now(UTC)
+        await connection.execute(
+            sa.insert(tables.member).values(
+                id=uuid4(),
+                workspace_id=ext.workspace_id,
+                email=email,
+                created_at=now,
+                updated_at=now,
+            )
+        )
 
 
 @dataclass
@@ -243,18 +282,45 @@ def shared(filename: str, media_type: str, body: bytes) -> SharedArtifact:
 async def test_connect_binds_the_bot_the_token_belongs_to(engine: Any, homes: Homes) -> None:
     surface = MatrixSurface(environ={})
     installations = Installations(registry={})
-    tool = Tool(
-        Ext(Credentials({HOMESERVER_SLOT: HOMESERVER, TOKEN_SLOT: homes.bot[1]}), installations)
-    )
+    slots = {HOMESERVER_SLOT: HOMESERVER, TOKEN_SLOT: homes.bot[1]}
+    tool = Tool(Ext(engine, Credentials(slots), installations))
     result = await surface.connect(tool, ConnectInput())  # type: ignore[arg-type]
     assert not result.is_error
     assert installations.bound == [("matrix", homes.bot[0])]
 
-    taken = Tool(
-        Ext(Credentials({HOMESERVER_SLOT: HOMESERVER, TOKEN_SLOT: homes.bot[1]}), installations)
-    )
+    taken = Tool(Ext(engine, Credentials(slots), installations))
     again = await surface.connect(taken, ConnectInput())  # type: ignore[arg-type]
     assert again.is_error and "another workspace" in again.content[0].text  # type: ignore[index]
+
+
+@on_loop
+async def test_connect_weighs_the_homeserver_named_for_the_workspace_domain(
+    engine: Any, homes: Homes
+) -> None:
+    """A founder at the homeserver's own `server_name` gives the workspace that name for its domain.
+    The live bot on it is refused while the homeserver is declared `shared`, binding nothing, and
+    binds once it is declared `own`."""
+    server = homes.bot[0].partition(":")[2]
+    surface = MatrixSurface(environ={})
+    installations = Installations(registry={})
+    workspace_id = uuid4()
+    slots = {HOMESERVER_SLOT: HOMESERVER, TOKEN_SLOT: homes.bot[1]}
+
+    shared_tool = Tool(
+        Ext(engine, Credentials({**slots, TOPOLOGY_SLOT: "shared"}), installations, workspace_id)
+    )
+    await found(shared_tool.ext, f"founder@{server}")
+    refused = await surface.connect(shared_tool, ConnectInput())  # type: ignore[arg-type]
+    assert refused.is_error
+    assert f"its name {server} is this workspace's domain" in refused.content[0].text  # type: ignore[index]
+    assert installations.bound == []
+
+    own = Tool(
+        Ext(engine, Credentials({**slots, TOPOLOGY_SLOT: "own"}), installations, workspace_id)
+    )
+    bound = await surface.connect(own, ConnectInput())  # type: ignore[arg-type]
+    assert not bound.is_error
+    assert installations.bound == [("matrix", homes.bot[0])]
 
 
 @on_loop
