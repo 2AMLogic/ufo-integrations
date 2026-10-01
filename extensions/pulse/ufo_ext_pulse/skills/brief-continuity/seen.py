@@ -216,15 +216,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{seen}  {slug:<44}  {_title_of(args.series, slug)}")
         return 0
 
-    seen = last_seen(args.series).get(args.slug)
-    if seen is None:
+    last = last_seen(args.series).get(args.slug)
+    if last is None:
         print("never seen")
         return 1
     cutoff = (today - timedelta(days=args.within_days)).isoformat()
-    if seen < cutoff:
-        print(f"last seen {seen} — stale, do not pursue without a reason")
+    if last < cutoff:
+        print(f"last seen {last} — stale, do not pursue without a reason")
         return 1
-    print(f"last seen {seen} — live")
+    print(f"last seen {last} — live")
     return 0
 
 
