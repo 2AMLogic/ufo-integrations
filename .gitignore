@@ -2,6 +2,7 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
+.mypy_cache/
 pytest-report.xml
 old-report.xml
 # >>> loom-managed (do not edit) >>>

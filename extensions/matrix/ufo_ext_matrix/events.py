@@ -190,7 +190,8 @@ def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
     if not isinstance(event_id, str) or not isinstance(sender, str):
         return None
     url, sealed = content.get("url"), content.get("file")
-    plain = isinstance(url, str) and bool(url)
+    url = url if isinstance(url, str) else ""
+    plain = bool(url)
     encrypted = isinstance(sealed, Mapping)
     if plain == encrypted:
         return None
@@ -211,7 +212,7 @@ def room_file(room_id: str, event: Mapping[str, Any]) -> RoomFile | None:
         caption=body if isinstance(body, str) else filename,
         media_type=media_type if isinstance(media_type, str) else "",
         size_bytes=size if isinstance(size, int) and size >= 0 else 0,
-        url=url if plain else "",
+        url=url,
         sealed=sealed if encrypted else None,
         mentions=_mentions(content),
         thread_root=_thread_root(content),

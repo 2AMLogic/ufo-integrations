@@ -31,6 +31,9 @@ left one out — a gather armed against a time nobody supplied would fire at the
 a member's evening.
 """
 
+from typing import Final
+
+from ufo.sdk.context import JsonValue
 from ufo.sdk.manifest import AgentProvision, AgentSetup, AgentSpec
 
 AGENT_NAME = "pulse"
@@ -43,8 +46,9 @@ AGENT_PURPOSE = "Follows a field you name and writes you a brief on what changed
 AGENT_MODEL = "auto"
 
 # Ranking a field's week against one business is the judgement the series exists for, and it is the
-# one step no script can hold: eligibility is a lookup, importance is not.
-AGENT_REASONING = "high"
+# one step no script can hold: eligibility is a lookup, importance is not. `Final` is what holds the
+# name to the literal, which is the spec's own reasoning-effort type and not a bare `str`.
+AGENT_REASONING: Final = "high"
 
 AGENT_PROMPT = """\
 You run field pulses. A pulse watches a domain and reports what changed in it for one business, as a
@@ -82,7 +86,7 @@ REQUEST_KEY = "request"
 BUSINESS_KEY = "business"
 LOCAL_TIME_KEY = "local_time"
 
-AGENT_INPUT_SCHEMA: dict[str, object] = {
+AGENT_INPUT_SCHEMA: dict[str, JsonValue] = {
     "type": "object",
     "properties": {
         REQUEST_KEY: {

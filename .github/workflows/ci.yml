@@ -57,6 +57,35 @@ jobs:
       - run: uv run --python 3.12 --with "ruff==0.16.9" ruff check .
       - run: uv run --python 3.12 --with "ruff==0.16.9" ruff format --check .
 
+  types:
+    name: mypy, at one pinned version
+    # No path filter, for the reason the job above carries none, and the version is exact for that
+    # job's reason too: mypy's inference and its default strictness both move across releases, so an
+    # unpinned lane answers a different question each week. The pin holds the binary; `[tool.mypy]`
+    # in pyproject.toml holds the checks.
+    #
+    # Two invocations, split by the dependency shape each package is written against — the same
+    # split the `registry` and `without-the-crypto-extra` jobs already draw. The matrix extension
+    # reaches vodozemac, so its lane installs `matrix-e2ee`; without it, `crypto.py` reports a
+    # missing stub for a module the lane simply did not install, which says nothing about the code.
+    # Pulse imports neither, so its lane installs neither and the absence is checked rather than
+    # assumed. Both carry `ufo` from git: an extension is type-checked against the SDK it loads at
+    # runtime, whose `py.typed` marker makes that surface checkable.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: The matrix extension, against ufo and the crypto extra
+        run: |
+          uv run --python 3.12 --extra matrix-e2ee --with "mypy==2.3.1" \
+            --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
+            mypy extensions/matrix/ufo_ext_matrix
+      - name: The pulse extension, against ufo alone
+        run: |
+          uv run --python 3.12 --with "mypy==2.3.1" \
+            --with "ufo @ git+https://github.com/ufo-ai/ufo-core@main" \
+            mypy extensions/pulse/ufo_ext_pulse
+
   lineage:
     name: one lineage across every open pull request
     # A revision id is an identity two branches assign independently, and the clash lives in their

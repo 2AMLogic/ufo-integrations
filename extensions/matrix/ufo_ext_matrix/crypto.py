@@ -215,7 +215,8 @@ def open_file(sealed: Mapping[str, Any], ciphertext: bytes) -> bytes:
     if not hmac.compare_digest(digest, hashlib.sha256(ciphertext).digest()):
         raise FileHashMismatch("the fetched bytes do not match the file's sha256")
     key = sealed.get("key")
-    named = key.get("alg") if isinstance(key, Mapping) else None
+    key = key if isinstance(key, Mapping) else {}
+    named = key.get("alg")
     if named != FILE_ALGORITHM:
         raise FileHashMismatch(f"the file names {named!r} rather than {FILE_ALGORITHM}")
     secret, iv = key.get("k"), sealed.get("iv")
@@ -417,10 +418,13 @@ class Device:
         }
 
     def _fallback_key(self) -> dict[str, Any]:
-        self.account.generate_fallback_key()
+        # vodozemac's `Account` carries both of these at runtime and declares neither in the stubs
+        # it ships, so the suppression is the stub gap and nothing else. `warn_unused_ignores` in
+        # `[tool.mypy]` turns each line red once a release declares them.
+        self.account.generate_fallback_key()  # type: ignore[attr-defined]
         return {
             f"{SIGNED_KEY}:{key_id}": self._signed({"key": key.to_base64(), "fallback": True})
-            for key_id, key in self.account.fallback_key.items()
+            for key_id, key in self.account.fallback_key.items()  # type: ignore[attr-defined]
         }
 
     async def _publish(self, keys: Mapping[str, Any], *, pool: int | None = None) -> None:
@@ -900,8 +904,8 @@ class Device:
         room_id = content.get("room_id")
         session_id = content.get("session_id")
         key = content.get("session_key")
-        if content.get("algorithm") != MEGOLM or not all(
-            isinstance(v, str) for v in (room_id, session_id, key)
+        if content.get("algorithm") != MEGOLM or not (
+            isinstance(room_id, str) and isinstance(session_id, str) and isinstance(key, str)
         ):
             return
         if forwarded:
