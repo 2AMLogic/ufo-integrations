@@ -19,7 +19,9 @@ Issues the operator starred (`loom:operator-priority`); land these first.
 
 Human-approved issues ready for implementation (`loom:issue`).
 
-_None._
+- **#158**: The transition-language ban is enforced for matrix only, and pulse already breaks it
+- **#159**: Skill directories are never compared to the manifest, so an unlisted skill ships unchecked
+- **#160**: Pulse skills are not held to the Not-for rule, and no test resolves metadata.depends
 
 ## In Progress
 
@@ -43,7 +45,7 @@ _None._
 
 Issues carrying `loom:curated`.
 
-- **#99**: Bot enrolment is deploy configuration, so a workspace that connects in chat waits for a restart *(curated)*
+_None._
 
 ## Proposed (Architect / Hermit)
 
@@ -59,11 +61,11 @@ _None._
 |------|-------|
 | Operator merge-risk holds | 0 |
 | Operator priority | 1 |
-| Ready (`loom:issue`) | 0 |
+| Ready (`loom:issue`) | 3 |
 | In Progress (`loom:building`) | 0 |
 | PRs awaiting review | 0 |
 | Approved PRs awaiting merge | 0 |
-| Curated | 1 |
+| Curated | 0 |
 | Architect / Hermit proposals | 0 |
 | Active epics | 0 |
 <!-- guide:plan-body:end -->
