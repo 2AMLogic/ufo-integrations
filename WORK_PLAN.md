@@ -1,6 +1,6 @@
 # Work Plan
 
-This backlog snapshot follows GitHub label state. Issue #99 requires an operator decision before implementation; its operator star does not grant approval.
+This backlog snapshot follows GitHub label state. Issue #99 is operator-starred but blocked on a released `ufo.sdk` bound-installation enumeration primitive; its operator star does not grant approval.
 
 <!-- guide:plan-body:start -->
 ## Operator Attention: Merge-Risk-Hold Pileup
