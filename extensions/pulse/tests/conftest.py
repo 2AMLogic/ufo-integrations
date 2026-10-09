@@ -9,13 +9,10 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "ufo_ext_pulse"
 SKILLS_ROOT = PACKAGE_ROOT / "skills"
-SKILL_NAMES = (
-    "pulse-handoff",
-    "field-pulse",
-    "field-report",
-    "brief-continuity",
-    "coverage-honesty",
-)
+SKILL_NAMES = tuple(sorted(path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")))
+"""Every skill on disk, keyed on `SKILL.md` rather than on the directory, since `brief-continuity`
+ships scripts beside its own. `test_the_manifest_declares_every_skill_on_disk` holds the manifest to
+this set, so a contract parametrized over it reaches every skill that ships."""
 
 
 @pytest.fixture
