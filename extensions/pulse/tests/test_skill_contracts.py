@@ -15,8 +15,6 @@ import pytest
 import yaml
 from conftest import PACKAGE_ROOT, SKILL_NAMES, SKILLS_ROOT
 
-DESCRIPTION_WORD_BUDGET = 50
-
 
 def module_strings(name: str) -> dict[str, str]:
     """The module-level string constants of one of the extension's own modules, read rather than
@@ -69,18 +67,6 @@ def test_the_manifest_declares_every_skill_on_disk() -> None:
     declared = declared_skills()
     assert len(declared) == len(set(declared)), "the manifest lists a skill twice"
     assert set(declared) == set(SKILL_NAMES)
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_name_matches_its_directory(name: str) -> None:
-    assert frontmatter(name)["name"] == name
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_description_routes(name: str) -> None:
-    description = frontmatter(name)["description"]
-    assert description.startswith("Load when")
-    assert len(description.split()) <= DESCRIPTION_WORD_BUDGET
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)

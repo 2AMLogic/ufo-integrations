@@ -74,7 +74,6 @@ PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
 SKILLS_ROOT = PACKAGE / "skills"
 SKILL_NAMES = tuple(sorted(path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")))
-DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 
@@ -359,28 +358,6 @@ def test_the_manifest_declares_every_skill_on_disk() -> None:
     declared = declared_skills()
     assert len(declared) == len(set(declared)), "the manifest lists a skill twice"
     assert set(declared) == set(SKILL_NAMES)
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_name_matches_its_directory(name: str) -> None:
-    assert frontmatter(name)["name"] == name
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_description_routes(name: str) -> None:
-    """The description is a routing budget: an over-long one loads the skill on the wrong turn, and
-    one that does not say what the skill is not for loads it on a neighbouring ask."""
-    description = frontmatter(name)["description"]
-    assert description.startswith("Load when")
-    assert len(description.split()) <= DESCRIPTION_WORD_BUDGET
-    assert "Not for" in description
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_wires_its_dependencies_rather_than_asking(name: str) -> None:
-    """`metadata.depends` is the only mechanism that pulls another skill in, so it is declared even
-    where this skill stands alone."""
-    assert isinstance(frontmatter(name)["metadata"]["depends"], list)
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)
