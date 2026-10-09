@@ -74,7 +74,7 @@ EXTENSION = Path(__file__).resolve().parents[1]
 PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
 SKILLS_ROOT = PACKAGE / "skills"
-SKILL_NAMES = ("matrix-setup",)
+SKILL_NAMES = tuple(sorted(path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")))
 DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
@@ -396,6 +396,35 @@ def frontmatter(name: str) -> dict:
     assert raw.startswith("---"), f"{name}: SKILL.md must open with ---"
     _, meta, _ = raw.split("---", 2)
     return yaml.safe_load(meta)
+
+
+def declared_skills() -> tuple[str, ...]:
+    """The manifest's `SKILL_NAMES`, read from its source for the reason `deploy_keys` is: this
+    suite installs no `ufo`, and the names are literals."""
+    tree = ast.parse((PACKAGE / "manifest.py").read_text())
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "SKILL_NAMES" for t in node.targets):
+            continue
+        assert isinstance(node.value, ast.Tuple), "the contract expects a literal tuple"
+        names = []
+        for element in node.value.elts:
+            assert isinstance(element, ast.Constant) and isinstance(element.value, str), (
+                "the contract expects literal skill names"
+            )
+            names.append(element.value)
+        return tuple(names)
+    raise AssertionError("the manifest declares no SKILL_NAMES")
+
+
+def test_the_manifest_declares_every_skill_on_disk() -> None:
+    """The skill contracts below reach every directory holding a `SKILL.md`; this holds the manifest
+    to the same set, so a skill on disk the manifest omits, or a name it lists with no directory,
+    fails here rather than shipping unchecked or failing at boot."""
+    declared = declared_skills()
+    assert len(declared) == len(set(declared)), "the manifest lists a skill twice"
+    assert set(declared) == set(SKILL_NAMES)
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)

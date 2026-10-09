@@ -42,7 +42,7 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "ufo_ext_pulse" / "migrations
 def test_manifest_declares_five_skills_and_the_search_seam() -> None:
     manifest = pulse_manifest.manifest()
     assert manifest.name == "pulse"
-    assert [spec.path.name for spec in manifest.skills] == list(SKILL_NAMES)
+    assert sorted(spec.path.name for spec in manifest.skills) == list(SKILL_NAMES)
     assert manifest.requires == ("search_providers",)
 
 

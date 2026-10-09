@@ -43,6 +43,34 @@ def frontmatter(name: str) -> dict:
     return yaml.safe_load(meta)
 
 
+def declared_skills() -> tuple[str, ...]:
+    """The manifest's `SKILL_NAMES`, read rather than imported: `manifest.py` imports `ufo.sdk`, and
+    the names are literals, which is the whole of what comparing them to the disk needs."""
+    module = ast.parse((PACKAGE_ROOT / "manifest.py").read_text())
+    for node in module.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "SKILL_NAMES" for t in node.targets):
+            continue
+        assert isinstance(node.value, ast.Tuple), "the contract expects a literal tuple"
+        names = []
+        for element in node.value.elts:
+            assert isinstance(element, ast.Constant) and isinstance(element.value, str), (
+                "the contract expects literal skill names"
+            )
+            names.append(element.value)
+        return tuple(names)
+    raise AssertionError("the manifest declares no SKILL_NAMES")
+
+
+def test_the_manifest_declares_every_skill_on_disk() -> None:
+    """A skill directory the manifest does not list never ships, and a listed name with no directory
+    fails at boot. Both edges are one comparison, and it is the one place a mismatch is reported."""
+    declared = declared_skills()
+    assert len(declared) == len(set(declared)), "the manifest lists a skill twice"
+    assert set(declared) == set(SKILL_NAMES)
+
+
 @pytest.mark.parametrize("name", SKILL_NAMES)
 def test_name_matches_its_directory(name: str) -> None:
     assert frontmatter(name)["name"] == name
