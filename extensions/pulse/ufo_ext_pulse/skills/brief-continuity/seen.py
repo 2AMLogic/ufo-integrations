@@ -125,7 +125,7 @@ def unreconciled(series: str) -> tuple[list[tuple[str, list[str]]], list[tuple[s
     Urls are stripped as they are read, and a row whose url is blank once stripped is skipped. This
     reader is the one consumer that cannot trust the writer: rows predate the guard that requires a
     url, and the guard that preceded it tested `url.strip()` while storing `url` raw. So a padded
-    legacy row and a clean one naming one story would read as two urls, and a whitespace-only url
+    stored row and a clean one naming one story would read as two urls, and a whitespace-only url
     would group with every other whitespace-only url — both reported as findings, with a diagnosis
     attached to each, on exactly the old rows this exists to audit."""
     by_url: dict[str, list[str]] = {}

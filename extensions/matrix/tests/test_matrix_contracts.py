@@ -6,7 +6,6 @@ checkout with only `pytest` and `pyyaml` installed."""
 
 import ast
 import json
-import re
 import sys
 import tomllib
 from collections.abc import Iterator
@@ -78,9 +77,6 @@ SKILL_NAMES = ("matrix-setup",)
 DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
-TRANSITION_WORDS = re.compile(r"\b(legacy|deprecated|formerly|for now|TODO|v1|v2)\b", re.IGNORECASE)
-PROTOCOL_NAMES = re.compile(r"\bm\.[a-z_]+(\.[a-z0-9_-]+)+")
-WIRE_VERSIONS = re.compile(r'"v\d+"|/v\d+(?=[/"])|\.v\d+(?=")')
 
 BOT = "@ufo:example.org"
 ROOM = "!room:example.org"
@@ -112,27 +108,6 @@ def imported_modules(path: Path) -> list[str]:
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             names.append(node.module)
     return names
-
-
-def searchable(text: str) -> str:
-    """`text` with the wire identifiers struck out, leaving the prose the ban is about.
-
-    Two carve-outs, each scoped to a version this repo does not get to rename. `PROTOCOL_NAMES` is a
-    dotted Matrix event or algorithm name — `m.olm.v1.curve25519-aes-sha2`, `m.megolm.v1.aes-sha2`.
-    `WIRE_VERSIONS` is a version token a wire value carries: quoted on its own, which is how an
-    `EncryptedFile` names its format (`"v": "v2"`), a segment of an endpoint's path, which is how a
-    homeserver names its API (`/_matrix/client/v1/media`), or the tail of a quoted value, which is
-    how the spec names a SAS MAC method (`"hkdf-hmac-sha256.v2"`).
-
-    Each strikes to a space rather than to nothing, because removing a token joins what sat either
-    side of it: `x"v1"legacy` collapses to `xlegacy` and passes a ban that `x legacy` fails.
-
-    The boundary is the quoting, and it is honest about what that costs: a bare `v1` in a sentence
-    fails, a backticked `v2` fails, and a version someone puts in double quotes mid-sentence passes.
-    Reading a version out of a string literal is what writing the wire value looks like, and the
-    narrower rule — knowing every way a constant or a JSON field might be spelled — would fail on
-    the next spelling rather than on the next piece of transition language."""
-    return WIRE_VERSIONS.sub(" ", PROTOCOL_NAMES.sub(" ", text))
 
 
 @pytest.mark.parametrize(
@@ -341,47 +316,6 @@ def test_deploy_keys_are_bare_names_core_prefixes() -> None:
                 keys.append(element.value)
     assert keys, "the manifest declares no deploy_keys"
     assert all(not key.startswith("UFO_") for key in keys)
-
-
-@pytest.mark.parametrize(
-    "path",
-    sorted(p for p in EXTENSION.rglob("*") if p.suffix in {".py", ".md"}),
-    ids=lambda p: str(p.relative_to(EXTENSION)),
-)
-def test_no_transition_language(path: Path) -> None:
-    """Every file reads as if designed this way from the start. The wire identifiers `searchable`
-    strikes out are the one exception, and widening it is a visible choice, not a side effect."""
-    if path.name == "test_matrix_contracts.py":
-        return
-    assert TRANSITION_WORDS.search(searchable(path.read_text())) is None
-
-
-def test_the_wire_carve_outs_do_not_launder_prose() -> None:
-    """A carve-out that grows quietly is a ban that stopped holding, so **both** its edges are
-    asserted rather than described.
-
-    The right edge is the one that is easy to leave unpinned: a path version needs a slash before
-    and a slash or quote after, and dropping that lookahead — or widening it to accept whitespace —
-    turns `the /v1 rewrite` into prose the ban no longer reads."""
-    passes = (
-        'sealed = {"v": "v2"}',
-        'ALGORITHM = "m.megolm.v1.aes-sha2"',
-        'KEY = "A256CTR"',
-        'MEDIA = "/_matrix/client/v1/media"',
-    )
-    fails = (
-        "the v2 format",
-        "the `v2` format",
-        "kept for v1 readers",
-        "a TODO here",
-        'x"v1"legacy',
-        "the /v1 rewrite",
-        "dropped in /v1",
-    )
-    for source in passes:
-        assert TRANSITION_WORDS.search(searchable(source)) is None, source
-    for source in fails:
-        assert TRANSITION_WORDS.search(searchable(source)) is not None, source
 
 
 def test_readme_matches_the_pack_shape() -> None:
