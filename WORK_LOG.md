@@ -2,6 +2,15 @@
 
 Merged pull requests and closed issues, grouped by date. Initial history covers the 30 days before this document was created.
 
+### 2026-10-09
+
+- **PR #165**: test: hold every skill to one frontmatter contract and resolve metadata.depends
+- **PR #164**: test: hold each manifest's skills to the skill directories on disk
+- **PR #163**: test: guard transition language across every extension tree
+- **Issue #160** (closed): Pulse skills are not held to the Not-for rule, and no test resolves metadata.depends
+- **Issue #159** (closed): Skill directories are never compared to the manifest, so an unlisted skill ships unchecked
+- **Issue #158** (closed): The transition-language ban is enforced for matrix only, and pulse already breaks it
+
 ### 2026-10-07
 
 - **PR #156**: chore: retire sweep-lease-fence resync pins (upstream #10027)

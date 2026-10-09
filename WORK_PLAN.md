@@ -19,9 +19,7 @@ Issues the operator starred (`loom:operator-priority`); land these first.
 
 Human-approved issues ready for implementation (`loom:issue`).
 
-- **#158**: The transition-language ban is enforced for matrix only, and pulse already breaks it
-- **#159**: Skill directories are never compared to the manifest, so an unlisted skill ships unchecked
-- **#160**: Pulse skills are not held to the Not-for rule, and no test resolves metadata.depends
+_None._
 
 ## In Progress
 
@@ -61,7 +59,7 @@ _None._
 |------|-------|
 | Operator merge-risk holds | 0 |
 | Operator priority | 1 |
-| Ready (`loom:issue`) | 3 |
+| Ready (`loom:issue`) | 0 |
 | In Progress (`loom:building`) | 0 |
 | PRs awaiting review | 0 |
 | Approved PRs awaiting merge | 0 |
