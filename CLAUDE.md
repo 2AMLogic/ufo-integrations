@@ -25,14 +25,14 @@ where a field has a limit, and a closing `## Traps` listing the failure modes. N
 language anywhere — no `legacy`, `deprecated`, `formerly`, `for now`, `v1`/`v2`, or `TODO`. Every file
 reads as if designed this way from the start.
 
-Frontmatter the runtime enforces, and `extensions/pulse/tests/test_skill_contracts.py` checks
-without needing `ufo` installed:
+Frontmatter the runtime enforces, and `extensions/test_skill_frontmatter.py` checks over every
+extension's skills without needing `ufo` installed:
 
 | Field | Rule |
 | --- | --- |
 | `name` | Equals the directory name |
 | `description` | Begins `Load when`, at most 50 words, names what the skill is *not* for |
-| `metadata.depends` | The skills loaded alongside this one — the only mechanism that pulls another in |
+| `metadata.depends` | The skills loaded alongside this one — the only mechanism that pulls another in. A list of other skills in the same extension; absent, it pulls nothing |
 
 A contract another skill must not skip belongs in `metadata.depends`, not in a sentence asking the
 agent to remember it.

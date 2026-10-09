@@ -1,8 +1,6 @@
-"""The rules `parse_skill_content` enforces, asserted without the runtime: a skill whose frontmatter
-breaks one of these fails at boot, so it is worth catching in a test that needs nothing installed.
-
-The description budget is a routing budget, not a style preference — an over-long description is what
-makes a skill load on the wrong turn.
+"""What each pulse skill says and which skills it pulls, asserted without the runtime: a skill that
+drops a contract it depends on, or routes a neighbouring ask to itself, fails quietly on a live turn,
+so it is worth catching in a test that needs nothing installed.
 
 The prompts belong here for the same reason. The standing prompt and the armed row's are text this
 extension ships, so a contract over them needs no more installed than a SKILL.md does, and the

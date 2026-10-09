@@ -1,8 +1,8 @@
 """The rules the matrix surface holds without the runtime: what it may import, which events may
 found a turn, the identifiers it derives, the messages it writes, who a line addresses, the labels
-a question is answered by, and the frontmatter contract its skill is loaded under. The contract
-modules import neither `ufo` nor an HTTP client, and a skill is data on disk, so these run on a
-checkout with only `pytest` and `pyyaml` installed."""
+a question is answered by, and the skills its manifest declares. The contract modules import neither
+`ufo` nor an HTTP client, and a skill is data on disk, so these run on a checkout with only `pytest`
+and `pyyaml` installed."""
 
 import ast
 import json
@@ -13,7 +13,6 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-import yaml
 from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
@@ -322,13 +321,6 @@ def test_readme_matches_the_pack_shape() -> None:
     headings = ("## What it adds", "## Install", "## Connect", "## Tests", "## License", "## Traps")
     for heading in headings:
         assert heading in readme
-
-
-def frontmatter(name: str) -> dict:
-    raw = (SKILLS_ROOT / name / "SKILL.md").read_text()
-    assert raw.startswith("---"), f"{name}: SKILL.md must open with ---"
-    _, meta, _ = raw.split("---", 2)
-    return yaml.safe_load(meta)
 
 
 def declared_skills() -> tuple[str, ...]:

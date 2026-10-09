@@ -38,6 +38,12 @@ def skill_id(path: Path) -> str:
     return path.relative_to(EXTENSIONS_ROOT).parent.as_posix()
 
 
+def unresolved(path: Path, declared: list) -> list:
+    """The names in `declared` that no other skill in the same extension provides."""
+    siblings = {p.parent.name for p in skill_files() if p.parents[2] == path.parents[2]}
+    return [name for name in declared if name not in siblings - {path.parent.name}]
+
+
 SKILLS = pytest.mark.parametrize("path", skill_files(), ids=skill_id)
 
 
@@ -65,6 +71,10 @@ def test_a_skill_depends_on_skills_that_exist(path: Path) -> None:
     """`metadata.depends` is the only mechanism that pulls another skill in, so a name that matches
     no sibling drops a contract silently. Resolution stays inside one extension: a deploy activates
     extensions one at a time, so no skill can assume another extension's."""
-    siblings = {p.parent.name for p in skill_files() if p.parents[2] == path.parents[2]}
-    missing = [name for name in depends(path) if name not in siblings]
+    missing = unresolved(path, depends(path))
     assert not missing, f"{path.parent.name} depends on {missing}, which no sibling skill provides"
+
+
+def test_a_skill_does_not_depend_on_itself() -> None:
+    path = skill_files()[0]
+    assert unresolved(path, [path.parent.name]) == [path.parent.name]
