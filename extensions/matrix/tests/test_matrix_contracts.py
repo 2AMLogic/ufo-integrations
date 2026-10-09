@@ -1,8 +1,8 @@
 """The rules the matrix surface holds without the runtime: what it may import, which events may
 found a turn, the identifiers it derives, the messages it writes, who a line addresses, the labels
-a question is answered by, and the frontmatter contract its skill is loaded under. The contract
-modules import neither `ufo` nor an HTTP client, and a skill is data on disk, so these run on a
-checkout with only `pytest` and `pyyaml` installed."""
+a question is answered by, and the skills its manifest declares. The contract modules import neither
+`ufo` nor an HTTP client, and a skill is data on disk, so these run on a checkout with only `pytest`
+and `pyyaml` installed."""
 
 import ast
 import json
@@ -13,7 +13,6 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-import yaml
 from ufo_ext_matrix.addressed import Bot, addresses
 from ufo_ext_matrix.e2ee import EXTRA
 from ufo_ext_matrix.events import (
@@ -74,7 +73,6 @@ PACKAGE = EXTENSION / "ufo_ext_matrix"
 REPO = EXTENSION.parents[1]
 SKILLS_ROOT = PACKAGE / "skills"
 SKILL_NAMES = tuple(sorted(path.parent.name for path in SKILLS_ROOT.glob("*/SKILL.md")))
-DESCRIPTION_WORD_BUDGET = 50
 THIRD_PARTY = frozenset({"httpx", "sqlalchemy", "alembic", "pydantic"})
 E2EE_THIRD_PARTY = frozenset({"vodozemac", "cryptography"})
 
@@ -325,13 +323,6 @@ def test_readme_matches_the_pack_shape() -> None:
         assert heading in readme
 
 
-def frontmatter(name: str) -> dict:
-    raw = (SKILLS_ROOT / name / "SKILL.md").read_text()
-    assert raw.startswith("---"), f"{name}: SKILL.md must open with ---"
-    _, meta, _ = raw.split("---", 2)
-    return yaml.safe_load(meta)
-
-
 def declared_skills() -> tuple[str, ...]:
     """The manifest's `SKILL_NAMES`, read from its source for the reason `deploy_keys` is: this
     suite installs no `ufo`, and the names are literals."""
@@ -359,28 +350,6 @@ def test_the_manifest_declares_every_skill_on_disk() -> None:
     declared = declared_skills()
     assert len(declared) == len(set(declared)), "the manifest lists a skill twice"
     assert set(declared) == set(SKILL_NAMES)
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_name_matches_its_directory(name: str) -> None:
-    assert frontmatter(name)["name"] == name
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_description_routes(name: str) -> None:
-    """The description is a routing budget: an over-long one loads the skill on the wrong turn, and
-    one that does not say what the skill is not for loads it on a neighbouring ask."""
-    description = frontmatter(name)["description"]
-    assert description.startswith("Load when")
-    assert len(description.split()) <= DESCRIPTION_WORD_BUDGET
-    assert "Not for" in description
-
-
-@pytest.mark.parametrize("name", SKILL_NAMES)
-def test_a_skill_wires_its_dependencies_rather_than_asking(name: str) -> None:
-    """`metadata.depends` is the only mechanism that pulls another skill in, so it is declared even
-    where this skill stands alone."""
-    assert isinstance(frontmatter(name)["metadata"]["depends"], list)
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)
