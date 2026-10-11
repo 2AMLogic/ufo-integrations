@@ -1,6 +1,6 @@
 {
-  "loom_version": "0.19.1062",
-  "loom_commit": "864b22e07649371e85d5b89a6155122c91547b09",
+  "loom_version": "0.19.1065",
+  "loom_commit": "33bb950d65b9038d5cf119a252820edca1192edf",
   "install_date": "2026-09-27",
   "loom_source_remote": "git@github.com:rjwalters/loom.git",
   "installed_files": [
@@ -676,7 +676,9 @@
     ".loom/docs/telemetry-kind-pick-decision.md",
     ".loom/scripts/tests/test-sweep-lease-renew-lifecycle.sh",
     ".loom/scripts/tests/test-check-main-clean-build-trees.sh",
-    ".agents/skills/loom-builder-pr/SKILL.md"
+    ".agents/skills/loom-builder-pr/SKILL.md",
+    ".claude/commands/loom/sweep-doctor-glm-escalation.md",
+    ".loom/docs/stale-check-inputs.md"
   ],
   "last_resync": "2026-10-11",
   "requires_daemon": "0.19.772"
