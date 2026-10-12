@@ -1,6 +1,6 @@
 {
-  "loom_version": "0.19.1135",
-  "loom_commit": "79294595c1c86e6c011bd50a999414cd40f53e0c",
+  "loom_version": "0.19.1137",
+  "loom_commit": "240bb1a888bb79770ecc3acbc19c6425468fedca",
   "install_date": "2026-09-27",
   "loom_source_remote": "git@github.com:rjwalters/loom.git",
   "installed_files": [
@@ -685,7 +685,8 @@
     ".loom/scripts/tests/test-merge-pr-required-checks.sh",
     ".loom/scripts/tests/test-sweep-wave-judge-done-staleness.sh",
     ".agents/skills/loom-builder-worktree/SKILL.md",
-    ".loom/scripts/tests/test-merge-pr-ci-result.sh"
+    ".loom/scripts/tests/test-merge-pr-ci-result.sh",
+    ".loom/scripts/tests/test-post-verdict-gate.sh"
   ],
   "last_resync": "2026-10-12",
   "requires_daemon": "0.19.1081"
