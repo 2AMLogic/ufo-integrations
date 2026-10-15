@@ -2,6 +2,10 @@
 
 Merged pull requests and closed issues, grouped by date. Initial history covers the 30 days before this document was created.
 
+### 2026-10-15
+
+- **PR #167**: Bump Repo Skills 0.19.5 -> 0.24.1
+
 ### 2026-10-09
 
 - **PR #165**: test: hold every skill to one frontmatter contract and resolve metadata.depends
